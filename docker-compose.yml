@@ -23,7 +23,7 @@ services:
     build: ./api
     environment:
       # 컨테이너 안에서 DB 주소는 서비스 이름 db다. 맥에서 쓰는 .env의 DATABASE_URL(localhost:5434)과 다르다.
-      DATABASE_URL: postgresql://client_review:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD를 .env에 적어 주세요}@db:5432/client_review
+      DATABASE_URL: postgresql://client_review:${POSTGRES_PASSWORD}@db:5432/client_review
     depends_on:
       db:
         condition: service_healthy
