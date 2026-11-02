@@ -1,11 +1,35 @@
 import { randomInt } from 'node:crypto';
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  Injectable,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import bcrypt from 'bcrypt';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { createSessionToken, hashSessionToken } from './token.js';
 
 // bcrypt 반복 횟수(2^12번). 높을수록 해시를 훔친 사람이 코드를 맞혀 보는 데 오래 걸린다.
 const BCRYPT_COST = 12;
+
+export type AuthUser = { id: string; email: string; name: string };
+
+const AUTH_USER_FIELDS = { id: true, email: true, name: true } as const;
+
+const LOGIN_CODE_ERROR_MESSAGES = {
+  CODE_EXPIRED: '코드를 쓸 수 없어요. 새 코드를 받아 주세요',
+  CODE_WRONG: '코드가 맞지 않아요',
+  NAME_REQUIRED: '처음 오셨네요. 이름을 알려 주세요',
+} as const;
+
+// 오류 본문은 Nest 기본 모양에 code를 더한다. web은 code를 보고 문구를 고른다.
+const loginCodeError = (code: keyof typeof LOGIN_CODE_ERROR_MESSAGES) =>
+  new UnprocessableEntityException({
+    statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: LOGIN_CODE_ERROR_MESSAGES[code],
+    code,
+  });
 
 @Injectable()
 export class AuthService {
@@ -40,5 +64,65 @@ export class AuthService {
     }
 
     this.mail.sendLoginCode(email, code);
+  }
+
+  // 돌려준 token(세션 ID 원본)은 컨트롤러가 쿠키에 담는다.
+  async verifyCode(
+    email: string,
+    code: string,
+    name?: string,
+  ): Promise<{ user: AuthUser; token: string }> {
+    // 1. 비교하기 전에 시도 횟수부터 올린다. 동시에 여러 번 와도 5번까지만 해시를 받아 비교한다.
+    const [attempt] = await this.prisma.$queryRaw<{ code_hash: string }[]>`
+      UPDATE login_codes SET attempts = attempts + 1
+      WHERE email = ${email} AND used_at IS NULL AND expires_at > now() AND attempts < 5
+      RETURNING code_hash
+    `;
+    if (!attempt) throw loginCodeError('CODE_EXPIRED');
+
+    // 2. 코드 비교
+    const codeHash = attempt.code_hash;
+    const isMatch = await bcrypt.compare(code, codeHash);
+    if (!isMatch) throw loginCodeError('CODE_WRONG');
+
+    // 3. 처음 온 사람인데 이름이 없으면 이름을 받으러 돌려보낸다.
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email },
+      select: AUTH_USER_FIELDS,
+    });
+    if (!existingUser && !name) {
+      // 코드를 맞힌 뒤의 왕복이라 시도로 치지 않는다. 해시를 조건에 걸어 그사이 새로 받은 코드는 건드리지 않는다.
+      await this.prisma.loginCode.updateMany({
+        where: { email, codeHash, usedAt: null, attempts: { gt: 0 } },
+        data: { attempts: { decrement: 1 } },
+      });
+      throw loginCodeError('NAME_REQUIRED');
+    }
+
+    // 4. 한 트랜잭션이라 중간에 실패하면 코드도 안 쓴 것으로 남는다.
+    const token = createSessionToken();
+    const user = await this.prisma.$transaction(async (tx) => {
+      // 비교한 그 코드일 때만 쓴 것으로 표시한다. 새 코드로 바뀌었거나 다른 요청이 먼저 썼으면 0줄이다.
+      const usedCount = await tx.$executeRaw`
+        UPDATE login_codes SET used_at = now()
+        WHERE email = ${email} AND code_hash = ${codeHash} AND used_at IS NULL AND expires_at > now()
+      `;
+      if (usedCount === 0) throw loginCodeError('CODE_EXPIRED');
+
+      // 이름 없는 새 사용자는 위에서 NAME_REQUIRED로 돌려보냈다.
+      const sessionUser =
+        existingUser ??
+        (await tx.user.create({
+          data: { email, name: name! },
+          select: AUTH_USER_FIELDS,
+        }));
+      await tx.$executeRaw`
+        INSERT INTO sessions (user_id, token_hash, expires_at)
+        VALUES (${sessionUser.id}::uuid, ${hashSessionToken(token)}, now() + interval '7 days')
+      `;
+      return sessionUser;
+    });
+
+    return { user, token };
   }
 }
