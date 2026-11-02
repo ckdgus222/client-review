@@ -3,6 +3,10 @@
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
+  // 만드는 방식을 환경에 맡기지 않고 고정한다. Prisma는 tsconfig.json을 보고 추측하는데,
+  // Docker의 npm ci 때는 tsconfig.json이 아직 없어서 import에 .ts를 붙였고 빌드 결과가 실행되지 않았다.
+  moduleFormat        = "esm"
+  importFileExtension = "js"
 }
 
 datasource db {
