@@ -1,0 +1,25 @@
+/* 디자인 값. 컴포넌트는 색·간격을 직접 적지 않고 이 변수만 쓴다. 시안이 나오면 이 파일만 고친다. */
+:root {
+  /* 글자색 */
+  --color-text: #1f2328;
+  --color-text-muted: #59636e;
+  /* 배경색: 페이지 바탕, 그 위에 놓이는 칸(머리말, 카드) */
+  --color-bg: #f6f8fa;
+  --color-surface: #ffffff;
+  --color-border: #d1d9e0;
+  /* 버튼, 링크 */
+  --color-accent: #2563eb;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+
+  /* rem은 브라우저 글자 크기 설정을 따른다. 1rem = 기본 16px */
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.25rem;
+
+  --radius: 8px;
+  --font-family: system-ui, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+}
