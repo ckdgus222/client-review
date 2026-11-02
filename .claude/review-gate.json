@@ -1,0 +1,4 @@
+{
+  "testCommand": "npm --prefix api test && npm --prefix web test",
+  "securityPaths": ["api/src/"]
+}
