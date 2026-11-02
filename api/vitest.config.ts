@@ -1,12 +1,20 @@
 import { existsSync } from 'node:fs';
 import { defineConfig } from 'vitest/config';
+import { assertTestDatabaseUrl } from './test/test-database-url.js';
 
-// 테스트는 실제 DB에 붙어서 DATABASE_URL이 필요하다. prisma.config.ts와 같은 방법으로 루트 .env를 읽는다.
+// 테스트는 실제 DB에 붙는다. prisma.config.ts와 같은 방법으로 루트 .env를 읽는다.
 if (existsSync('../.env')) process.loadEnvFile('../.env');
+
+// 테스트는 표를 비우므로 개발 DB 대신 테스트 DB에 붙인다. 검사를 통과한 주소만 쓴다.
+// 여기서 바꾸면 globalSetup(마이그레이션)과 테스트 파일이 모두 이 주소를 물려받는다.
+process.env.DATABASE_URL = assertTestDatabaseUrl(process.env.TEST_DATABASE_URL);
 
 export default defineConfig({
   test: {
     globals: true,
     include: ['**/*.spec.ts'],
+    globalSetup: ['./test/global-setup.ts'],
+    // 테스트 파일마다 표를 비운다. 동시에 돌면 서로 데이터를 지워서 하나씩 차례로 돌린다.
+    fileParallelism: false,
   },
 });
