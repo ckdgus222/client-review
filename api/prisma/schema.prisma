@@ -1,0 +1,10 @@
+// 표(model)는 1번 로그인 기능부터 더한다.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
