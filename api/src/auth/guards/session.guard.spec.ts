@@ -5,8 +5,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import type { AuthService, AuthUser } from './auth.service.js';
-import { IS_PUBLIC, Public } from './public.decorator.js';
+import type { AuthService, AuthUser } from '../auth.service.js';
+import { IS_PUBLIC, Public } from '../decorators/public.decorator.js';
 import { SESSION_COOKIE, SessionGuard } from './session.guard.js';
 
 class TestController {

@@ -6,8 +6,8 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
-import { AuthService, type AuthUser } from './auth.service.js';
-import { IS_PUBLIC } from './public.decorator.js';
+import { AuthService, type AuthUser } from '../auth.service.js';
+import { IS_PUBLIC } from '../decorators/public.decorator.js';
 
 export const SESSION_COOKIE = 'sid';
 
