@@ -2,10 +2,7 @@ import 'reflect-metadata';
 import { type ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { OriginGuard } from './origin.guard.js';
 
-const createContext = (
-  method: string,
-  headers: Record<string, string | undefined> = {},
-) =>
+const createContext = (method: string, headers: Record<string, string | undefined> = {}) =>
   ({
     switchToHttp: () => ({ getRequest: () => ({ method, headers }) }),
   }) as unknown as ExecutionContext;
@@ -19,14 +16,11 @@ describe('OriginGuard', () => {
     vi.unstubAllEnvs();
   });
 
-  it.each([undefined, ''])(
-    'APP_ORIGINS가 %j이면 생성할 때 오류를 던진다',
-    (value) => {
-      vi.stubEnv('APP_ORIGINS', value);
+  it.each([undefined, ''])('APP_ORIGINS가 %j이면 생성할 때 오류를 던진다', (value) => {
+    vi.stubEnv('APP_ORIGINS', value);
 
-      expect(() => new OriginGuard()).toThrow(/APP_ORIGINS/);
-    },
-  );
+    expect(() => new OriginGuard()).toThrow(/APP_ORIGINS/);
+  });
 
   describe.each(['GET', 'HEAD', 'OPTIONS'])('%s 요청', (method) => {
     it.each([
@@ -95,10 +89,7 @@ describe('OriginGuard', () => {
   it.each(['http://localhost:5173', 'http://localhost:8080'])(
     'APP_ORIGINS 목록에 공백이 있어도 %s는 통과한다',
     (origin) => {
-      vi.stubEnv(
-        'APP_ORIGINS',
-        ' http://localhost:5173, http://localhost:8080 ',
-      );
+      vi.stubEnv('APP_ORIGINS', ' http://localhost:5173, http://localhost:8080 ');
       const guard = new OriginGuard();
 
       expect(guard.canActivate(createContext('POST', { origin }))).toBe(true);
@@ -109,15 +100,11 @@ describe('OriginGuard', () => {
     vi.stubEnv('APP_ORIGINS', 'http://localhost:8080');
     const guard = new OriginGuard();
 
-    expect(
-      guard.canActivate(
-        createContext('POST', { origin: 'http://localhost:8080' }),
-      ),
-    ).toBe(true);
+    expect(guard.canActivate(createContext('POST', { origin: 'http://localhost:8080' }))).toBe(
+      true,
+    );
     expect(() =>
-      guard.canActivate(
-        createContext('POST', { origin: 'http://localhost:5173' }),
-      ),
+      guard.canActivate(createContext('POST', { origin: 'http://localhost:5173' })),
     ).toThrow(ForbiddenException);
   });
 
@@ -126,15 +113,11 @@ describe('OriginGuard', () => {
     const guard = new OriginGuard();
 
     expect(() =>
-      guard.canActivate(
-        createContext('POST', { origin: 'http://localhost:5173' }),
-      ),
+      guard.canActivate(createContext('POST', { origin: 'http://localhost:5173' })),
     ).toThrow(ForbiddenException);
-    expect(
-      guard.canActivate(
-        createContext('POST', { origin: 'https://localhost:5173' }),
-      ),
-    ).toBe(true);
+    expect(guard.canActivate(createContext('POST', { origin: 'https://localhost:5173' }))).toBe(
+      true,
+    );
   });
 
   it('프록시가 Host를 바꿔도 허용된 Origin이면 통과한다', () => {
@@ -156,9 +139,7 @@ describe('OriginGuard', () => {
       const guard = new OriginGuard();
 
       expect(() =>
-        guard.canActivate(
-          createContext('POST', { origin, host: 'localhost:5173' }),
-        ),
+        guard.canActivate(createContext('POST', { origin, host: 'localhost:5173' })),
       ).toThrow(ForbiddenException);
     },
   );
@@ -166,18 +147,12 @@ describe('OriginGuard', () => {
   it('GET·HEAD·OPTIONS 외의 메서드는 Origin을 검사한다', () => {
     const guard = new OriginGuard();
 
-    expect(() => guard.canActivate(createContext('PROPFIND'))).toThrow(
-      ForbiddenException,
-    );
+    expect(() => guard.canActivate(createContext('PROPFIND'))).toThrow(ForbiddenException);
     expect(() =>
-      guard.canActivate(
-        createContext('PROPFIND', { origin: 'https://other.example' }),
-      ),
+      guard.canActivate(createContext('PROPFIND', { origin: 'https://other.example' })),
     ).toThrow(ForbiddenException);
-    expect(
-      guard.canActivate(
-        createContext('PROPFIND', { origin: 'http://localhost:5173' }),
-      ),
-    ).toBe(true);
+    expect(guard.canActivate(createContext('PROPFIND', { origin: 'http://localhost:5173' }))).toBe(
+      true,
+    );
   });
 });

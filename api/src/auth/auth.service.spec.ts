@@ -65,10 +65,7 @@ describe('AuthService.requestCode', () => {
     const [{ now: after }] = await prisma.$queryRaw<{ now: Date }[]>`
       SELECT now()
     `;
-    expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(
-      email,
-      expect.stringMatching(/^\d{6}$/),
-    );
+    expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(email, expect.stringMatching(/^\d{6}$/));
     const code = sendLoginCode.mock.calls[0][1];
     const rows = await prisma.loginCode.findMany();
     expect(rows).toHaveLength(1);
@@ -128,9 +125,7 @@ describe('AuthService.requestCode', () => {
       usedAt: null,
     });
     expect(after.codeHash).not.toBe(before.codeHash);
-    expect(after.createdAt.getTime()).toBeGreaterThan(
-      before.createdAt.getTime(),
-    );
+    expect(after.createdAt.getTime()).toBeGreaterThan(before.createdAt.getTime());
     expect(after.createdAt.getTime()).toBeGreaterThanOrEqual(now.getTime());
     expect(after.expiresAt.getTime() - after.createdAt.getTime()).toBe(600_000);
     expect(sendLoginCode).toHaveBeenCalledTimes(2);
@@ -149,36 +144,33 @@ describe('AuthService.requestCode', () => {
   it.each([
     { seconds: 59, allowed: false },
     { seconds: 60, allowed: true },
-  ])(
-    '발급 시각이 $seconds초 전이면 재발급 허용은 $allowed다',
-    async ({ seconds, allowed }) => {
-      await prisma.$executeRaw`
+  ])('발급 시각이 $seconds초 전이면 재발급 허용은 $allowed다', async ({ seconds, allowed }) => {
+    await prisma.$executeRaw`
       INSERT INTO login_codes (email, code_hash, expires_at, created_at)
       VALUES (${email}, 'previous-hash', now() + interval '10 minutes',
               now() - ${seconds} * interval '1 second')
     `;
-      const before = await prisma.loginCode.findUniqueOrThrow({
-        where: { email },
-      });
+    const before = await prisma.loginCode.findUniqueOrThrow({
+      where: { email },
+    });
 
-      if (!allowed) {
-        await expect(service.requestCode(email)).rejects.toMatchObject({
-          status: 429,
-        });
-        expect(await prisma.loginCode.findMany()).toEqual([before]);
-        expect(sendLoginCode).not.toHaveBeenCalled();
-        return;
-      }
-
-      await expect(service.requestCode(email)).resolves.toBeUndefined();
-      const after = await prisma.loginCode.findUniqueOrThrow({
-        where: { email },
+    if (!allowed) {
+      await expect(service.requestCode(email)).rejects.toMatchObject({
+        status: 429,
       });
-      expect(after.id).toBe(before.id);
-      expect(after.codeHash).not.toBe(before.codeHash);
-      expect(sendLoginCode).toHaveBeenCalledTimes(1);
-    },
-  );
+      expect(await prisma.loginCode.findMany()).toEqual([before]);
+      expect(sendLoginCode).not.toHaveBeenCalled();
+      return;
+    }
+
+    await expect(service.requestCode(email)).resolves.toBeUndefined();
+    const after = await prisma.loginCode.findUniqueOrThrow({
+      where: { email },
+    });
+    expect(after.id).toBe(before.id);
+    expect(after.codeHash).not.toBe(before.codeHash);
+    expect(sendLoginCode).toHaveBeenCalledTimes(1);
+  });
 
   it.each(['처음 발급', '재발급'])(
     '%s을 동시에 두 번 요청해도 하나만 성공하고 하나는 429다',
@@ -196,9 +188,7 @@ describe('AuthService.requestCode', () => {
         service.requestCode(email),
       ]);
 
-      expect(
-        results.filter((result) => result.status === 'fulfilled'),
-      ).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
       expect(results.filter((result) => result.status === 'rejected')).toEqual([
         expect.objectContaining({ reason: expect.any(HttpException) }),
       ]);
@@ -214,9 +204,7 @@ describe('AuthService.requestCode', () => {
       const rows = await prisma.loginCode.findMany();
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({ email, attempts: 0, usedAt: null });
-      expect(
-        await bcrypt.compare(sendLoginCode.mock.calls[0][1], rows[0].codeHash),
-      ).toBe(true);
+      expect(await bcrypt.compare(sendLoginCode.mock.calls[0][1], rows[0].codeHash)).toBe(true);
     },
   );
 
@@ -249,20 +237,17 @@ describe('AuthService.requestCode', () => {
     { value: 0, code: '000000' },
     { value: 42, code: '000042' },
     { value: 999999, code: '999999' },
-  ])(
-    '무작위 값 $value를 6자리 코드 $code로 보낸다',
-    async ({ value, code }) => {
-      randomIntMock.mockReturnValue(value);
+  ])('무작위 값 $value를 6자리 코드 $code로 보낸다', async ({ value, code }) => {
+    randomIntMock.mockReturnValue(value);
 
-      await service.requestCode(email);
+    await service.requestCode(email);
 
-      expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(email, code);
-      const row = await prisma.loginCode.findUniqueOrThrow({
-        where: { email },
-      });
-      expect(await bcrypt.compare(code, row.codeHash)).toBe(true);
-    },
-  );
+    expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(email, code);
+    const row = await prisma.loginCode.findUniqueOrThrow({
+      where: { email },
+    });
+    expect(await bcrypt.compare(code, row.codeHash)).toBe(true);
+  });
 
   it.each(['사용함', '5회 실패', '만료됨'])(
     '기존 코드가 %s이어도 60초 제한은 유지한다',
@@ -358,17 +343,13 @@ describe('AuthService.verifyCode', () => {
     });
     await service.requestCode(email);
     const mailedCode = sendLoginCode.mock.calls[0][1];
-    const [{ now: before }] = await prisma.$queryRaw<
-      { now: Date }[]
-    >`SELECT now()`;
+    const [{ now: before }] = await prisma.$queryRaw<{ now: Date }[]>`SELECT now()`;
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2100-01-01T00:00:00Z'));
 
     const result = await service.verifyCode(email, mailedCode);
 
-    const [{ now: after }] = await prisma.$queryRaw<
-      { now: Date }[]
-    >`SELECT now()`;
+    const [{ now: after }] = await prisma.$queryRaw<{ now: Date }[]>`SELECT now()`;
     expect(result).toEqual({
       user: { id: user.id, email, name: user.name },
       token: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
@@ -378,23 +359,15 @@ describe('AuthService.verifyCode', () => {
     expect(sessions).toHaveLength(1);
     const [session] = sessions;
     expect(session.userId).toBe(user.id);
-    expect(session.tokenHash).toBe(
-      createHash('sha256').update(result.token).digest('hex'),
-    );
-    expect(session.expiresAt.getTime() - session.createdAt.getTime()).toBe(
-      7 * 24 * 60 * 60 * 1000,
-    );
-    expect(session.createdAt.getTime()).toBeGreaterThanOrEqual(
-      before.getTime(),
-    );
+    expect(session.tokenHash).toBe(createHash('sha256').update(result.token).digest('hex'));
+    expect(session.expiresAt.getTime() - session.createdAt.getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(session.createdAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
     expect(session.createdAt.getTime()).toBeLessThanOrEqual(after.getTime());
     const loginCode = await prisma.loginCode.findUniqueOrThrow({
       where: { email },
     });
     expect(loginCode).toMatchObject({ attempts: 1, usedAt: expect.any(Date) });
-    expect(loginCode.usedAt!.getTime()).toBeGreaterThanOrEqual(
-      before.getTime(),
-    );
+    expect(loginCode.usedAt!.getTime()).toBeGreaterThanOrEqual(before.getTime());
     expect(loginCode.usedAt!.getTime()).toBeLessThanOrEqual(after.getTime());
     // Prisma가 읽지 않는 열까지 포함해 저장된 줄 전체에 토큰 원본이 없는지 확인한다.
     const storedRows = await prisma.$queryRaw<{ data: unknown }[]>`
@@ -409,28 +382,20 @@ describe('AuthService.verifyCode', () => {
     await service.requestCode(email);
     expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(email, code);
 
-    const result = await service.verifyCode(
-      email,
-      sendLoginCode.mock.calls[0][1],
-      name,
-    );
+    const result = await service.verifyCode(email, sendLoginCode.mock.calls[0][1], name);
 
     expect(result).toEqual({
       user: { id: expect.any(String), email, name },
       token: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
     });
-    expect(await prisma.user.findMany()).toEqual([
-      expect.objectContaining(result.user),
-    ]);
+    expect(await prisma.user.findMany()).toEqual([expect.objectContaining(result.user)]);
     expect(await prisma.session.findMany()).toEqual([
       expect.objectContaining({
         userId: result.user.id,
         tokenHash: createHash('sha256').update(result.token).digest('hex'),
       }),
     ]);
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
       attempts: 1,
       usedAt: expect.any(Date),
     });
@@ -443,13 +408,9 @@ describe('AuthService.verifyCode', () => {
     });
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const error = await service
-        .verifyCode(email, code)
-        .catch((error: unknown) => error);
+      const error = await service.verifyCode(email, code).catch((error: unknown) => error);
       expectCodeError(error, 'NAME_REQUIRED');
-      expect(
-        await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-      ).toEqual(before);
+      expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toEqual(before);
       expect(await prisma.user.count()).toBe(0);
       expect(await prisma.session.count()).toBe(0);
     }
@@ -459,9 +420,7 @@ describe('AuthService.verifyCode', () => {
     expect(result.user).toEqual({ id: expect.any(String), email, name });
     expect(await prisma.user.count()).toBe(1);
     expect(await prisma.session.count()).toBe(1);
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
       attempts: 1,
       usedAt: expect.any(Date),
     });
@@ -470,20 +429,14 @@ describe('AuthService.verifyCode', () => {
   it('네 번 틀린 새 사용자도 다섯 번째에 맞힌 뒤 이름을 더해 가입할 수 있다', async () => {
     await createLoginCode();
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      const error = await service
-        .verifyCode(email, wrongCode)
-        .catch((error: unknown) => error);
+      const error = await service.verifyCode(email, wrongCode).catch((error: unknown) => error);
       expectCodeError(error, 'CODE_WRONG');
     }
 
-    const error = await service
-      .verifyCode(email, code)
-      .catch((error: unknown) => error);
+    const error = await service.verifyCode(email, code).catch((error: unknown) => error);
 
     expectCodeError(error, 'NAME_REQUIRED');
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
       attempts: 4,
       usedAt: null,
     });
@@ -495,9 +448,7 @@ describe('AuthService.verifyCode', () => {
     });
     expect(await prisma.user.count()).toBe(1);
     expect(await prisma.session.count()).toBe(1);
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
       attempts: 5,
       usedAt: expect.any(Date),
     });
@@ -513,9 +464,7 @@ describe('AuthService.verifyCode', () => {
         .catch((error: unknown) => error);
 
       expectCodeError(error, 'CODE_WRONG');
-      expect(
-        await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-      ).toMatchObject({
+      expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
         attempts: 1,
         usedAt: null,
       });
@@ -539,15 +488,11 @@ describe('AuthService.verifyCode', () => {
     expect(before).toMatchObject({ attempts: 5, usedAt: null });
     compare.mockClear();
 
-    const error = await service
-      .verifyCode(email, code, name)
-      .catch((error: unknown) => error);
+    const error = await service.verifyCode(email, code, name).catch((error: unknown) => error);
 
     expectCodeError(error, 'CODE_EXPIRED');
     expect(compare).not.toHaveBeenCalled();
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toEqual(before);
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toEqual(before);
     expect(await prisma.user.count()).toBe(0);
     expect(await prisma.session.count()).toBe(0);
   });
@@ -557,14 +502,10 @@ describe('AuthService.verifyCode', () => {
     const compare = vi.spyOn(bcrypt, 'compare');
 
     const results = await Promise.allSettled(
-      Array.from({ length: 10 }, () =>
-        service.verifyCode(email, wrongCode, name),
-      ),
+      Array.from({ length: 10 }, () => service.verifyCode(email, wrongCode, name)),
     );
 
-    expect(
-      results.filter((result) => result.status === 'fulfilled'),
-    ).toHaveLength(0);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(0);
     const failures = results.filter((result) => result.status === 'rejected');
     const errorCodes = failures.map(({ reason }) => {
       expect(reason).toBeInstanceOf(UnprocessableEntityException);
@@ -572,22 +513,12 @@ describe('AuthService.verifyCode', () => {
         code: string;
       };
     });
-    expect(errorCodes.filter(({ code }) => code === 'CODE_WRONG')).toHaveLength(
-      5,
-    );
-    expect(
-      errorCodes.filter(({ code }) => code === 'CODE_EXPIRED'),
-    ).toHaveLength(5);
-    failures.forEach(({ reason }, index) =>
-      expectCodeError(reason, errorCodes[index].code),
-    );
+    expect(errorCodes.filter(({ code }) => code === 'CODE_WRONG')).toHaveLength(5);
+    expect(errorCodes.filter(({ code }) => code === 'CODE_EXPIRED')).toHaveLength(5);
+    failures.forEach(({ reason }, index) => expectCodeError(reason, errorCodes[index].code));
     expect(compare).toHaveBeenCalledTimes(5);
-    expect(compare.mock.calls).toEqual(
-      Array.from({ length: 5 }, () => [wrongCode, codeHash]),
-    );
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({
+    expect(compare.mock.calls).toEqual(Array.from({ length: 5 }, () => [wrongCode, codeHash]));
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
       attempts: 5,
       usedAt: null,
     });
@@ -617,21 +548,11 @@ describe('AuthService.verifyCode', () => {
       });
 
       const results = await Promise.allSettled([
-        service.verifyCode(
-          email,
-          code,
-          state === '새 사용자' ? name : undefined,
-        ),
-        service.verifyCode(
-          email,
-          code,
-          state === '새 사용자' ? name : undefined,
-        ),
+        service.verifyCode(email, code, state === '새 사용자' ? name : undefined),
+        service.verifyCode(email, code, state === '새 사용자' ? name : undefined),
       ]);
 
-      const successes = results.filter(
-        (result) => result.status === 'fulfilled',
-      );
+      const successes = results.filter((result) => result.status === 'fulfilled');
       const failures = results.filter((result) => result.status === 'rejected');
       expect(successes).toHaveLength(1);
       expect(failures).toHaveLength(1);
@@ -642,50 +563,39 @@ describe('AuthService.verifyCode', () => {
       expect(await prisma.session.findMany()).toEqual([
         expect.objectContaining({
           userId: successes[0].value.user.id,
-          tokenHash: createHash('sha256')
-            .update(successes[0].value.token)
-            .digest('hex'),
+          tokenHash: createHash('sha256').update(successes[0].value.token).digest('hex'),
         }),
       ]);
-      expect(
-        await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-      ).toMatchObject({
+      expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
         attempts: 2,
         usedAt: expect.any(Date),
       });
     },
   );
 
-  it.each([0, 1])(
-    '만료 시각이 DB 현재보다 %s초 전이면 비교하지 않고 거부한다',
-    async (seconds) => {
-      await createLoginCode();
-      await prisma.$executeRaw`
+  it.each([0, 1])('만료 시각이 DB 현재보다 %s초 전이면 비교하지 않고 거부한다', async (seconds) => {
+    await createLoginCode();
+    await prisma.$executeRaw`
       UPDATE login_codes
       SET created_at = now() - interval '10 minutes' - ${seconds} * interval '1 second',
           expires_at = now() - ${seconds} * interval '1 second'
       WHERE email = ${email}
     `;
-      const before = await prisma.loginCode.findUniqueOrThrow({
-        where: { email },
-      });
-      const compare = vi.spyOn(bcrypt, 'compare');
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(new Date('2000-01-01T00:00:00Z'));
+    const before = await prisma.loginCode.findUniqueOrThrow({
+      where: { email },
+    });
+    const compare = vi.spyOn(bcrypt, 'compare');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2000-01-01T00:00:00Z'));
 
-      const error = await service
-        .verifyCode(email, code, name)
-        .catch((error: unknown) => error);
+    const error = await service.verifyCode(email, code, name).catch((error: unknown) => error);
 
-      expectCodeError(error, 'CODE_EXPIRED');
-      expect(compare).not.toHaveBeenCalled();
-      expect(
-        await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-      ).toEqual(before);
-      expect(await prisma.user.count()).toBe(0);
-      expect(await prisma.session.count()).toBe(0);
-    },
-  );
+    expectCodeError(error, 'CODE_EXPIRED');
+    expect(compare).not.toHaveBeenCalled();
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toEqual(before);
+    expect(await prisma.user.count()).toBe(0);
+    expect(await prisma.session.count()).toBe(0);
+  });
 
   it('쓴 코드는 다시 비교하지 않고 기존 사용자와 세션도 그대로 둔다', async () => {
     await createLoginCode();
@@ -697,15 +607,11 @@ describe('AuthService.verifyCode', () => {
     const sessions = await prisma.session.findMany();
     const compare = vi.spyOn(bcrypt, 'compare');
 
-    const error = await service
-      .verifyCode(email, code, name)
-      .catch((error: unknown) => error);
+    const error = await service.verifyCode(email, code, name).catch((error: unknown) => error);
 
     expectCodeError(error, 'CODE_EXPIRED');
     expect(compare).not.toHaveBeenCalled();
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toEqual(before);
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toEqual(before);
     expect(await prisma.user.findMany()).toEqual(users);
     expect(await prisma.session.findMany()).toEqual(sessions);
   });
@@ -736,16 +642,12 @@ describe('AuthService.verifyCode', () => {
     await service.requestCode(email);
     expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(email, nextCode);
 
-    const error = await service
-      .verifyCode(email, code, name)
-      .catch((error: unknown) => error);
+    const error = await service.verifyCode(email, code, name).catch((error: unknown) => error);
 
     expectCodeError(error, 'CODE_WRONG');
     expect(await prisma.user.count()).toBe(0);
     expect(await prisma.session.count()).toBe(0);
-    await expect(
-      service.verifyCode(email, nextCode, name),
-    ).resolves.toMatchObject({
+    await expect(service.verifyCode(email, nextCode, name)).resolves.toMatchObject({
       user: { email, name },
     });
     expect(await prisma.user.count()).toBe(1);
@@ -755,42 +657,32 @@ describe('AuthService.verifyCode', () => {
   it('비교 중 재발급되면 옛 코드는 CODE_EXPIRED이고 새 코드는 시도 0번부터 쓸 수 있다', async () => {
     await createLoginCode();
     const originalCompare = bcrypt.compare;
-    const compare = vi
-      .spyOn(bcrypt, 'compare')
-      .mockImplementationOnce(async (input, hash) => {
-        await prisma.$executeRaw`
+    const compare = vi.spyOn(bcrypt, 'compare').mockImplementationOnce(async (input, hash) => {
+      await prisma.$executeRaw`
         UPDATE login_codes
         SET code_hash = ${nextCodeHash}, attempts = 0, used_at = NULL,
             created_at = now(), expires_at = now() + interval '10 minutes'
         WHERE email = ${email}
       `;
-        return originalCompare(input, hash);
-      });
+      return originalCompare(input, hash);
+    });
 
-    const error = await service
-      .verifyCode(email, code, name)
-      .catch((error: unknown) => error);
+    const error = await service.verifyCode(email, code, name).catch((error: unknown) => error);
 
     expectCodeError(error, 'CODE_EXPIRED');
     expect(compare).toHaveBeenCalledExactlyOnceWith(code, codeHash);
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
       codeHash: nextCodeHash,
       attempts: 0,
       usedAt: null,
     });
     expect(await prisma.user.count()).toBe(0);
     expect(await prisma.session.count()).toBe(0);
-    await expect(
-      service.verifyCode(email, nextCode, name),
-    ).resolves.toMatchObject({
+    await expect(service.verifyCode(email, nextCode, name)).resolves.toMatchObject({
       user: { email, name },
     });
     expect(compare).toHaveBeenLastCalledWith(nextCode, nextCodeHash);
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
       attempts: 1,
       usedAt: expect.any(Date),
     });
@@ -817,28 +709,20 @@ describe('AuthService.verifyCode', () => {
       return originalCompare(input, hash);
     });
 
-    const error = await service
-      .verifyCode(email, code)
-      .catch((error: unknown) => error);
+    const error = await service.verifyCode(email, code).catch((error: unknown) => error);
 
     expectCodeError(error, 'NAME_REQUIRED');
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
       codeHash: nextCodeHash,
       attempts: 1,
       usedAt: null,
     });
     expect(await prisma.user.count()).toBe(0);
     expect(await prisma.session.count()).toBe(0);
-    await expect(
-      service.verifyCode(email, nextCode, name),
-    ).resolves.toMatchObject({
+    await expect(service.verifyCode(email, nextCode, name)).resolves.toMatchObject({
       user: { email, name },
     });
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
       attempts: 2,
       usedAt: expect.any(Date),
     });
@@ -855,14 +739,10 @@ describe('AuthService.verifyCode', () => {
       return originalCompare(input, hash);
     });
 
-    const error = await service
-      .verifyCode(email, code, name)
-      .catch((error: unknown) => error);
+    const error = await service.verifyCode(email, code, name).catch((error: unknown) => error);
 
     expectCodeError(error, 'CODE_EXPIRED');
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
       attempts: 1,
       usedAt: null,
     });
@@ -883,16 +763,12 @@ describe('AuthService.verifyCode', () => {
     `;
     const sessions = await prisma.session.findMany();
     // 토큰 해시의 고유 제약을 이용해 실제 트랜잭션의 마지막 저장을 실패시킨다.
-    const createToken = vi
-      .spyOn(sessionTokens, 'createSessionToken')
-      .mockReturnValue(token);
+    const createToken = vi.spyOn(sessionTokens, 'createSessionToken').mockReturnValue(token);
 
     await expect(service.verifyCode(email, code, name)).rejects.toThrow();
 
     expect(createToken).toHaveBeenCalledOnce();
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
       attempts: 1,
       usedAt: null,
     });
@@ -917,9 +793,7 @@ describe('AuthService.verifyCode', () => {
 
     expect(result.user).toEqual({ id: user.id, email, name: user.name });
     expect(await prisma.user.findMany()).toEqual([user]);
-    expect(await prisma.session.findMany()).toEqual([
-      expect.objectContaining({ userId: user.id }),
-    ]);
+    expect(await prisma.session.findMany()).toEqual([expect.objectContaining({ userId: user.id })]);
   });
 });
 
@@ -1012,9 +886,7 @@ describe('AuthService.findSessionUser', () => {
     await createSession(user.id);
     await createSession(otherUser.id, 'other-session-token');
 
-    await expect(
-      service.findSessionUser('other-session-token'),
-    ).resolves.toEqual(otherUser);
+    await expect(service.findSessionUser('other-session-token')).resolves.toEqual(otherUser);
     await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
   });
 
@@ -1054,22 +926,14 @@ describe('AuthService.findSessionUser', () => {
     const after = await prisma.session.findUniqueOrThrow({
       where: { tokenHash },
     });
-    expect(after.lastSeenAt.getTime()).toBeGreaterThan(
-      before.lastSeenAt.getTime(),
-    );
-    expect(after.lastSeenAt.getTime()).toBeGreaterThanOrEqual(
-      startedAt.getTime(),
-    );
-    expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(
-      finishedAt.getTime(),
-    );
+    expect(after.lastSeenAt.getTime()).toBeGreaterThan(before.lastSeenAt.getTime());
+    expect(after.lastSeenAt.getTime()).toBeGreaterThanOrEqual(startedAt.getTime());
+    expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(finishedAt.getTime());
     // 활동해도 최초 만료 시각(최대 7일)은 늘어나지 않는다.
     expect(after).toEqual({ ...before, lastSeenAt: after.lastSeenAt });
 
     await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
-    expect(
-      await prisma.session.findUniqueOrThrow({ where: { tokenHash } }),
-    ).toEqual(after);
+    expect(await prisma.session.findUniqueOrThrow({ where: { tokenHash } })).toEqual(after);
   });
 
   it('조회 뒤 다른 요청이 먼저 갱신하면 마지막 사용 시각을 덮어쓰지 않는다', async () => {
@@ -1077,9 +941,7 @@ describe('AuthService.findSessionUser', () => {
     const executeRaw = prisma.$executeRaw.bind(prisma);
     // 이 호출은 await만 하므로 PrismaPromise 대신 일반 Promise로 감쌀 수 있다.
     const sessionDatabase: {
-      $executeRaw: (
-        ...args: Parameters<PrismaService['$executeRaw']>
-      ) => Promise<number>;
+      $executeRaw: (...args: Parameters<PrismaService['$executeRaw']>) => Promise<number>;
     } = prisma;
     let refreshedLastSeenAt: Date | undefined;
     const updateSession = vi
@@ -1148,14 +1010,11 @@ describe('AuthService.findSessionUser', () => {
         const before = await tx.session.findUniqueOrThrow({
           where: { tokenHash },
         });
-        const transactionService = new AuthService(
-          tx as PrismaService,
-          new MailService(),
-        );
+        const transactionService = new AuthService(tx as PrismaService, new MailService());
 
-        await expect(
-          transactionService.findSessionUser(sessionId),
-        ).resolves.toEqual(allowed ? user : null);
+        await expect(transactionService.findSessionUser(sessionId)).resolves.toEqual(
+          allowed ? user : null,
+        );
 
         expect(await tx.session.findMany()).toEqual([before]);
       });
@@ -1167,25 +1026,15 @@ describe('AuthService.findSessionUser', () => {
       data: { email: 'other-session@example.com', name: '다른 사용자' },
     });
     const target = await createSession(user.id, sessionId, 360);
-    const sameUserSession = await createSession(
-      user.id,
-      'same-user-other-token',
-      360,
-    );
-    const otherUserSession = await createSession(
-      otherUser.id,
-      'other-user-token',
-      360,
-    );
+    const sameUserSession = await createSession(user.id, 'same-user-other-token', 360);
+    const otherUserSession = await createSession(otherUser.id, 'other-user-token', 360);
 
     await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
 
     const after = await prisma.session.findUniqueOrThrow({
       where: { id: target.id },
     });
-    expect(after.lastSeenAt.getTime()).toBeGreaterThan(
-      target.lastSeenAt.getTime(),
-    );
+    expect(after.lastSeenAt.getTime()).toBeGreaterThan(target.lastSeenAt.getTime());
     expect(
       await prisma.session.findUniqueOrThrow({
         where: { id: sameUserSession.id },
@@ -1203,12 +1052,7 @@ describe('AuthService.findSessionUser', () => {
     async (serverTime) => {
       const stale = await createSession(user.id, sessionId, 360);
       const fresh = await createSession(user.id, 'fresh-session-token', 240);
-      const expired = await createSession(
-        user.id,
-        'expired-session-token',
-        360,
-        -1,
-      );
+      const expired = await createSession(user.id, 'expired-session-token', 360, -1);
       const idle = await createSession(user.id, 'idle-session-token', 86401);
       const [{ now: startedAt }] = await prisma.$queryRaw<{ now: Date }[]>`
         SELECT now()
@@ -1217,15 +1061,9 @@ describe('AuthService.findSessionUser', () => {
       vi.setSystemTime(new Date(serverTime));
 
       await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
-      await expect(
-        service.findSessionUser('fresh-session-token'),
-      ).resolves.toEqual(user);
-      await expect(
-        service.findSessionUser('expired-session-token'),
-      ).resolves.toBeNull();
-      await expect(
-        service.findSessionUser('idle-session-token'),
-      ).resolves.toBeNull();
+      await expect(service.findSessionUser('fresh-session-token')).resolves.toEqual(user);
+      await expect(service.findSessionUser('expired-session-token')).resolves.toBeNull();
+      await expect(service.findSessionUser('idle-session-token')).resolves.toBeNull();
 
       const [{ now: finishedAt }] = await prisma.$queryRaw<{ now: Date }[]>`
         SELECT now()
@@ -1233,22 +1071,14 @@ describe('AuthService.findSessionUser', () => {
       const after = await prisma.session.findUniqueOrThrow({
         where: { tokenHash },
       });
-      expect(after.lastSeenAt.getTime()).toBeGreaterThanOrEqual(
-        startedAt.getTime(),
-      );
-      expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(
-        finishedAt.getTime(),
-      );
+      expect(after.lastSeenAt.getTime()).toBeGreaterThanOrEqual(startedAt.getTime());
+      expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(finishedAt.getTime());
       expect(after).toEqual({ ...stale, lastSeenAt: after.lastSeenAt });
-      expect(
-        await prisma.session.findUniqueOrThrow({ where: { id: fresh.id } }),
-      ).toEqual(fresh);
-      expect(
-        await prisma.session.findUniqueOrThrow({ where: { id: expired.id } }),
-      ).toEqual(expired);
-      expect(
-        await prisma.session.findUniqueOrThrow({ where: { id: idle.id } }),
-      ).toEqual(idle);
+      expect(await prisma.session.findUniqueOrThrow({ where: { id: fresh.id } })).toEqual(fresh);
+      expect(await prisma.session.findUniqueOrThrow({ where: { id: expired.id } })).toEqual(
+        expired,
+      );
+      expect(await prisma.session.findUniqueOrThrow({ where: { id: idle.id } })).toEqual(idle);
     },
   );
 
@@ -1288,14 +1118,8 @@ describe('AuthService.findSessionUser', () => {
     const after = await prisma.session.findUniqueOrThrow({
       where: { tokenHash },
     });
-    expect(after.lastSeenAt.getTime()).toBeGreaterThanOrEqual(
-      startedAt.getTime(),
-    );
-    expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(
-      finishedAt.getTime(),
-    );
-    expect(await prisma.session.findMany()).toEqual([
-      { ...before, lastSeenAt: after.lastSeenAt },
-    ]);
+    expect(after.lastSeenAt.getTime()).toBeGreaterThanOrEqual(startedAt.getTime());
+    expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(finishedAt.getTime());
+    expect(await prisma.session.findMany()).toEqual([{ ...before, lastSeenAt: after.lastSeenAt }]);
   });
 });

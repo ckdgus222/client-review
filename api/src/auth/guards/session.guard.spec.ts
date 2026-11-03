@@ -1,9 +1,5 @@
 import 'reflect-metadata';
-import {
-  type ExecutionContext,
-  SetMetadata,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { type ExecutionContext, SetMetadata, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { AuthService, AuthUser } from '../auth.service.js';
 import { IS_PUBLIC, Public } from '../decorators/public.decorator.js';
@@ -68,9 +64,7 @@ describe('SessionGuard', () => {
 
     expect(reflector.get(IS_PUBLIC, handler)).toBe(true);
     expect(reflector.get(IS_PUBLIC, TestController)).toBeUndefined();
-    await expect(
-      guard.canActivate(createContext(request, handler)),
-    ).resolves.toBe(true);
+    await expect(guard.canActivate(createContext(request, handler))).resolves.toBe(true);
     expect(findSessionUser).not.toHaveBeenCalled();
     expect(request).not.toHaveProperty('user');
   });
@@ -92,29 +86,21 @@ describe('SessionGuard', () => {
     const request: TestRequest = { cookies: { sid: 'public-test-session' } };
 
     await expect(
-      guard.canActivate(
-        createContext(request, TestController.prototype.publicRoute),
-      ),
+      guard.canActivate(createContext(request, TestController.prototype.publicRoute)),
     ).resolves.toBe(true);
     expect(findSessionUser).not.toHaveBeenCalled();
     expect(request).not.toHaveProperty('user');
   });
 
   it('같은 클래스의 다른 메서드는 Public 표시를 물려받지 않는다', async () => {
-    await expect(guard.canActivate(createContext({}))).rejects.toThrow(
-      UnauthorizedException,
-    );
+    await expect(guard.canActivate(createContext({}))).rejects.toThrow(UnauthorizedException);
     expect(findSessionUser).not.toHaveBeenCalled();
   });
 
   it('메서드의 비공개 표시가 클래스의 Public보다 우선한다', async () => {
     await expect(
       guard.canActivate(
-        createContext(
-          {},
-          PublicController.prototype.protectedRoute,
-          PublicController,
-        ),
+        createContext({}, PublicController.prototype.protectedRoute, PublicController),
       ),
     ).rejects.toMatchObject({ status: 401 });
     expect(findSessionUser).not.toHaveBeenCalled();
@@ -164,9 +150,7 @@ describe('SessionGuard', () => {
 
     await expect(guard.canActivate(createContext(request))).resolves.toBe(true);
 
-    expect(findSessionUser).toHaveBeenCalledExactlyOnceWith(
-      'valid-test-session',
-    );
+    expect(findSessionUser).toHaveBeenCalledExactlyOnceWith('valid-test-session');
     expect(request.user).toEqual(user);
     expect(request.cookies).toEqual({
       sid: 'valid-test-session',

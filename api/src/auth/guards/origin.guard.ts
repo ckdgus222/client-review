@@ -20,9 +20,7 @@ export class OriginGuard implements CanActivate {
     const appOrigins = process.env.APP_ORIGINS;
     // 값이 없으면 모든 쓰기 요청이 403이 된다. 켜질 때 바로 멈춰서 알린다.
     if (!appOrigins) throw new Error('APP_ORIGINS가 없어요');
-    this.allowedOrigins = new Set(
-      appOrigins.split(',').map((origin) => origin.trim()),
-    );
+    this.allowedOrigins = new Set(appOrigins.split(',').map((origin) => origin.trim()));
   }
 
   canActivate(context: ExecutionContext) {

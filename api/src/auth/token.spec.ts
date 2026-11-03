@@ -22,9 +22,7 @@ describe('hashSessionToken', () => {
     // 공개된 SHA-256 예제 값으로 알고리즘과 인코딩을 함께 확인한다.
     const hash = hashSessionToken('abc');
 
-    expect(hash).toBe(
-      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
-    );
+    expect(hash).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
   });
 

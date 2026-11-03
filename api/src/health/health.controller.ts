@@ -1,9 +1,4 @@
-import {
-  Controller,
-  Get,
-  Logger,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Controller, Get, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { Public } from '../auth/decorators/public.decorator.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -23,10 +18,7 @@ export class HealthController {
     let timer: NodeJS.Timeout | undefined;
     // connectionTimeoutMillis는 새 연결에만 걸린다. 이미 열린 연결에서 조회가 멈추면 이 타이머가 끊는다.
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error('DB 응답 시간 초과')),
-        DB_TIMEOUT_MS,
-      );
+      timer = setTimeout(() => reject(new Error('DB 응답 시간 초과')), DB_TIMEOUT_MS);
     });
     try {
       await Promise.race([this.prisma.$queryRaw`SELECT 1`, timeout]);

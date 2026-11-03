@@ -1,8 +1,4 @@
-import {
-  HttpStatus,
-  type INestApplication,
-  ValidationPipe,
-} from '@nestjs/common';
+import { HttpStatus, type INestApplication, ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 
 // main.ts와 e2e 테스트가 같이 부른다. 테스트 앱이 실제 앱과 같은 설정으로 돌게 하려는 것이다.

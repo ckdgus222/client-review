@@ -1,13 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  HttpStatus,
-  Post,
-  Req,
-  Res,
-} from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@nestjs/common';
 import type { CookieOptions, Request, Response } from 'express';
 import { AuthService } from './auth.service.js';
 import { Public } from './decorators/public.decorator.js';
@@ -54,11 +45,7 @@ export class AuthController {
     // passthrough: 쿠키만 직접 붙이고, 돌려준 값은 Nest가 평소처럼 JSON으로 보낸다.
     @Res({ passthrough: true }) response: Response,
   ) {
-    const { user, token } = await this.auth.verifyCode(
-      body.email,
-      body.code,
-      body.name,
-    );
+    const { user, token } = await this.auth.verifyCode(body.email, body.code, body.name);
     // 본문에 넣으면 페이지의 JS가 읽을 수 있어서 httpOnly가 소용없어진다. 그래서 쿠키로만 보낸다.
     response.cookie(SESSION_COOKIE, token, {
       ...sessionCookieOptions(),
@@ -76,10 +63,7 @@ export class AuthController {
   @Public()
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async logout(
-    @Req() request: Request,
-    @Res({ passthrough: true }) response: Response,
-  ) {
+  async logout(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
     const token = readSessionToken(request);
     if (token !== undefined) await this.auth.deleteSession(token);
     response.clearCookie(SESSION_COOKIE, sessionCookieOptions());

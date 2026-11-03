@@ -57,10 +57,7 @@ export class AuthService {
       RETURNING id
     `;
     if (issued.length === 0) {
-      throw new HttpException(
-        '코드는 1분에 한 번만 받을 수 있어요',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+      throw new HttpException('코드는 1분에 한 번만 받을 수 있어요', HttpStatus.TOO_MANY_REQUESTS);
     }
 
     this.mail.sendLoginCode(email, code);
@@ -130,9 +127,7 @@ export class AuthService {
   async findSessionUser(token: string): Promise<AuthUser | null> {
     const tokenHash = hashSessionToken(token);
     // 끝난 세션 줄은 지우지 않고 남아 있어서, 찾을 때 시각으로 거른다.
-    const [found] = await this.prisma.$queryRaw<
-      (AuthUser & { is_stale: boolean })[]
-    >`
+    const [found] = await this.prisma.$queryRaw<(AuthUser & { is_stale: boolean })[]>`
       SELECT u.id, u.email, u.name,
              s.last_seen_at < now() - interval '5 minutes' AS is_stale
       FROM sessions s JOIN users u ON u.id = s.user_id

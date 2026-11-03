@@ -4,8 +4,7 @@ import { resetDatabase } from './reset-database.js';
 describe('로그인 표와 테스트 DB', () => {
   const prisma = new PrismaService();
   const expiresAt = new Date('2030-01-01T00:00:00.000Z');
-  const uuidPattern =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
   beforeEach(async () => {
     await resetDatabase(prisma);
@@ -66,9 +65,7 @@ describe('로그인 표와 테스트 DB', () => {
       ),
     );
 
-    expect(
-      results.filter((result) => result.status === 'fulfilled'),
-    ).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect(results.filter((result) => result.status === 'rejected')).toEqual([
       expect.objectContaining({
         reason: expect.objectContaining({ code: 'P2002' }),
@@ -141,16 +138,12 @@ describe('로그인 표와 테스트 DB', () => {
         tokenHash: 'remaining-token-hash',
       }),
     ]);
-    expect(
-      await prisma.user.findUnique({ where: { id: remainingUser.id } }),
-    ).not.toBeNull();
+    expect(await prisma.user.findUnique({ where: { id: remainingUser.id } })).not.toBeNull();
   });
 
   it('users의 id와 created_at을 생략하면 DB가 UUID와 현재 시각을 만든다', async () => {
     // Prisma의 기본값 처리를 거치지 않고 DB 자체의 기본값을 검사한다.
-    const [row] = await prisma.$queryRaw<
-      { id: string; created_at_is_now: boolean }[]
-    >`
+    const [row] = await prisma.$queryRaw<{ id: string; created_at_is_now: boolean }[]>`
       INSERT INTO users (email, name)
       VALUES ('user@example.com', '사용자')
       RETURNING id, created_at = now() AS created_at_is_now
@@ -158,9 +151,7 @@ describe('로그인 표와 테스트 DB', () => {
 
     expect(row.id).toMatch(uuidPattern);
     expect(row.created_at_is_now).toBe(true);
-    expect(
-      await prisma.user.findUniqueOrThrow({ where: { id: row.id } }),
-    ).toEqual({
+    expect(await prisma.user.findUniqueOrThrow({ where: { id: row.id } })).toEqual({
       id: row.id,
       email: 'user@example.com',
       name: '사용자',
@@ -169,9 +160,7 @@ describe('로그인 표와 테스트 DB', () => {
   });
 
   it('가입 전 코드도 저장되고 DB가 UUID·발급 시각·시도 0번·미사용 기본값을 만든다', async () => {
-    const [row] = await prisma.$queryRaw<
-      { id: string; created_at_is_now: boolean }[]
-    >`
+    const [row] = await prisma.$queryRaw<{ id: string; created_at_is_now: boolean }[]>`
       INSERT INTO login_codes (email, code_hash, expires_at)
       VALUES ('new@example.com', 'test-code-hash', ${expiresAt})
       RETURNING id, created_at = now() AS created_at_is_now
@@ -180,9 +169,7 @@ describe('로그인 표와 테스트 DB', () => {
     expect(row.id).toMatch(uuidPattern);
     expect(row.created_at_is_now).toBe(true);
     expect(await prisma.user.count()).toBe(0);
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { id: row.id } }),
-    ).toEqual({
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { id: row.id } })).toEqual({
       id: row.id,
       email: 'new@example.com',
       codeHash: 'test-code-hash',
@@ -213,9 +200,7 @@ describe('로그인 표와 테스트 DB', () => {
     expect(row.id).toMatch(uuidPattern);
     expect(row.created_at_is_now).toBe(true);
     expect(row.last_seen_at_is_now).toBe(true);
-    expect(
-      await prisma.session.findUniqueOrThrow({ where: { id: row.id } }),
-    ).toEqual({
+    expect(await prisma.session.findUniqueOrThrow({ where: { id: row.id } })).toEqual({
       id: row.id,
       userId: user.id,
       tokenHash: 'test-token-hash',

@@ -35,9 +35,7 @@ describe('테스트 DB 설정과 마이그레이션', () => {
     async (url) => {
       vi.stubEnv('TEST_DATABASE_URL', url);
 
-      await expect(import('../vitest.config.js')).rejects.toThrowError(
-        /TEST_DATABASE_URL/,
-      );
+      await expect(import('../vitest.config.js')).rejects.toThrowError(/TEST_DATABASE_URL/);
 
       expect(execFileSync).not.toHaveBeenCalled();
     },
@@ -46,11 +44,9 @@ describe('테스트 DB 설정과 마이그레이션', () => {
   it('루트 .env가 있으면 거기서 읽은 테스트 DB 주소를 검사해 사용한다', async () => {
     vi.stubEnv('TEST_DATABASE_URL', undefined);
     vi.mocked(existsSync).mockReturnValue(true);
-    const loadEnvFile = vi
-      .spyOn(process, 'loadEnvFile')
-      .mockImplementation(() => {
-        vi.stubEnv('TEST_DATABASE_URL', testDatabaseUrl);
-      });
+    const loadEnvFile = vi.spyOn(process, 'loadEnvFile').mockImplementation(() => {
+      vi.stubEnv('TEST_DATABASE_URL', testDatabaseUrl);
+    });
 
     await import('../vitest.config.js');
 

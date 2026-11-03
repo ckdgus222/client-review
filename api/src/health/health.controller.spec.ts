@@ -1,7 +1,4 @@
-import {
-  type INestApplication,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { type INestApplication, ServiceUnavailableException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Server } from 'node:http';
 import request from 'supertest';
@@ -36,10 +33,7 @@ describe('HealthController', () => {
   });
 
   it('실제 DB 조회가 성공하면 GET /api/health가 200과 ok를 반환한다', async () => {
-    await request(server)
-      .get('/api/health')
-      .expect(200)
-      .expect({ status: 'ok' });
+    await request(server).get('/api/health').expect(200).expect({ status: 'ok' });
   });
 
   it('DB 조회가 실패하면 GET /api/health가 503을 반환한다', async () => {
@@ -50,9 +44,7 @@ describe('HealthController', () => {
 
   it('DB 조회가 끝나지 않으면 5초까지 기다린 뒤 503 오류를 던진다', async () => {
     vi.useFakeTimers();
-    const pendingQuery = new Promise<never>(() => {}) as ReturnType<
-      PrismaService['$queryRaw']
-    >;
+    const pendingQuery = new Promise<never>(() => {}) as ReturnType<PrismaService['$queryRaw']>;
     vi.spyOn(prisma, '$queryRaw').mockReturnValue(pendingQuery);
     const onResolved = vi.fn();
     const onRejected = vi.fn();
@@ -66,9 +58,7 @@ describe('HealthController', () => {
     await result;
 
     expect(onResolved).not.toHaveBeenCalled();
-    expect(onRejected).toHaveBeenCalledExactlyOnceWith(
-      expect.any(ServiceUnavailableException),
-    );
+    expect(onRejected).toHaveBeenCalledExactlyOnceWith(expect.any(ServiceUnavailableException));
     const error = onRejected.mock.calls[0][0] as ServiceUnavailableException;
     expect(error.getStatus()).toBe(503);
   });

@@ -59,8 +59,7 @@ describe('로그인 API (e2e)', () => {
   let prisma: PrismaService;
   const sendLoginCode = vi.fn<MailService['sendLoginCode']>();
 
-  const post = (path: string) =>
-    request(server).post(path).set('Origin', origin);
+  const post = (path: string) => request(server).post(path).set('Origin', origin);
 
   const requestCode = async (address = email, allowedOrigin = origin) => {
     const response = await request(server)
@@ -70,10 +69,7 @@ describe('로그인 API (e2e)', () => {
       .expect(204);
     expect(response.text).toBe('');
     const delivery = sendLoginCode.mock.lastCall;
-    expect(delivery).toEqual([
-      address.trim().toLowerCase(),
-      expect.stringMatching(/^\d{6}$/),
-    ]);
+    expect(delivery).toEqual([address.trim().toLowerCase(), expect.stringMatching(/^\d{6}$/)]);
     return delivery![1];
   };
 
@@ -124,12 +120,7 @@ describe('로그인 API (e2e)', () => {
 
     const attributes = sessionCookie(response).split('; ');
     expect(attributes).toEqual(
-      expect.arrayContaining([
-        'HttpOnly',
-        'SameSite=Lax',
-        'Path=/api',
-        'Max-Age=604800',
-      ]),
+      expect.arrayContaining(['HttpOnly', 'SameSite=Lax', 'Path=/api', 'Max-Age=604800']),
     );
     expect(attributes).not.toContain('Secure');
     const token = cookie.slice('sid='.length);
@@ -138,9 +129,7 @@ describe('로그인 API (e2e)', () => {
     const sessions = await prisma.session.findMany();
     expect(sessions).toHaveLength(1);
     expect(sessions[0].userId).toBe(user.id);
-    expect(sessions[0].tokenHash).toBe(
-      createHash('sha256').update(token).digest('hex'),
-    );
+    expect(sessions[0].tokenHash).toBe(createHash('sha256').update(token).digest('hex'));
     expect(sessions[0].tokenHash).not.toBe(token);
     const savedCode = await prisma.loginCode.findUniqueOrThrow({
       where: { email },
@@ -149,14 +138,8 @@ describe('로그인 API (e2e)', () => {
     expect(savedCode.codeHash).toMatch(/^\$2[aby]\$12\$/);
     expect(savedCode.usedAt).not.toBeNull();
 
-    await request(server)
-      .get('/api/auth/me')
-      .set('Cookie', cookie)
-      .expect(200)
-      .expect(publicUser);
-    const logout = await post('/api/auth/logout')
-      .set('Cookie', cookie)
-      .expect(204);
+    await request(server).get('/api/auth/me').set('Cookie', cookie).expect(200).expect(publicUser);
+    const logout = await post('/api/auth/logout').set('Cookie', cookie).expect(204);
     expect(logout.text).toBe('');
     expectClearedCookie(logout);
     expect(await prisma.session.count()).toBe(0);
@@ -170,22 +153,15 @@ describe('로그인 API (e2e)', () => {
     { value: '1', secure: false },
     { value: 'false', secure: false },
     { value: undefined, secure: false },
-  ])(
-    'COOKIE_SECURE=$value이면 생성·삭제 쿠키의 Secure는 $secure다',
-    async ({ value, secure }) => {
-      vi.stubEnv('COOKIE_SECURE', value);
-      const { response, cookie } = await login();
-      expect(sessionCookie(response).split('; ').includes('Secure')).toBe(
-        secure,
-      );
-      const logout = await post('/api/auth/logout')
-        .set('Cookie', cookie)
-        .expect(204);
-      expectClearedCookie(logout);
-      expect(sessionCookie(logout).split('; ').includes('Secure')).toBe(secure);
-      expect(await prisma.session.count()).toBe(0);
-    },
-  );
+  ])('COOKIE_SECURE=$value이면 생성·삭제 쿠키의 Secure는 $secure다', async ({ value, secure }) => {
+    vi.stubEnv('COOKIE_SECURE', value);
+    const { response, cookie } = await login();
+    expect(sessionCookie(response).split('; ').includes('Secure')).toBe(secure);
+    const logout = await post('/api/auth/logout').set('Cookie', cookie).expect(204);
+    expectClearedCookie(logout);
+    expect(sessionCookie(logout).split('; ').includes('Secure')).toBe(secure);
+    expect(await prisma.session.count()).toBe(0);
+  });
 
   const invalidEmails = [
     { label: '없음', value: undefined },
@@ -203,26 +179,19 @@ describe('로그인 API (e2e)', () => {
     ['email-code', 'verify-code'].flatMap((endpoint) =>
       invalidEmails.map(({ label, value }) => ({ endpoint, label, value })),
     ),
-  )(
-    '$endpoint에서 email이 $label이면 입력 오류 422다',
-    async ({ endpoint, value }) => {
-      const body =
-        endpoint === 'email-code'
-          ? { email: value }
-          : { email: value, code: '123456', name };
-      const response = await post(`/api/auth/${endpoint}`)
-        .send(body)
-        .expect(422);
-      expect(response.body.statusCode).toBe(422);
-      expect(response.body.message).toEqual(expect.any(Array));
-      expect(response.body).not.toHaveProperty('code');
-      expect(response.headers['set-cookie']).toBeUndefined();
-      expect(sendLoginCode).not.toHaveBeenCalled();
-      expect(await prisma.loginCode.count()).toBe(0);
-      expect(await prisma.user.count()).toBe(0);
-      expect(await prisma.session.count()).toBe(0);
-    },
-  );
+  )('$endpoint에서 email이 $label이면 입력 오류 422다', async ({ endpoint, value }) => {
+    const body =
+      endpoint === 'email-code' ? { email: value } : { email: value, code: '123456', name };
+    const response = await post(`/api/auth/${endpoint}`).send(body).expect(422);
+    expect(response.body.statusCode).toBe(422);
+    expect(response.body.message).toEqual(expect.any(Array));
+    expect(response.body).not.toHaveProperty('code');
+    expect(response.headers['set-cookie']).toBeUndefined();
+    expect(sendLoginCode).not.toHaveBeenCalled();
+    expect(await prisma.loginCode.count()).toBe(0);
+    expect(await prisma.user.count()).toBe(0);
+    expect(await prisma.session.count()).toBe(0);
+  });
 
   it.each([
     { label: '없음', value: undefined },
@@ -243,9 +212,10 @@ describe('로그인 API (e2e)', () => {
       .expect(422);
     expect(response.body.message).toEqual(expect.any(Array));
     expect(response.headers['set-cookie']).toBeUndefined();
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({ attempts: 0, usedAt: null });
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
+      attempts: 0,
+      usedAt: null,
+    });
     expect(await prisma.user.count()).toBe(0);
     expect(await prisma.session.count()).toBe(0);
   });
@@ -257,22 +227,20 @@ describe('로그인 API (e2e)', () => {
     { label: '숫자', value: 123 },
     { label: '배열', value: ['이름'] },
     { label: '객체', value: { name: '이름' } },
-  ])(
-    'name이 $label이면 맞는 코드라도 422이고 가입하지 않는다',
-    async ({ value }) => {
-      const code = await requestCode();
-      const response = await post('/api/auth/verify-code')
-        .send({ email, code, name: value })
-        .expect(422);
-      expect(response.body.message).toEqual(expect.any(Array));
-      expect(response.headers['set-cookie']).toBeUndefined();
-      expect(
-        await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-      ).toMatchObject({ attempts: 0, usedAt: null });
-      expect(await prisma.user.count()).toBe(0);
-      expect(await prisma.session.count()).toBe(0);
-    },
-  );
+  ])('name이 $label이면 맞는 코드라도 422이고 가입하지 않는다', async ({ value }) => {
+    const code = await requestCode();
+    const response = await post('/api/auth/verify-code')
+      .send({ email, code, name: value })
+      .expect(422);
+    expect(response.body.message).toEqual(expect.any(Array));
+    expect(response.headers['set-cookie']).toBeUndefined();
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
+      attempts: 0,
+      usedAt: null,
+    });
+    expect(await prisma.user.count()).toBe(0);
+    expect(await prisma.session.count()).toBe(0);
+  });
 
   it.each([
     { endpoint: 'email-code', kind: '추가 필드' },
@@ -281,22 +249,19 @@ describe('로그인 API (e2e)', () => {
     { endpoint: 'verify-code', kind: '배열 본문' },
   ])('$endpoint에서 $kind는 422다', async ({ endpoint, kind }) => {
     const code = endpoint === 'verify-code' ? await requestCode() : undefined;
-    const validBody =
-      endpoint === 'email-code' ? { email } : { email, code, name };
-    const body =
-      kind === '추가 필드' ? { ...validBody, isAdmin: true } : [validBody];
+    const validBody = endpoint === 'email-code' ? { email } : { email, code, name };
+    const body = kind === '추가 필드' ? { ...validBody, isAdmin: true } : [validBody];
     const response = await post(`/api/auth/${endpoint}`).send(body).expect(422);
     expect(response.body.message).toEqual(expect.any(Array));
     expect(response.headers['set-cookie']).toBeUndefined();
-    expect(sendLoginCode).toHaveBeenCalledTimes(
-      endpoint === 'verify-code' ? 1 : 0,
-    );
+    expect(sendLoginCode).toHaveBeenCalledTimes(endpoint === 'verify-code' ? 1 : 0);
     expect(await prisma.user.count()).toBe(0);
     expect(await prisma.session.count()).toBe(0);
     if (endpoint === 'verify-code') {
-      expect(
-        await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-      ).toMatchObject({ attempts: 0, usedAt: null });
+      expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
+        attempts: 0,
+        usedAt: null,
+      });
     }
   });
 
@@ -334,9 +299,9 @@ describe('로그인 API (e2e)', () => {
         email,
         name: userName,
       });
-      expect(
-        await prisma.user.findUniqueOrThrow({ where: { email } }),
-      ).toMatchObject({ name: userName });
+      expect(await prisma.user.findUniqueOrThrow({ where: { email } })).toMatchObject({
+        name: userName,
+      });
     },
   );
 
@@ -382,13 +347,11 @@ describe('로그인 API (e2e)', () => {
         'CODE_WRONG',
       );
     }
-    expectCodeError(
-      await post('/api/auth/verify-code').send({ email, code }),
-      'NAME_REQUIRED',
-    );
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({ attempts: 4, usedAt: null });
+    expectCodeError(await post('/api/auth/verify-code').send({ email, code }), 'NAME_REQUIRED');
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
+      attempts: 4,
+      usedAt: null,
+    });
     expect(await prisma.user.count()).toBe(0);
     expect(await prisma.session.count()).toBe(0);
     await post('/api/auth/verify-code').send({ email, code, name }).expect(200);
@@ -406,9 +369,7 @@ describe('로그인 API (e2e)', () => {
     expect(response.body.statusCode).toBe(429);
     expect(response.headers['set-cookie']).toBeUndefined();
     expect(sendLoginCode).toHaveBeenCalledTimes(1);
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toEqual(savedCode);
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toEqual(savedCode);
   });
 
   it('기존 사용자도 코드 요청은 204이고 이름 없이 로그인한다', async () => {
@@ -416,9 +377,7 @@ describe('로그인 API (e2e)', () => {
       data: { email, name: '기존 이름' },
     });
     const code = await requestCode();
-    const response = await post('/api/auth/verify-code')
-      .send({ email, code })
-      .expect(200);
+    const response = await post('/api/auth/verify-code').send({ email, code }).expect(200);
     expect(response.body).toEqual({ id: user.id, email, name: '기존 이름' });
     expect(await prisma.user.count()).toBe(1);
     await request(server)
@@ -458,9 +417,7 @@ describe('로그인 API (e2e)', () => {
       post('/api/auth/email-code').send({ email }),
     ]);
     expect(
-      responses
-        .map((response) => response.status)
-        .sort((first, second) => first - second),
+      responses.map((response) => response.status).sort((first, second) => first - second),
     ).toEqual([204, 429]);
     expect(sendLoginCode).toHaveBeenCalledTimes(1);
     expect(await prisma.loginCode.count()).toBe(1);
@@ -473,9 +430,7 @@ describe('로그인 API (e2e)', () => {
       post('/api/auth/verify-code').send({ email, code, name }),
     ]);
     expect(
-      responses
-        .map((response) => response.status)
-        .sort((first, second) => first - second),
+      responses.map((response) => response.status).sort((first, second) => first - second),
     ).toEqual([200, 422]);
     expectCodeError(
       responses.find((response) => response.status === 422)!,
@@ -494,12 +449,8 @@ describe('로그인 API (e2e)', () => {
         post('/api/auth/verify-code').send({ email, code: wrongCode, name }),
       ),
     );
-    const wrong = responses.filter(
-      (response) => response.body.code === 'CODE_WRONG',
-    );
-    const expired = responses.filter(
-      (response) => response.body.code === 'CODE_EXPIRED',
-    );
+    const wrong = responses.filter((response) => response.body.code === 'CODE_WRONG');
+    const expired = responses.filter((response) => response.body.code === 'CODE_EXPIRED');
     expect(wrong).toHaveLength(5);
     expect(expired).toHaveLength(5);
     wrong.forEach((response) => expectCodeError(response, 'CODE_WRONG'));
@@ -508,18 +459,16 @@ describe('로그인 API (e2e)', () => {
       await post('/api/auth/verify-code').send({ email, code, name }),
       'CODE_EXPIRED',
     );
-    expect(
-      await prisma.loginCode.findUniqueOrThrow({ where: { email } }),
-    ).toMatchObject({ attempts: 5, usedAt: null });
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
+      attempts: 5,
+      usedAt: null,
+    });
     expect(await prisma.user.count()).toBe(0);
     expect(await prisma.session.count()).toBe(0);
   }, 15_000);
 
   it('health는 쿠키와 Origin 없이 열리고 다른 Origin의 GET도 허용한다', async () => {
-    await request(server)
-      .get('/api/health')
-      .expect(200)
-      .expect({ status: 'ok' });
+    await request(server).get('/api/health').expect(200).expect({ status: 'ok' });
     await request(server)
       .get('/api/health')
       .set('Origin', 'https://other.example')
@@ -536,20 +485,17 @@ describe('로그인 API (e2e)', () => {
     `sid=${encodeURIComponent('j:["value"]')}`,
     `sid=${encodeURIComponent('j:123')}`,
     `sid=${encodeURIComponent('j:null')}`,
-  ])(
-    '유효한 문자열 sid가 아니면 /me는 401이고 logout은 204다: %s',
-    async (cookie) => {
-      const me = request(server).get('/api/auth/me');
-      if (cookie !== undefined) me.set('Cookie', cookie);
-      await me.expect(401);
-      // supertest는 요청이 끝나면 테스트 서버를 닫아서, 다음 요청은 앞 요청이 끝난 뒤 만든다.
-      const logout = post('/api/auth/logout');
-      if (cookie !== undefined) logout.set('Cookie', cookie);
-      const response = await logout.expect(204);
-      expect(response.text).toBe('');
-      expectClearedCookie(response);
-    },
-  );
+  ])('유효한 문자열 sid가 아니면 /me는 401이고 logout은 204다: %s', async (cookie) => {
+    const me = request(server).get('/api/auth/me');
+    if (cookie !== undefined) me.set('Cookie', cookie);
+    await me.expect(401);
+    // supertest는 요청이 끝나면 테스트 서버를 닫아서, 다음 요청은 앞 요청이 끝난 뒤 만든다.
+    const logout = post('/api/auth/logout');
+    if (cookie !== undefined) logout.set('Cookie', cookie);
+    const response = await logout.expect(204);
+    expect(response.text).toBe('');
+    expectClearedCookie(response);
+  });
 
   it.each([
     { label: 'Origin 없음', value: undefined },
@@ -557,27 +503,21 @@ describe('로그인 API (e2e)', () => {
     { label: '다른 프로토콜', value: 'https://localhost:5173' },
     { label: '다른 포트', value: 'http://localhost:5174' },
     { label: 'null 출처', value: 'null' },
-  ])(
-    '$label이면 공개 POST 세 개도 403이고 DB를 바꾸지 않는다',
-    async ({ value }) => {
-      const { cookie, code } = await login();
-      for (const path of ['email-code', 'verify-code', 'logout']) {
-        const pending = request(server)
-          .post(`/api/auth/${path}`)
-          .set('Cookie', cookie)
-          .send({ email, code, name });
-        if (value !== undefined) pending.set('Origin', value);
-        const response = await pending.expect(403);
-        expect(response.headers['set-cookie']).toBeUndefined();
-      }
-      expect(sendLoginCode).toHaveBeenCalledTimes(1);
-      expect(await prisma.session.count()).toBe(1);
-      await request(server)
-        .get('/api/auth/me')
+  ])('$label이면 공개 POST 세 개도 403이고 DB를 바꾸지 않는다', async ({ value }) => {
+    const { cookie, code } = await login();
+    for (const path of ['email-code', 'verify-code', 'logout']) {
+      const pending = request(server)
+        .post(`/api/auth/${path}`)
         .set('Cookie', cookie)
-        .expect(200);
-    },
-  );
+        .send({ email, code, name });
+      if (value !== undefined) pending.set('Origin', value);
+      const response = await pending.expect(403);
+      expect(response.headers['set-cookie']).toBeUndefined();
+    }
+    expect(sendLoginCode).toHaveBeenCalledTimes(1);
+    expect(await prisma.session.count()).toBe(1);
+    await request(server).get('/api/auth/me').set('Cookie', cookie).expect(200);
+  });
 
   it('8080 Origin도 코드 발급·로그인·로그아웃을 모두 통과한다', async () => {
     const allowedOrigin = 'http://localhost:8080';
@@ -603,10 +543,7 @@ describe('로그인 API (e2e)', () => {
     await request(server).post('/api/auth-test/private').expect(403);
     await post('/api/auth-test/private').expect(401);
     const { cookie } = await login();
-    await post('/api/auth-test/private')
-      .set('Cookie', cookie)
-      .expect(201)
-      .expect({ ok: true });
+    await post('/api/auth-test/private').set('Cookie', cookie).expect(201).expect({ ok: true });
   });
 
   it.each(['만료', '24시간 미사용'])(
@@ -619,13 +556,8 @@ describe('로그인 API (e2e)', () => {
       if (state === '24시간 미사용') {
         await prisma.$executeRaw`UPDATE sessions SET last_seen_at = now() - interval '24 hours 1 second'`;
       }
-      await request(server)
-        .get('/api/auth/me')
-        .set('Cookie', cookie)
-        .expect(401);
-      const response = await post('/api/auth/logout')
-        .set('Cookie', cookie)
-        .expect(204);
+      await request(server).get('/api/auth/me').set('Cookie', cookie).expect(401);
+      const response = await post('/api/auth/logout').set('Cookie', cookie).expect(204);
       expectClearedCookie(response);
       expect(await prisma.session.count()).toBe(0);
     },
@@ -642,10 +574,7 @@ describe('로그인 API (e2e)', () => {
     expect(await prisma.session.count()).toBe(3);
     await post('/api/auth/logout').set('Cookie', first.cookie).expect(204);
     expect(await prisma.session.count()).toBe(2);
-    await request(server)
-      .get('/api/auth/me')
-      .set('Cookie', first.cookie)
-      .expect(401);
+    await request(server).get('/api/auth/me').set('Cookie', first.cookie).expect(401);
     await request(server)
       .get('/api/auth/me')
       .set('Cookie', second.cookie)
@@ -659,13 +588,9 @@ describe('로그인 API (e2e)', () => {
 
     const remaining = await prisma.session.findMany({ orderBy: { id: 'asc' } });
     await post('/api/auth/logout').expect(204);
-    await post('/api/auth/logout')
-      .set('Cookie', 'sid=unknown-session')
-      .expect(204);
+    await post('/api/auth/logout').set('Cookie', 'sid=unknown-session').expect(204);
     await post('/api/auth/logout').set('Cookie', first.cookie).expect(204);
-    expect(await prisma.session.findMany({ orderBy: { id: 'asc' } })).toEqual(
-      remaining,
-    );
+    expect(await prisma.session.findMany({ orderBy: { id: 'asc' } })).toEqual(remaining);
     expect(await prisma.user.count()).toBe(2);
   });
 });
