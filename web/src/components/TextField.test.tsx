@@ -2,6 +2,52 @@ import { useState } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { TextField } from './TextField.tsx'
 
+describe('TextField 입력 잠금', () => {
+  it.each([true, false, undefined])('disabled=%s를 실제 입력칸에 반영한다', (disabled) => {
+    render(<TextField label="이메일" value="reader@example.com" onChange={vi.fn()} disabled={disabled} />)
+
+    const input = screen.getByLabelText<HTMLInputElement>('이메일')
+
+    expect(input.disabled).toBe(disabled === true)
+    expect(input.hasAttribute('aria-invalid')).toBe(false)
+    expect(input.hasAttribute('aria-describedby')).toBe(false)
+  })
+
+  it('disabled를 생략하면 입력할 수 있다', () => {
+    const onChange = vi.fn()
+    render(<TextField label="이름" value="" onChange={onChange} />)
+
+    const input = screen.getByLabelText<HTMLInputElement>('이름')
+
+    expect(input.disabled).toBe(false)
+    fireEvent.change(input, { target: { value: '김수정' } })
+    expect(onChange).toHaveBeenCalledExactlyOnceWith('김수정')
+  })
+
+  it('잠금과 해제를 반복해도 라벨 연결, 값, 오류 접근성 속성을 유지한다', () => {
+    const onChange = vi.fn()
+    const props = { label: '이메일', value: '입력한 주소', onChange, error: '이메일을 확인해 주세요' }
+    const { rerender } = render(<TextField {...props} />)
+    const input = screen.getByLabelText<HTMLInputElement>('이메일')
+    const inputId = input.id
+    const errorId = screen.getByText(props.error).id
+
+    for (const disabled of [true, false, true]) {
+      rerender(<TextField {...props} disabled={disabled} />)
+
+      expect(screen.getByLabelText('이메일')).toBe(input)
+      expect(input.disabled).toBe(disabled)
+      expect(input.id).toBe(inputId)
+      expect(screen.getByText('이메일').getAttribute('for')).toBe(inputId)
+      expect(input.value).toBe(props.value)
+      expect(input.getAttribute('aria-invalid')).toBe('true')
+      expect(input.getAttribute('aria-describedby')).toBe(errorId)
+      expect(screen.getByText(props.error).id).toBe(errorId)
+      expect(onChange).not.toHaveBeenCalled()
+    }
+  })
+})
+
 describe('TextField', () => {
   it('라벨로 입력칸을 찾을 수 있고 부모가 준 값이 보인다', () => {
     render(<TextField label="이메일" value="reader@example.com" onChange={vi.fn()} />)

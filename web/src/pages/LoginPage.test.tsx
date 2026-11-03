@@ -42,6 +42,178 @@ beforeEach(() => {
   vi.mocked(verifyCode).mockReset().mockResolvedValue(user)
 })
 
+describe('LoginPage 요청 중 입력 잠금', () => {
+  it('이메일과 코드를 보내는 동안 입력을 잠그고 이름 단계까지 처음 보낸 값을 사용한다', async () => {
+    let resolveRequest!: () => void
+    vi.mocked(requestCode).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRequest = resolve
+        }),
+    )
+    renderLogin()
+    const emailInput = screen.getByLabelText<HTMLInputElement>('이메일')
+    expect(emailInput.disabled).toBe(false)
+    fireEvent.change(emailInput, { target: { value: email } })
+    fireEvent.click(screen.getByRole('button', { name: '코드 받기' }))
+
+    expect(requestCode).toHaveBeenCalledExactlyOnceWith(email)
+    expect(emailInput.disabled).toBe(true)
+    // fireEvent.change는 disabled도 우회한다. 실제 잠금 속성과 포커스 차단을 확인한다.
+    emailInput.focus()
+    expect(document.activeElement).not.toBe(emailInput)
+    expect(emailInput.value).toBe(email)
+    expect(screen.queryByLabelText('로그인 코드')).toBeNull()
+
+    resolveRequest()
+
+    const codeInput = await screen.findByLabelText<HTMLInputElement>('로그인 코드')
+    expect(codeInput.disabled).toBe(false)
+    expect(screen.getByText(`${email}로 받은 코드 6자리를 넣어 주세요.`)).toBeDefined()
+    let rejectVerification!: (reason: unknown) => void
+    vi.mocked(verifyCode).mockImplementationOnce(
+      () =>
+        new Promise<never>((_, reject) => {
+          rejectVerification = reject
+        }),
+    )
+    fireEvent.change(codeInput, { target: { value: code } })
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    expect(verifyCode).toHaveBeenCalledExactlyOnceWith(email, code, undefined)
+    expect(codeInput.disabled).toBe(true)
+    codeInput.focus()
+    expect(document.activeElement).not.toBe(codeInput)
+    expect(codeInput.value).toBe(code)
+    expect(screen.queryByLabelText('이름')).toBeNull()
+
+    rejectVerification(new ApiError(422, 'NAME_REQUIRED'))
+
+    const nameInput = await screen.findByLabelText<HTMLInputElement>('이름')
+    expect(nameInput.disabled).toBe(false)
+    expect(nameInput.hasAttribute('aria-invalid')).toBe(false)
+    let resolveVerification!: (value: typeof user) => void
+    vi.mocked(verifyCode).mockImplementationOnce(
+      () =>
+        new Promise<typeof user>((resolve) => {
+          resolveVerification = resolve
+        }),
+    )
+    fireEvent.change(nameInput, { target: { value: user.name } })
+    fireEvent.click(screen.getByRole('button', { name: '시작하기' }))
+
+    expect(verifyCode).toHaveBeenCalledTimes(2)
+    expect(verifyCode).toHaveBeenLastCalledWith(email, code, user.name)
+    expect(requestCode).toHaveBeenCalledTimes(1)
+    expect(nameInput.disabled).toBe(true)
+    nameInput.focus()
+    expect(document.activeElement).not.toBe(nameInput)
+    expect(nameInput.value).toBe(user.name)
+    expect(screen.queryByText('첫 화면')).toBeNull()
+
+    resolveVerification(user)
+
+    expect(await screen.findByText('첫 화면')).toBeDefined()
+    expect(screen.queryByLabelText('이름')).toBeNull()
+  })
+
+  it('기존 사용자의 코드 확인 응답까지 코드 칸을 잠그고 성공하면 첫 화면으로 이동한다', async () => {
+    renderLogin()
+    const input = await enterCodeStep()
+    let resolveVerification!: (value: typeof user) => void
+    vi.mocked(verifyCode).mockImplementationOnce(
+      () =>
+        new Promise<typeof user>((resolve) => {
+          resolveVerification = resolve
+        }),
+    )
+    expect(input.disabled).toBe(false)
+    fireEvent.change(input, { target: { value: code } })
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    expect(input.disabled).toBe(true)
+    expect(input.value).toBe(code)
+    expect(verifyCode).toHaveBeenCalledExactlyOnceWith(email, code, undefined)
+    expect(screen.queryByText('첫 화면')).toBeNull()
+
+    resolveVerification(user)
+
+    expect(await screen.findByText('첫 화면')).toBeDefined()
+    expect(screen.queryByLabelText('로그인 코드')).toBeNull()
+  })
+
+  it.each([
+    { step: 'email', error: new ApiError(429), message: '코드는 1분에 한 번만 받을 수 있어요' },
+    { step: 'code', error: new ApiError(422, 'CODE_WRONG'), message: '코드가 맞지 않아요' },
+    { step: 'name', error: new ApiError(422), message: '이름은 1~30자로 써 주세요' },
+    { step: 'email', error: new TypeError('Failed to fetch'), message: '연결을 확인하고 다시 시도해 주세요' },
+    { step: 'code', error: new TypeError('Failed to fetch'), message: '연결을 확인하고 다시 시도해 주세요' },
+    { step: 'name', error: new TypeError('Failed to fetch'), message: '연결을 확인하고 다시 시도해 주세요' },
+  ] as const)(
+    '$step 요청 중 입력을 잠그고 $message 응답 뒤 수정과 재시도를 허용한다',
+    async ({ step, error, message }) => {
+      renderLogin()
+      if (step === 'code') await enterCodeStep()
+      if (step === 'name') await enterNameStep()
+      const label = { email: '이메일', code: '로그인 코드', name: '이름' }[step]
+      const buttonLabel = { email: '코드 받기', code: '로그인', name: '시작하기' }[step]
+      const value = { email, code, name: user.name }[step]
+      const nextValue = { email: 'another@example.com', code: '999999', name: '새 이름' }[step]
+      const input = screen.getByLabelText<HTMLInputElement>(label)
+      const submit = screen.getByRole<HTMLButtonElement>('button', { name: buttonLabel })
+      const api = vi.mocked(step === 'email' ? requestCode : verifyCode)
+      const previousCalls = api.mock.calls.length
+      let rejectRequest!: (reason: unknown) => void
+      api.mockImplementationOnce(
+        () =>
+          new Promise<never>((_, reject) => {
+            rejectRequest = reject
+          }),
+      )
+      expect(input.disabled).toBe(false)
+      fireEvent.change(input, { target: { value } })
+      fireEvent.click(submit)
+
+      expect(input.disabled).toBe(true)
+      expect(input.value).toBe(value)
+      expect(api).toHaveBeenCalledTimes(previousCalls + 1)
+      expect(screen.queryByText(message)).toBeNull()
+
+      rejectRequest(error)
+
+      const errorText = await screen.findByText(message)
+      expect(screen.getByLabelText(label)).toBe(input)
+      expect(input.disabled).toBe(false)
+      expect(input.value).toBe(value)
+      expect(input.getAttribute('aria-invalid')).toBe('true')
+      expect(input.getAttribute('aria-describedby')).toBe(errorText.id)
+      input.focus()
+      expect(document.activeElement).toBe(input)
+      fireEvent.change(input, { target: { value: nextValue } })
+      expect(input.value).toBe(nextValue)
+      fireEvent.click(submit)
+
+      expect(input.disabled).toBe(true)
+      expect(screen.queryByText(message)).toBeNull()
+      expect(input.hasAttribute('aria-invalid')).toBe(false)
+      expect(input.hasAttribute('aria-describedby')).toBe(false)
+      expect(api).toHaveBeenCalledTimes(previousCalls + 2)
+      if (step === 'email') {
+        expect(requestCode).toHaveBeenLastCalledWith(nextValue)
+        expect((await screen.findByLabelText<HTMLInputElement>('로그인 코드')).disabled).toBe(false)
+        expect(screen.getByText(`${nextValue}로 받은 코드 6자리를 넣어 주세요.`)).toBeDefined()
+        return
+      }
+      expect(verifyCode).toHaveBeenLastCalledWith(
+        email,
+        step === 'code' ? nextValue : code,
+        step === 'name' ? nextValue : undefined,
+      )
+      expect(await screen.findByText('첫 화면')).toBeDefined()
+    },
+  )
+})
+
 describe('LoginPage', () => {
   it('처음에는 이메일 입력과 제출 버튼만 보이고 API를 부르지 않는다', () => {
     renderLogin()

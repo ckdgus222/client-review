@@ -12,9 +12,12 @@ type TextFieldProps = {
   autoComplete?: 'email' | 'one-time-code' | 'name'
   // numeric이면 휴대폰에서 숫자 자판이 뜬다.
   inputMode?: 'numeric'
+  // 서버에 보내는 동안 잠가서, 보낸 값과 다음 단계에서 쓰는 값이 달라지지 않게 한다.
+  disabled?: boolean
 }
 
-export const TextField = ({ label, value, onChange, error, type, autoComplete, inputMode }: TextFieldProps) => {
+// label·onChange·error만 여기서 쓰고, 나머지(value, type, autoComplete, inputMode, disabled)는 input에 그대로 넘긴다.
+export const TextField = ({ label, onChange, error, ...inputProps }: TextFieldProps) => {
   // 한 화면에 칸이 여러 개여도 라벨과 오류 문구가 자기 칸에만 이어지게 칸마다 다른 id를 만든다.
   const id = useId()
   const errorId = `${id}-error`
@@ -27,11 +30,8 @@ export const TextField = ({ label, value, onChange, error, type, autoComplete, i
       <input
         className={styles.input}
         id={id}
-        type={type}
-        value={value}
+        {...inputProps}
         onChange={(event) => onChange(event.target.value)}
-        autoComplete={autoComplete}
-        inputMode={inputMode}
         // 화면을 못 보는 사람에게 칸이 틀렸다는 것과 오류 문구를 함께 읽어 준다.
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}

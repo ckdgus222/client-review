@@ -72,7 +72,15 @@ export const LoginPage = () => {
     <form className={styles.form} onSubmit={handleSubmit} noValidate>
       <h1>로그인</h1>
       {step === 'email' && (
-        <TextField label="이메일" type="email" autoComplete="email" value={email} onChange={setEmail} error={error} />
+        <TextField
+          label="이메일"
+          type="email"
+          autoComplete="email"
+          value={email}
+          onChange={setEmail}
+          error={error}
+          disabled={sending}
+        />
       )}
       {step === 'code' && (
         <>
@@ -84,13 +92,21 @@ export const LoginPage = () => {
             value={code}
             onChange={setCode}
             error={error}
+            disabled={sending}
           />
         </>
       )}
       {step === 'name' && (
         <>
           <p>처음 오셨네요. 이름을 알려 주세요.</p>
-          <TextField label="이름" autoComplete="name" value={name} onChange={setName} error={error} />
+          <TextField
+            label="이름"
+            autoComplete="name"
+            value={name}
+            onChange={setName}
+            error={error}
+            disabled={sending}
+          />
         </>
       )}
       <Button type="submit" disabled={sending}>
