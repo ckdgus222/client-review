@@ -14,3 +14,19 @@ body {
   color: var(--color-text);
   background: var(--color-bg);
 }
+
+/* 버튼과 입력칸은 글꼴을 물려받지 않고 브라우저 기본(약 13px)을 써서, 본문 글꼴을 쓰게 한다. */
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+/* 브라우저 기본 포커스 표시 대신 accent 색 outline을 쓴다. 키보드(Tab)로 고를 때 어디에 있는지 보인다.
+   링크는 브라우저 기본 표시를 그대로 둔다. */
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}

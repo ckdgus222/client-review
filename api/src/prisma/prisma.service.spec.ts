@@ -19,14 +19,11 @@ describe('PrismaService', () => {
     expect(result).toEqual([{ value: 1 }]);
   });
 
-  it.each([undefined, ''])(
-    'DATABASE_URL이 %j이면 생성할 때 오류를 던진다',
-    (url) => {
-      vi.stubEnv('DATABASE_URL', url);
+  it.each([undefined, ''])('DATABASE_URL이 %j이면 생성할 때 오류를 던진다', (url) => {
+    vi.stubEnv('DATABASE_URL', url);
 
-      expect(() => {
-        service = new PrismaService();
-      }).toThrowError(/DATABASE_URL/);
-    },
-  );
+    expect(() => {
+      service = new PrismaService();
+    }).toThrowError(/DATABASE_URL/);
+  });
 });
