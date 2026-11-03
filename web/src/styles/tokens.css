@@ -9,6 +9,8 @@
   --color-border: #d1d9e0;
   /* 버튼, 링크 */
   --color-accent: #2563eb;
+  /* accent 바탕 위의 글자 */
+  --color-on-accent: #ffffff;
 
   --space-1: 4px;
   --space-2: 8px;

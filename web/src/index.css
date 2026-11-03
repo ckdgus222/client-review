@@ -14,3 +14,11 @@ body {
   color: var(--color-text);
   background: var(--color-bg);
 }
+
+/* 버튼과 입력칸은 글꼴을 물려받지 않고 브라우저 기본(약 13px)을 써서, 본문 글꼴을 쓰게 한다. */
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
