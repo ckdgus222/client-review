@@ -1,16 +1,27 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import App from './App.tsx'
+import { getMe } from './api/auth.ts'
+
+vi.mock('./api/auth.ts', async () => {
+  const actual = await vi.importActual<typeof import('./api/auth.ts')>('./api/auth.ts')
+  return { ...actual, getMe: vi.fn() }
+})
+
+const user = { id: '5b3a934d-ef8e-4ce8-b26a-a9d1cdd4983f', email: 'reader@example.com', name: '김수정' }
 
 describe('App', () => {
-  it('첫 화면에는 준비 문구를 표시하고 404 제목은 표시하지 않는다', () => {
+  it('첫 화면에는 사용자 인사를 표시하고 404 제목은 표시하지 않는다', async () => {
+    vi.mocked(getMe).mockResolvedValueOnce(user)
     render(
       <MemoryRouter initialEntries={['/']}>
         <App />
       </MemoryRouter>,
     )
 
-    expect(within(screen.getByRole('main')).getByText('준비 중이에요.')).toBeDefined()
+    expect(
+      await within(screen.getByRole('main')).findByRole('heading', { level: 1, name: `${user.name}님, 안녕하세요` }),
+    ).toBeDefined()
     expect(screen.queryByRole('heading', { name: '없는 화면이에요' })).toBeNull()
   })
 
@@ -37,6 +48,7 @@ describe('App', () => {
     { basename: '/', path: '/abc/def', homeHref: /^\/$/ },
     { basename: '/app', path: '/app/abc', homeHref: /^\/app\/?$/ },
   ])('basename이 $basename일 때 링크를 누르면 첫 화면으로 이동한다', async ({ basename, path, homeHref }) => {
+    vi.mocked(getMe).mockResolvedValueOnce(user)
     render(
       <MemoryRouter basename={basename} initialEntries={[path]}>
         <App />
@@ -49,7 +61,7 @@ describe('App', () => {
 
     fireEvent.click(homeLink)
 
-    expect(await screen.findByText('준비 중이에요.')).toBeDefined()
+    expect(await screen.findByRole('heading', { level: 1, name: `${user.name}님, 안녕하세요` })).toBeDefined()
     expect(screen.queryByRole('heading', { name: '없는 화면이에요' })).toBeNull()
     expect(screen.queryByText('주소가 맞는지 확인해 주세요.')).toBeNull()
     expect(screen.queryByRole('link', { name: '첫 화면으로 가기' })).toBeNull()
