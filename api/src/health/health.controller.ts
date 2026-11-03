@@ -4,11 +4,14 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { Public } from '../auth/decorators/public.decorator.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 // DB가 멈춰도 health 요청은 이 시간 안에 503으로 끝난다.
 const DB_TIMEOUT_MS = 5_000;
 
+// 서버가 살아 있는지 보는 주소라 로그인 없이 연다.
+@Public()
 @Controller('health')
 export class HealthController {
   private readonly logger = new Logger(HealthController.name);

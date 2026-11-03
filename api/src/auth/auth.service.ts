@@ -116,6 +116,7 @@ export class AuthService {
           data: { email, name: name! },
           select: AUTH_USER_FIELDS,
         }));
+      // 7일은 쿠키 Max-Age(auth.controller.ts)와 같아야 한다. 바꿀 때 둘 다 바꾼다.
       await tx.$executeRaw`
         INSERT INTO sessions (user_id, token_hash, expires_at)
         VALUES (${sessionUser.id}::uuid, ${hashSessionToken(token)}, now() + interval '7 days')
@@ -151,5 +152,13 @@ export class AuthService {
     }
 
     return user;
+  }
+
+  // 줄을 지워서, 같은 세션 ID를 다시 보내도 찾을 줄이 없게 한다.
+  // delete는 줄이 없으면 오류를 던진다. 이미 끝난 세션으로 로그아웃해도 204가 되게 deleteMany를 쓴다.
+  async deleteSession(token: string) {
+    await this.prisma.session.deleteMany({
+      where: { tokenHash: hashSessionToken(token) },
+    });
   }
 }
