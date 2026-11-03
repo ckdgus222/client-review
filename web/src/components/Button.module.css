@@ -1,14 +1,11 @@
 .button {
+  /* 손가락으로 누르기 좋은 높이. 입력칸과 같아서 나란히 놓아도 줄이 맞는다. */
+  min-height: 44px;
   padding: var(--space-2) var(--space-3);
   border: 1px solid transparent;
   border-radius: var(--radius);
   font-weight: 600;
   cursor: pointer;
-}
-
-.button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .primary {
@@ -19,5 +16,14 @@
 .secondary {
   background: var(--color-surface);
   color: var(--color-text);
-  border-color: var(--color-border);
+  border-color: var(--color-border-strong);
+}
+
+/* 반투명으로 흐리게 하면 검정 버튼이 진회색이 되어 눌리는 것처럼 보여서, 모양과 상관없이 같은 회색으로 바꾼다.
+   선택자가 2개(.button:disabled)라 .primary·.secondary(1개)보다 앞선다. */
+.button:disabled {
+  background: var(--color-disabled-bg);
+  color: var(--color-disabled-text);
+  border-color: transparent;
+  cursor: not-allowed;
 }
