@@ -9,11 +9,20 @@
 }
 
 .input {
+  /* 버튼과 같은 높이라 나란히 놓아도 줄이 맞는다. */
+  min-height: 44px;
   padding: var(--space-2);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius);
   background: var(--color-surface);
   color: var(--color-text);
+}
+
+/* 보내는 중에는 고칠 수 없다는 것이 보이게 비활성 버튼과 같은 회색으로 바꾼다. */
+.input:disabled {
+  background: var(--color-disabled-bg);
+  color: var(--color-disabled-text);
+  cursor: not-allowed;
 }
 
 /* 틀렸다는 상태를 aria-invalid 하나에만 두고, 모양도 그 속성을 보고 바꾼다. */
