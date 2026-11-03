@@ -125,4 +125,31 @@ export class AuthService {
 
     return { user, token };
   }
+
+  async findSessionUser(token: string): Promise<AuthUser | null> {
+    const tokenHash = hashSessionToken(token);
+    // 끝난 세션 줄은 지우지 않고 남아 있어서, 찾을 때 시각으로 거른다.
+    const [found] = await this.prisma.$queryRaw<
+      (AuthUser & { is_stale: boolean })[]
+    >`
+      SELECT u.id, u.email, u.name,
+             s.last_seen_at < now() - interval '5 minutes' AS is_stale
+      FROM sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.token_hash = ${tokenHash}
+        AND s.expires_at > now() AND s.last_seen_at > now() - interval '24 hours'
+    `;
+    if (!found) return null;
+
+    const { is_stale, ...user } = found;
+    // 요청마다 DB에 쓰지 않으려고 5분이 지났을 때만 바꾼다.
+    // UPDATE에도 5분 조건을 다시 걸어, 동시에 여러 요청이 와도 한 번만 바뀐다.
+    if (is_stale) {
+      await this.prisma.$executeRaw`
+        UPDATE sessions SET last_seen_at = now()
+        WHERE token_hash = ${tokenHash} AND last_seen_at < now() - interval '5 minutes'
+      `;
+    }
+
+    return user;
+  }
 }

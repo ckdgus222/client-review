@@ -922,3 +922,380 @@ describe('AuthService.verifyCode', () => {
     ]);
   });
 });
+
+describe('AuthService.findSessionUser', () => {
+  let module: TestingModule | undefined;
+  let prisma: PrismaService;
+  let service: AuthService;
+  let user: { id: string; email: string; name: string };
+  const sessionId = 'session-token-for-test';
+  const tokenHash = createHash('sha256').update(sessionId).digest('hex');
+
+  // 세션 발급은 조각 3에서 검사한다. 여기서는 DB 시각으로 수명을 직접 정한다.
+  const createSession = async (
+    userId: string,
+    token = sessionId,
+    lastSeenSecondsAgo = 0,
+    expiresInSeconds = 7 * 24 * 60 * 60,
+  ) => {
+    const hash = createHash('sha256').update(token).digest('hex');
+    await prisma.$executeRaw`
+      INSERT INTO sessions (user_id, token_hash, expires_at, last_seen_at)
+      VALUES (${userId}::uuid, ${hash},
+              now() + ${expiresInSeconds} * interval '1 second',
+              now() - ${lastSeenSecondsAgo} * interval '1 second')
+    `;
+    return prisma.session.findUniqueOrThrow({ where: { tokenHash: hash } });
+  };
+
+  beforeAll(async () => {
+    module = await Test.createTestingModule({
+      imports: [PrismaModule],
+      providers: [AuthService, MailService],
+    })
+      .overrideProvider(MailService)
+      .useValue({ sendLoginCode: vi.fn() })
+      .compile();
+    prisma = module.get(PrismaService);
+    service = module.get(AuthService);
+  });
+
+  beforeEach(async () => {
+    await resetDatabase(prisma);
+    user = await prisma.user.create({
+      data: { email: 'session@example.com', name: '세션 사용자' },
+      select: { id: true, email: true, name: true },
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  afterAll(async () => {
+    await module?.close();
+  });
+
+  it('원본 토큰의 SHA-256 해시로 세션을 찾아 사용자 필드 세 개만 돌려준다', async () => {
+    const before = await createSession(user.id);
+
+    await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
+
+    expect(await prisma.session.findMany()).toEqual([before]);
+  });
+
+  it.each(['missing-session-token', '', "' OR 1=1 --"])(
+    '저장되지 않은 토큰 %j로 다른 세션을 찾거나 바꾸지 못한다',
+    async (token) => {
+      const before = await createSession(user.id, sessionId, 360);
+
+      await expect(service.findSessionUser(token)).resolves.toBeNull();
+
+      expect(await prisma.session.findMany()).toEqual([before]);
+    },
+  );
+
+  it('DB에 저장된 해시 자체를 토큰으로 보내도 인증되지 않는다', async () => {
+    const before = await createSession(user.id, sessionId, 360);
+
+    await expect(service.findSessionUser(tokenHash)).resolves.toBeNull();
+
+    expect(await prisma.session.findMany()).toEqual([before]);
+  });
+
+  it('다른 사용자의 세션과 섞이지 않고 각 토큰의 주인을 돌려준다', async () => {
+    const otherUser = await prisma.user.create({
+      data: { email: 'other-session@example.com', name: '다른 사용자' },
+      select: { id: true, email: true, name: true },
+    });
+    await createSession(user.id);
+    await createSession(otherUser.id, 'other-session-token');
+
+    await expect(
+      service.findSessionUser('other-session-token'),
+    ).resolves.toEqual(otherUser);
+    await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
+  });
+
+  it('1초 전에 만료된 세션은 null이고 마지막 사용 시각을 갱신하지 않는다', async () => {
+    const before = await createSession(user.id, sessionId, 360, -1);
+
+    await expect(service.findSessionUser(sessionId)).resolves.toBeNull();
+
+    expect(await prisma.session.findMany()).toEqual([before]);
+  });
+
+  it('24시간 1초 동안 쓰지 않은 세션은 null이고 되살리지 않는다', async () => {
+    const before = await createSession(user.id, sessionId, 24 * 60 * 60 + 1);
+
+    await expect(service.findSessionUser(sessionId)).resolves.toBeNull();
+
+    expect(await prisma.session.findMany()).toEqual([before]);
+  });
+
+  it('24시간이 되기 1분 전인 세션은 사용자를 돌려준다', async () => {
+    await createSession(user.id, sessionId, 24 * 60 * 60 - 60);
+
+    await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
+  });
+
+  it('6분 지난 세션은 마지막 사용 시각만 DB의 현재 시각으로 갱신한다', async () => {
+    const before = await createSession(user.id, sessionId, 360);
+    const [{ now: startedAt }] = await prisma.$queryRaw<{ now: Date }[]>`
+      SELECT now()
+    `;
+
+    await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
+
+    const [{ now: finishedAt }] = await prisma.$queryRaw<{ now: Date }[]>`
+      SELECT now()
+    `;
+    const after = await prisma.session.findUniqueOrThrow({
+      where: { tokenHash },
+    });
+    expect(after.lastSeenAt.getTime()).toBeGreaterThan(
+      before.lastSeenAt.getTime(),
+    );
+    expect(after.lastSeenAt.getTime()).toBeGreaterThanOrEqual(
+      startedAt.getTime(),
+    );
+    expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(
+      finishedAt.getTime(),
+    );
+    // 활동해도 최초 만료 시각(최대 7일)은 늘어나지 않는다.
+    expect(after).toEqual({ ...before, lastSeenAt: after.lastSeenAt });
+
+    await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
+    expect(
+      await prisma.session.findUniqueOrThrow({ where: { tokenHash } }),
+    ).toEqual(after);
+  });
+
+  it('조회 뒤 다른 요청이 먼저 갱신하면 마지막 사용 시각을 덮어쓰지 않는다', async () => {
+    await createSession(user.id, sessionId, 360);
+    const executeRaw = prisma.$executeRaw.bind(prisma);
+    // 이 호출은 await만 하므로 PrismaPromise 대신 일반 Promise로 감쌀 수 있다.
+    const sessionDatabase: {
+      $executeRaw: (
+        ...args: Parameters<PrismaService['$executeRaw']>
+      ) => Promise<number>;
+    } = prisma;
+    let refreshedLastSeenAt: Date | undefined;
+    const updateSession = vi
+      .spyOn(sessionDatabase, '$executeRaw')
+      .mockImplementationOnce(async (...args) => {
+        // SELECT는 6분 전 값을 봤지만, UPDATE 전에 다른 요청이 먼저 갱신한다.
+        const [refreshed] = await prisma.$queryRaw<{ last_seen_at: Date }[]>`
+          UPDATE sessions SET last_seen_at = now() - interval '1 minute'
+          WHERE token_hash = ${tokenHash}
+          RETURNING last_seen_at
+        `;
+        refreshedLastSeenAt = refreshed.last_seen_at;
+
+        const updatedCount = await executeRaw(...args);
+        expect(updatedCount).toBe(0);
+        return updatedCount;
+      });
+
+    await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
+
+    expect(updateSession).toHaveBeenCalledTimes(1);
+    const after = await prisma.session.findUniqueOrThrow({
+      where: { tokenHash },
+    });
+    expect(after.lastSeenAt).toEqual(refreshedLastSeenAt);
+  });
+
+  it('4분 지난 세션은 마지막 사용 시각을 그대로 둔다', async () => {
+    const before = await createSession(user.id, sessionId, 240);
+
+    await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
+
+    expect(await prisma.session.findMany()).toEqual([before]);
+  });
+
+  it.each([
+    {
+      label: '정확히 만료 시각',
+      expiresInSeconds: 0,
+      lastSeenSecondsAgo: 360,
+      allowed: false,
+    },
+    {
+      label: '정확히 24시간 미사용',
+      expiresInSeconds: 86400,
+      lastSeenSecondsAgo: 86400,
+      allowed: false,
+    },
+    {
+      label: '정확히 5분 미사용',
+      expiresInSeconds: 86400,
+      lastSeenSecondsAgo: 300,
+      allowed: true,
+    },
+  ])(
+    '$label 경계에서는 허용 여부가 $allowed이고 시각을 바꾸지 않는다',
+    async ({ expiresInSeconds, lastSeenSecondsAgo, allowed }) => {
+      // PostgreSQL의 now()는 한 트랜잭션 안에서 같다. 실제 대기 없이 등호 경계를 확인한다.
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`
+          INSERT INTO sessions (user_id, token_hash, expires_at, last_seen_at)
+          VALUES (${user.id}::uuid, ${tokenHash},
+                  now() + ${expiresInSeconds} * interval '1 second',
+                  now() - ${lastSeenSecondsAgo} * interval '1 second')
+        `;
+        const before = await tx.session.findUniqueOrThrow({
+          where: { tokenHash },
+        });
+        const transactionService = new AuthService(
+          tx as PrismaService,
+          new MailService(),
+        );
+
+        await expect(
+          transactionService.findSessionUser(sessionId),
+        ).resolves.toEqual(allowed ? user : null);
+
+        expect(await tx.session.findMany()).toEqual([before]);
+      });
+    },
+  );
+
+  it('마지막 사용 시각을 갱신할 때 같은 사용자와 다른 사용자의 나머지 세션은 그대로 둔다', async () => {
+    const otherUser = await prisma.user.create({
+      data: { email: 'other-session@example.com', name: '다른 사용자' },
+    });
+    const target = await createSession(user.id, sessionId, 360);
+    const sameUserSession = await createSession(
+      user.id,
+      'same-user-other-token',
+      360,
+    );
+    const otherUserSession = await createSession(
+      otherUser.id,
+      'other-user-token',
+      360,
+    );
+
+    await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
+
+    const after = await prisma.session.findUniqueOrThrow({
+      where: { id: target.id },
+    });
+    expect(after.lastSeenAt.getTime()).toBeGreaterThan(
+      target.lastSeenAt.getTime(),
+    );
+    expect(
+      await prisma.session.findUniqueOrThrow({
+        where: { id: sameUserSession.id },
+      }),
+    ).toEqual(sameUserSession);
+    expect(
+      await prisma.session.findUniqueOrThrow({
+        where: { id: otherUserSession.id },
+      }),
+    ).toEqual(otherUserSession);
+  });
+
+  it.each(['2000-01-01T00:00:00Z', '2100-01-01T00:00:00Z'])(
+    '서버 시계를 %s로 바꿔도 유효성·5분 갱신은 DB 시계를 따른다',
+    async (serverTime) => {
+      const stale = await createSession(user.id, sessionId, 360);
+      const fresh = await createSession(user.id, 'fresh-session-token', 240);
+      const expired = await createSession(
+        user.id,
+        'expired-session-token',
+        360,
+        -1,
+      );
+      const idle = await createSession(user.id, 'idle-session-token', 86401);
+      const [{ now: startedAt }] = await prisma.$queryRaw<{ now: Date }[]>`
+        SELECT now()
+      `;
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(serverTime));
+
+      await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
+      await expect(
+        service.findSessionUser('fresh-session-token'),
+      ).resolves.toEqual(user);
+      await expect(
+        service.findSessionUser('expired-session-token'),
+      ).resolves.toBeNull();
+      await expect(
+        service.findSessionUser('idle-session-token'),
+      ).resolves.toBeNull();
+
+      const [{ now: finishedAt }] = await prisma.$queryRaw<{ now: Date }[]>`
+        SELECT now()
+      `;
+      const after = await prisma.session.findUniqueOrThrow({
+        where: { tokenHash },
+      });
+      expect(after.lastSeenAt.getTime()).toBeGreaterThanOrEqual(
+        startedAt.getTime(),
+      );
+      expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(
+        finishedAt.getTime(),
+      );
+      expect(after).toEqual({ ...stale, lastSeenAt: after.lastSeenAt });
+      expect(
+        await prisma.session.findUniqueOrThrow({ where: { id: fresh.id } }),
+      ).toEqual(fresh);
+      expect(
+        await prisma.session.findUniqueOrThrow({ where: { id: expired.id } }),
+      ).toEqual(expired);
+      expect(
+        await prisma.session.findUniqueOrThrow({ where: { id: idle.id } }),
+      ).toEqual(idle);
+    },
+  );
+
+  it('로그아웃처럼 세션을 지우면 이전 토큰으로 다시 사용자를 찾을 수 없다', async () => {
+    const session = await createSession(user.id);
+    await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
+
+    await prisma.session.delete({ where: { id: session.id } });
+
+    await expect(service.findSessionUser(sessionId)).resolves.toBeNull();
+    expect(await prisma.session.count()).toBe(0);
+  });
+
+  it('사용자가 삭제되어 세션도 지워지면 이전 토큰으로 인증되지 않는다', async () => {
+    await createSession(user.id);
+
+    await prisma.user.delete({ where: { id: user.id } });
+
+    await expect(service.findSessionUser(sessionId)).resolves.toBeNull();
+    expect(await prisma.session.count()).toBe(0);
+  });
+
+  it('6분 지난 같은 세션을 동시에 열 번 조회해도 모두 같은 사용자를 돌려준다', async () => {
+    const before = await createSession(user.id, sessionId, 360);
+    const [{ now: startedAt }] = await prisma.$queryRaw<{ now: Date }[]>`
+      SELECT now()
+    `;
+
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => service.findSessionUser(sessionId)),
+    );
+
+    expect(results).toEqual(Array.from({ length: 10 }, () => user));
+    const [{ now: finishedAt }] = await prisma.$queryRaw<{ now: Date }[]>`
+      SELECT now()
+    `;
+    const after = await prisma.session.findUniqueOrThrow({
+      where: { tokenHash },
+    });
+    expect(after.lastSeenAt.getTime()).toBeGreaterThanOrEqual(
+      startedAt.getTime(),
+    );
+    expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(
+      finishedAt.getTime(),
+    );
+    expect(await prisma.session.findMany()).toEqual([
+      { ...before, lastSeenAt: after.lastSeenAt },
+    ]);
+  });
+});
