@@ -1,0 +1,13 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  /* 넓은 화면에서도 입력칸이 너무 길어지지 않게 한다. */
+  max-width: 24rem;
+}
+
+/* 기본 바깥 여백이 gap에 더해지지 않게 지운다. */
+.form > h1,
+.form > p {
+  margin: 0;
+}
