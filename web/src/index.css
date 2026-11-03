@@ -23,6 +23,11 @@ select {
   font: inherit;
 }
 
+/* 링크는 브라우저 기본 파란색 대신 주변 글자색을 따른다. 밑줄은 남겨 링크인 것을 알 수 있게 한다. */
+a {
+  color: inherit;
+}
+
 /* 브라우저 기본 포커스 표시 대신 accent 색 outline을 쓴다. 키보드(Tab)로 고를 때 어디에 있는지 보인다.
    링크는 브라우저 기본 표시를 그대로 둔다. */
 button:focus-visible,
