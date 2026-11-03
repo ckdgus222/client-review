@@ -1,18 +1,19 @@
-/* 디자인 값. 컴포넌트는 색·간격을 직접 적지 않고 이 변수만 쓴다. 시안이 나오면 이 파일만 고친다. */
+/* 디자인 값. 컴포넌트는 색·간격을 직접 적지 않고 이 변수만 쓴다. 색을 바꿀 때 이 파일만 고친다.
+   색은 시안 "모노 인덱스"를 따른다. 흐린 글자만 시안보다 진하게 해서 흰 바탕 대비 4.5:1을 넘긴다. */
 :root {
   /* 글자색 */
-  --color-text: #1f2328;
-  --color-text-muted: #59636e;
+  --color-text: #252525;
+  --color-text-muted: #6b6b6b;
   /* 배경색: 페이지 바탕, 그 위에 놓이는 칸(머리말, 카드) */
-  --color-bg: #f6f8fa;
+  --color-bg: #f7f7f5;
   --color-surface: #ffffff;
-  --color-border: #d1d9e0;
+  --color-border: #e2e2df;
   /* 버튼, 링크 */
-  --color-accent: #2563eb;
+  --color-accent: #252525;
   /* accent 바탕 위의 글자 */
   --color-on-accent: #ffffff;
   /* 오류 문구와 틀린 칸의 테두리 */
-  --color-danger: #cf222e;
+  --color-danger: #a13a2e;
 
   --space-1: 4px;
   --space-2: 8px;
@@ -24,6 +25,6 @@
   --font-size-md: 1rem;
   --font-size-lg: 1.25rem;
 
-  --radius: 8px;
+  --radius: 2px;
   --font-family: system-ui, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
 }
