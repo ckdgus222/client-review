@@ -92,4 +92,43 @@ describe('assertTestDatabaseUrl', () => {
 
     expect(assertTestDatabaseUrl(url)).toBe(url);
   });
+
+  it.each([
+    ['슬래시 하나와 테스트 DB 이름', 'postgresql:/user:SECRET_PW@localhost:5434/client_review_test'],
+    ['슬래시 없음과 테스트 DB 이름', 'postgresql:user:SECRET_PW@localhost:5434/client_review_test'],
+    ['슬래시 하나와 개발 DB 이름', 'postgresql:/user:SECRET_PW@localhost:5434/client_review'],
+    ['슬래시 없음과 개발 DB 이름', 'postgresql:user:SECRET_PW@localhost:5434/client_review'],
+    ['개발 DB 이름', 'postgresql://user:SECRET_PW@localhost:5434/client_review'],
+    ['비밀번호 문자열인 DB 이름', 'postgresql://user:SECRET_PW@localhost:5434/SECRET_PW'],
+    ['테스트 DB 이름에 접미사가 있음', 'postgresql://user:SECRET_PW@localhost:5434/client_review_test_backup'],
+    ['빈 DB 이름', 'postgresql://user:SECRET_PW@localhost:5434/'],
+  ])('%s이면 DB 이름 오류를 던지고 오류 전체에 비밀번호와 주소를 남기지 않는다', (_label, url) => {
+    // SECRET_PW는 실제 비밀번호가 아닌 노출 검사용 문자열이다.
+    const check = vi.fn(() => assertTestDatabaseUrl(url));
+
+    expect(check).toThrowError(/client_review_test/);
+    const error = check.mock.results[0].value as Error;
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe('TEST_DATABASE_URL의 DB 이름은 client_review_test여야 해요');
+
+    // 속성 설명자까지 펼쳐 숨겨진 속성, Symbol 속성, 중첩된 cause도 검사한다.
+    const errorDetails = inspect([error, Object.getOwnPropertyDescriptors(error)], {
+      showHidden: true,
+      depth: null,
+      customInspect: false,
+      getters: true,
+      maxArrayLength: null,
+      maxStringLength: null,
+    });
+    const errorOutput = [
+      error.message,
+      error.stack,
+      errorDetails,
+      JSON.stringify(error),
+      JSON.stringify(Object.entries(error)),
+    ].join('\n');
+
+    expect(errorOutput).not.toContain('SECRET_PW');
+    expect(errorOutput).not.toContain(url);
+  });
 });
