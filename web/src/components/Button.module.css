@@ -6,12 +6,6 @@
   cursor: pointer;
 }
 
-/* 브라우저 기본 포커스 표시 대신 accent 색 outline을 쓴다. 키보드(Tab)로 고를 때만 보이고 마우스로 누를 때는 안 보인다. */
-.button:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-
 .button:disabled {
   opacity: 0.5;
   cursor: not-allowed;

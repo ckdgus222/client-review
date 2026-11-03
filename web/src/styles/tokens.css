@@ -11,6 +11,8 @@
   --color-accent: #2563eb;
   /* accent 바탕 위의 글자 */
   --color-on-accent: #ffffff;
+  /* 오류 문구와 틀린 칸의 테두리 */
+  --color-danger: #cf222e;
 
   --space-1: 4px;
   --space-2: 8px;
