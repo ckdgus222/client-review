@@ -24,6 +24,8 @@ services:
     environment:
       # 컨테이너 안에서 DB 주소는 서비스 이름 db다. 맥에서 쓰는 .env의 DATABASE_URL(localhost:5434)과 다르다.
       DATABASE_URL: postgresql://client_review:${POSTGRES_PASSWORD}@db:5432/client_review
+      # Docker에서는 nginx(8080)가 내준 화면만 api를 쓴다. 맥의 .env처럼 5173은 넣지 않는다.
+      APP_ORIGINS: http://localhost:8080
     depends_on:
       db:
         condition: service_healthy
