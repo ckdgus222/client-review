@@ -1,10 +1,5 @@
 import { randomInt } from 'node:crypto';
-import {
-  HttpException,
-  HttpStatus,
-  Injectable,
-  UnprocessableEntityException,
-} from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, UnprocessableEntityException } from '@nestjs/common';
 import bcrypt from 'bcrypt';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -64,11 +59,7 @@ export class AuthService {
   }
 
   // 돌려준 token(세션 ID 원본)은 컨트롤러가 쿠키에 담는다.
-  async verifyCode(
-    email: string,
-    code: string,
-    name?: string,
-  ): Promise<{ user: AuthUser; token: string }> {
+  async verifyCode(email: string, code: string, name?: string): Promise<{ user: AuthUser; token: string }> {
     // 1. 비교하기 전에 시도 횟수부터 올린다. 동시에 여러 번 와도 5번까지만 해시를 받아 비교한다.
     const [attempt] = await this.prisma.$queryRaw<{ code_hash: string }[]>`
       UPDATE login_codes SET attempts = attempts + 1
@@ -107,12 +98,8 @@ export class AuthService {
       if (usedCount === 0) throw loginCodeError('CODE_EXPIRED');
 
       // 이름 없는 새 사용자는 위에서 NAME_REQUIRED로 돌려보냈다.
-      const sessionUser =
-        existingUser ??
-        (await tx.user.create({
-          data: { email, name: name! },
-          select: AUTH_USER_FIELDS,
-        }));
+      const newUser = { email, name: name! };
+      const sessionUser = existingUser ?? (await tx.user.create({ data: newUser, select: AUTH_USER_FIELDS }));
       // 7일은 쿠키 Max-Age(auth.controller.ts)와 같아야 한다. 바꿀 때 둘 다 바꾼다.
       await tx.$executeRaw`
         INSERT INTO sessions (user_id, token_hash, expires_at)

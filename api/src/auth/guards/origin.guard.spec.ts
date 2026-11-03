@@ -100,24 +100,20 @@ describe('OriginGuard', () => {
     vi.stubEnv('APP_ORIGINS', 'http://localhost:8080');
     const guard = new OriginGuard();
 
-    expect(guard.canActivate(createContext('POST', { origin: 'http://localhost:8080' }))).toBe(
-      true,
+    expect(guard.canActivate(createContext('POST', { origin: 'http://localhost:8080' }))).toBe(true);
+    expect(() => guard.canActivate(createContext('POST', { origin: 'http://localhost:5173' }))).toThrow(
+      ForbiddenException,
     );
-    expect(() =>
-      guard.canActivate(createContext('POST', { origin: 'http://localhost:5173' })),
-    ).toThrow(ForbiddenException);
   });
 
   it('HTTPS만 허용하면 같은 호스트와 포트의 HTTP Origin도 거부한다', () => {
     vi.stubEnv('APP_ORIGINS', 'https://localhost:5173');
     const guard = new OriginGuard();
 
-    expect(() =>
-      guard.canActivate(createContext('POST', { origin: 'http://localhost:5173' })),
-    ).toThrow(ForbiddenException);
-    expect(guard.canActivate(createContext('POST', { origin: 'https://localhost:5173' }))).toBe(
-      true,
+    expect(() => guard.canActivate(createContext('POST', { origin: 'http://localhost:5173' }))).toThrow(
+      ForbiddenException,
     );
+    expect(guard.canActivate(createContext('POST', { origin: 'https://localhost:5173' }))).toBe(true);
   });
 
   it('프록시가 Host를 바꿔도 허용된 Origin이면 통과한다', () => {
@@ -133,26 +129,21 @@ describe('OriginGuard', () => {
     ).toBe(true);
   });
 
-  it.each([undefined, 'https://other.example'])(
-    'Host가 허용 주소와 같아도 Origin이 %j이면 거부한다',
-    (origin) => {
-      const guard = new OriginGuard();
+  it.each([undefined, 'https://other.example'])('Host가 허용 주소와 같아도 Origin이 %j이면 거부한다', (origin) => {
+    const guard = new OriginGuard();
 
-      expect(() =>
-        guard.canActivate(createContext('POST', { origin, host: 'localhost:5173' })),
-      ).toThrow(ForbiddenException);
-    },
-  );
+    expect(() => guard.canActivate(createContext('POST', { origin, host: 'localhost:5173' }))).toThrow(
+      ForbiddenException,
+    );
+  });
 
   it('GET·HEAD·OPTIONS 외의 메서드는 Origin을 검사한다', () => {
     const guard = new OriginGuard();
 
     expect(() => guard.canActivate(createContext('PROPFIND'))).toThrow(ForbiddenException);
-    expect(() =>
-      guard.canActivate(createContext('PROPFIND', { origin: 'https://other.example' })),
-    ).toThrow(ForbiddenException);
-    expect(guard.canActivate(createContext('PROPFIND', { origin: 'http://localhost:5173' }))).toBe(
-      true,
+    expect(() => guard.canActivate(createContext('PROPFIND', { origin: 'https://other.example' }))).toThrow(
+      ForbiddenException,
     );
+    expect(guard.canActivate(createContext('PROPFIND', { origin: 'http://localhost:5173' }))).toBe(true);
   });
 });

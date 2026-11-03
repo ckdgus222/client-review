@@ -4,11 +4,7 @@ import { AuthService } from './auth.service.js';
 import { Public } from './decorators/public.decorator.js';
 import { RequestCodeDto } from './dto/request-code.dto.js';
 import { VerifyCodeDto } from './dto/verify-code.dto.js';
-import {
-  type AuthenticatedRequest,
-  readSessionToken,
-  SESSION_COOKIE,
-} from './guards/session.guard.js';
+import { type AuthenticatedRequest, readSessionToken, SESSION_COOKIE } from './guards/session.guard.js';
 
 // DB의 세션 끝 시각(7일)과 맞춘다. Express는 초가 아니라 밀리초로 받는다.
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;

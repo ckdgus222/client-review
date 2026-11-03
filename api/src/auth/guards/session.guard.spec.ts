@@ -75,9 +75,7 @@ describe('SessionGuard', () => {
 
     expect(reflector.get(IS_PUBLIC, PublicController)).toBe(true);
     expect(reflector.get(IS_PUBLIC, handler)).toBeUndefined();
-    await expect(
-      guard.canActivate(createContext(request, handler, PublicController)),
-    ).resolves.toBe(true);
+    await expect(guard.canActivate(createContext(request, handler, PublicController))).resolves.toBe(true);
     expect(findSessionUser).not.toHaveBeenCalled();
     expect(request).not.toHaveProperty('user');
   });
@@ -85,9 +83,7 @@ describe('SessionGuard', () => {
   it('공개 메서드에 문자열 쿠키가 있어도 세션을 조회하지 않는다', async () => {
     const request: TestRequest = { cookies: { sid: 'public-test-session' } };
 
-    await expect(
-      guard.canActivate(createContext(request, TestController.prototype.publicRoute)),
-    ).resolves.toBe(true);
+    await expect(guard.canActivate(createContext(request, TestController.prototype.publicRoute))).resolves.toBe(true);
     expect(findSessionUser).not.toHaveBeenCalled();
     expect(request).not.toHaveProperty('user');
   });
@@ -99,9 +95,7 @@ describe('SessionGuard', () => {
 
   it('메서드의 비공개 표시가 클래스의 Public보다 우선한다', async () => {
     await expect(
-      guard.canActivate(
-        createContext({}, PublicController.prototype.protectedRoute, PublicController),
-      ),
+      guard.canActivate(createContext({}, PublicController.prototype.protectedRoute, PublicController)),
     ).rejects.toMatchObject({ status: 401 });
     expect(findSessionUser).not.toHaveBeenCalled();
   });
@@ -129,18 +123,15 @@ describe('SessionGuard', () => {
     expect(request).not.toHaveProperty('user');
   });
 
-  it.each(['unknown-test-session', ''])(
-    '문자열 쿠키 %j의 세션을 찾지 못하면 401로 거부한다',
-    async (sessionId) => {
-      const request: TestRequest = { cookies: { sid: sessionId } };
-      const result = guard.canActivate(createContext(request));
+  it.each(['unknown-test-session', ''])('문자열 쿠키 %j의 세션을 찾지 못하면 401로 거부한다', async (sessionId) => {
+    const request: TestRequest = { cookies: { sid: sessionId } };
+    const result = guard.canActivate(createContext(request));
 
-      await expect(result).rejects.toBeInstanceOf(UnauthorizedException);
-      await expect(result).rejects.toMatchObject({ status: 401 });
-      expect(findSessionUser).toHaveBeenCalledExactlyOnceWith(sessionId);
-      expect(request).not.toHaveProperty('user');
-    },
-  );
+    await expect(result).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(result).rejects.toMatchObject({ status: 401 });
+    expect(findSessionUser).toHaveBeenCalledExactlyOnceWith(sessionId);
+    expect(request).not.toHaveProperty('user');
+  });
 
   it('유효한 sid를 조회해 같은 요청에 사용자를 붙이고 통과시킨다', async () => {
     findSessionUser.mockResolvedValue(user);

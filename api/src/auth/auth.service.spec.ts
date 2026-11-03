@@ -172,41 +172,32 @@ describe('AuthService.requestCode', () => {
     expect(sendLoginCode).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['처음 발급', '재발급'])(
-    '%s을 동시에 두 번 요청해도 하나만 성공하고 하나는 429다',
-    async (state) => {
-      if (state === '재발급') {
-        await prisma.$executeRaw`
+  it.each(['처음 발급', '재발급'])('%s을 동시에 두 번 요청해도 하나만 성공하고 하나는 429다', async (state) => {
+    if (state === '재발급') {
+      await prisma.$executeRaw`
         INSERT INTO login_codes (email, code_hash, expires_at, created_at)
         VALUES (${email}, 'previous-hash', now(), now() - interval '61 seconds')
       `;
-      }
-      randomIntMock.mockReturnValueOnce(123456).mockReturnValueOnce(654321);
+    }
+    randomIntMock.mockReturnValueOnce(123456).mockReturnValueOnce(654321);
 
-      const results = await Promise.allSettled([
-        service.requestCode(email),
-        service.requestCode(email),
-      ]);
+    const results = await Promise.allSettled([service.requestCode(email), service.requestCode(email)]);
 
-      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
-      expect(results.filter((result) => result.status === 'rejected')).toEqual([
-        expect.objectContaining({ reason: expect.any(HttpException) }),
-      ]);
-      expect(results.filter((result) => result.status === 'rejected')).toEqual([
-        expect.objectContaining({
-          reason: expect.objectContaining({ status: 429 }),
-        }),
-      ]);
-      expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(
-        email,
-        expect.stringMatching(/^\d{6}$/),
-      );
-      const rows = await prisma.loginCode.findMany();
-      expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ email, attempts: 0, usedAt: null });
-      expect(await bcrypt.compare(sendLoginCode.mock.calls[0][1], rows[0].codeHash)).toBe(true);
-    },
-  );
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toEqual([
+      expect.objectContaining({ reason: expect.any(HttpException) }),
+    ]);
+    expect(results.filter((result) => result.status === 'rejected')).toEqual([
+      expect.objectContaining({
+        reason: expect.objectContaining({ status: 429 }),
+      }),
+    ]);
+    expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(email, expect.stringMatching(/^\d{6}$/));
+    const rows = await prisma.loginCode.findMany();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ email, attempts: 0, usedAt: null });
+    expect(await bcrypt.compare(sendLoginCode.mock.calls[0][1], rows[0].codeHash)).toBe(true);
+  });
 
   it('다른 이메일은 서로 막지 않고 가입 여부와 무관하게 같은 결과를 받는다', async () => {
     const existingEmail = 'existing@example.com';
@@ -215,10 +206,7 @@ describe('AuthService.requestCode', () => {
     });
     randomIntMock.mockReturnValueOnce(123456).mockReturnValueOnce(654321);
 
-    const results = await Promise.all([
-      service.requestCode(email),
-      service.requestCode(existingEmail),
-    ]);
+    const results = await Promise.all([service.requestCode(email), service.requestCode(existingEmail)]);
 
     expect(results).toEqual([undefined, undefined]);
     expect(sendLoginCode).toHaveBeenCalledTimes(2);
@@ -249,28 +237,25 @@ describe('AuthService.requestCode', () => {
     expect(await bcrypt.compare(code, row.codeHash)).toBe(true);
   });
 
-  it.each(['사용함', '5회 실패', '만료됨'])(
-    '기존 코드가 %s이어도 60초 제한은 유지한다',
-    async (state) => {
-      await prisma.$executeRaw`
+  it.each(['사용함', '5회 실패', '만료됨'])('기존 코드가 %s이어도 60초 제한은 유지한다', async (state) => {
+    await prisma.$executeRaw`
       INSERT INTO login_codes (email, code_hash, expires_at, attempts, used_at)
       VALUES (${email}, 'previous-hash',
               now() + ${state === '만료됨' ? -1 : 600} * interval '1 second',
               ${state === '5회 실패' ? 5 : 0},
               CASE WHEN ${state === '사용함'} THEN now() ELSE NULL END)
     `;
-      const before = await prisma.loginCode.findUniqueOrThrow({
-        where: { email },
-      });
+    const before = await prisma.loginCode.findUniqueOrThrow({
+      where: { email },
+    });
 
-      await expect(service.requestCode(email)).rejects.toMatchObject({
-        status: 429,
-      });
+    await expect(service.requestCode(email)).rejects.toMatchObject({
+      status: 429,
+    });
 
-      expect(await prisma.loginCode.findMany()).toEqual([before]);
-      expect(sendLoginCode).not.toHaveBeenCalled();
-    },
-  );
+    expect(await prisma.loginCode.findMany()).toEqual([before]);
+    expect(sendLoginCode).not.toHaveBeenCalled();
+  });
 });
 
 describe('AuthService.verifyCode', () => {
@@ -316,10 +301,7 @@ describe('AuthService.verifyCode', () => {
       .compile();
     prisma = module.get(PrismaService);
     service = module.get(AuthService);
-    [codeHash, nextCodeHash] = await Promise.all([
-      bcrypt.hash(code, 12),
-      bcrypt.hash(nextCode, 12),
-    ]);
+    [codeHash, nextCodeHash] = await Promise.all([bcrypt.hash(code, 12), bcrypt.hash(nextCode, 12)]);
   });
 
   beforeEach(async () => {
@@ -454,32 +436,25 @@ describe('AuthService.verifyCode', () => {
     });
   });
 
-  it.each([undefined, name])(
-    '틀린 코드는 이름 %s을 보내도 가입이나 세션을 만들지 않는다',
-    async (inputName) => {
-      await createLoginCode();
+  it.each([undefined, name])('틀린 코드는 이름 %s을 보내도 가입이나 세션을 만들지 않는다', async (inputName) => {
+    await createLoginCode();
 
-      const error = await service
-        .verifyCode(email, wrongCode, inputName)
-        .catch((error: unknown) => error);
+    const error = await service.verifyCode(email, wrongCode, inputName).catch((error: unknown) => error);
 
-      expectCodeError(error, 'CODE_WRONG');
-      expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
-        attempts: 1,
-        usedAt: null,
-      });
-      expect(await prisma.user.count()).toBe(0);
-      expect(await prisma.session.count()).toBe(0);
-    },
-  );
+    expectCodeError(error, 'CODE_WRONG');
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
+      attempts: 1,
+      usedAt: null,
+    });
+    expect(await prisma.user.count()).toBe(0);
+    expect(await prisma.session.count()).toBe(0);
+  });
 
   it('틀린 코드 다섯 번 뒤에는 맞는 코드도 비교하지 않고 CODE_EXPIRED를 돌려준다', async () => {
     await createLoginCode();
     const compare = vi.spyOn(bcrypt, 'compare');
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const error = await service
-        .verifyCode(email, wrongCode, name)
-        .catch((error: unknown) => error);
+      const error = await service.verifyCode(email, wrongCode, name).catch((error: unknown) => error);
       expectCodeError(error, 'CODE_WRONG');
     }
     const before = await prisma.loginCode.findUniqueOrThrow({
@@ -526,52 +501,47 @@ describe('AuthService.verifyCode', () => {
     expect(await prisma.session.count()).toBe(0);
   });
 
-  it.each(['기존 사용자', '새 사용자'])(
-    '%s가 맞는 코드를 동시에 두 번 보내면 하나만 성공한다',
-    async (state) => {
-      if (state === '기존 사용자') {
-        await prisma.user.create({ data: { email, name } });
-      }
-      await createLoginCode();
-      // 두 요청 모두 비교 단계에 도착한 뒤 진행시켜 사용 처리의 경합을 재현한다.
-      const originalCompare = bcrypt.compare;
-      let releaseComparisons!: () => void;
-      const bothComparing = new Promise<void>((resolve) => {
-        releaseComparisons = resolve;
-      });
-      let comparing = 0;
-      vi.spyOn(bcrypt, 'compare').mockImplementation(async (input, hash) => {
-        comparing += 1;
-        if (comparing === 2) releaseComparisons();
-        await bothComparing;
-        return originalCompare(input, hash);
-      });
+  it.each(['기존 사용자', '새 사용자'])('%s가 맞는 코드를 동시에 두 번 보내면 하나만 성공한다', async (state) => {
+    if (state === '기존 사용자') {
+      await prisma.user.create({ data: { email, name } });
+    }
+    await createLoginCode();
+    // 두 요청 모두 비교 단계에 도착한 뒤 진행시켜 사용 처리의 경합을 재현한다.
+    const originalCompare = bcrypt.compare;
+    let releaseComparisons!: () => void;
+    const bothComparing = new Promise<void>((resolve) => {
+      releaseComparisons = resolve;
+    });
+    let comparing = 0;
+    vi.spyOn(bcrypt, 'compare').mockImplementation(async (input, hash) => {
+      comparing += 1;
+      if (comparing === 2) releaseComparisons();
+      await bothComparing;
+      return originalCompare(input, hash);
+    });
 
-      const results = await Promise.allSettled([
-        service.verifyCode(email, code, state === '새 사용자' ? name : undefined),
-        service.verifyCode(email, code, state === '새 사용자' ? name : undefined),
-      ]);
+    const results = await Promise.allSettled([
+      service.verifyCode(email, code, state === '새 사용자' ? name : undefined),
+      service.verifyCode(email, code, state === '새 사용자' ? name : undefined),
+    ]);
 
-      const successes = results.filter((result) => result.status === 'fulfilled');
-      const failures = results.filter((result) => result.status === 'rejected');
-      expect(successes).toHaveLength(1);
-      expect(failures).toHaveLength(1);
-      expectCodeError(failures[0].reason, 'CODE_EXPIRED');
-      expect(await prisma.user.findMany()).toEqual([
-        expect.objectContaining(successes[0].value.user),
-      ]);
-      expect(await prisma.session.findMany()).toEqual([
-        expect.objectContaining({
-          userId: successes[0].value.user.id,
-          tokenHash: createHash('sha256').update(successes[0].value.token).digest('hex'),
-        }),
-      ]);
-      expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
-        attempts: 2,
-        usedAt: expect.any(Date),
-      });
-    },
-  );
+    const successes = results.filter((result) => result.status === 'fulfilled');
+    const failures = results.filter((result) => result.status === 'rejected');
+    expect(successes).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+    expectCodeError(failures[0].reason, 'CODE_EXPIRED');
+    expect(await prisma.user.findMany()).toEqual([expect.objectContaining(successes[0].value.user)]);
+    expect(await prisma.session.findMany()).toEqual([
+      expect.objectContaining({
+        userId: successes[0].value.user.id,
+        tokenHash: createHash('sha256').update(successes[0].value.token).digest('hex'),
+      }),
+    ]);
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
+      attempts: 2,
+      usedAt: expect.any(Date),
+    });
+  });
 
   it.each([0, 1])('만료 시각이 DB 현재보다 %s초 전이면 비교하지 않고 거부한다', async (seconds) => {
     await createLoginCode();
@@ -621,9 +591,7 @@ describe('AuthService.verifyCode', () => {
     const before = await prisma.loginCode.findMany();
     const compare = vi.spyOn(bcrypt, 'compare');
 
-    const error = await service
-      .verifyCode('missing@example.com', code, name)
-      .catch((error: unknown) => error);
+    const error = await service.verifyCode('missing@example.com', code, name).catch((error: unknown) => error);
 
     expectCodeError(error, 'CODE_EXPIRED');
     expect(compare).not.toHaveBeenCalled();
@@ -702,9 +670,7 @@ describe('AuthService.verifyCode', () => {
       `;
       // 0에서는 attempts > 0 조건만으로도 되돌림이 막힌다. 새 코드로 실제
       // 한 번 틀린 뒤 옛 요청을 이어가야 code_hash 조건 누락을 잡을 수 있다.
-      const error = await service
-        .verifyCode(email, wrongCode, name)
-        .catch((error: unknown) => error);
+      const error = await service.verifyCode(email, wrongCode, name).catch((error: unknown) => error);
       expectCodeError(error, 'CODE_WRONG');
       return originalCompare(input, hash);
     });
@@ -944,21 +910,19 @@ describe('AuthService.findSessionUser', () => {
       $executeRaw: (...args: Parameters<PrismaService['$executeRaw']>) => Promise<number>;
     } = prisma;
     let refreshedLastSeenAt: Date | undefined;
-    const updateSession = vi
-      .spyOn(sessionDatabase, '$executeRaw')
-      .mockImplementationOnce(async (...args) => {
-        // SELECT는 6분 전 값을 봤지만, UPDATE 전에 다른 요청이 먼저 갱신한다.
-        const [refreshed] = await prisma.$queryRaw<{ last_seen_at: Date }[]>`
+    const updateSession = vi.spyOn(sessionDatabase, '$executeRaw').mockImplementationOnce(async (...args) => {
+      // SELECT는 6분 전 값을 봤지만, UPDATE 전에 다른 요청이 먼저 갱신한다.
+      const [refreshed] = await prisma.$queryRaw<{ last_seen_at: Date }[]>`
           UPDATE sessions SET last_seen_at = now() - interval '1 minute'
           WHERE token_hash = ${tokenHash}
           RETURNING last_seen_at
         `;
-        refreshedLastSeenAt = refreshed.last_seen_at;
+      refreshedLastSeenAt = refreshed.last_seen_at;
 
-        const updatedCount = await executeRaw(...args);
-        expect(updatedCount).toBe(0);
-        return updatedCount;
-      });
+      const updatedCount = await executeRaw(...args);
+      expect(updatedCount).toBe(0);
+      return updatedCount;
+    });
 
     await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
 
@@ -1012,9 +976,7 @@ describe('AuthService.findSessionUser', () => {
         });
         const transactionService = new AuthService(tx as PrismaService, new MailService());
 
-        await expect(transactionService.findSessionUser(sessionId)).resolves.toEqual(
-          allowed ? user : null,
-        );
+        await expect(transactionService.findSessionUser(sessionId)).resolves.toEqual(allowed ? user : null);
 
         expect(await tx.session.findMany()).toEqual([before]);
       });
@@ -1075,9 +1037,7 @@ describe('AuthService.findSessionUser', () => {
       expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(finishedAt.getTime());
       expect(after).toEqual({ ...stale, lastSeenAt: after.lastSeenAt });
       expect(await prisma.session.findUniqueOrThrow({ where: { id: fresh.id } })).toEqual(fresh);
-      expect(await prisma.session.findUniqueOrThrow({ where: { id: expired.id } })).toEqual(
-        expired,
-      );
+      expect(await prisma.session.findUniqueOrThrow({ where: { id: expired.id } })).toEqual(expired);
       expect(await prisma.session.findUniqueOrThrow({ where: { id: idle.id } })).toEqual(idle);
     },
   );
@@ -1107,9 +1067,7 @@ describe('AuthService.findSessionUser', () => {
       SELECT now()
     `;
 
-    const results = await Promise.all(
-      Array.from({ length: 10 }, () => service.findSessionUser(sessionId)),
-    );
+    const results = await Promise.all(Array.from({ length: 10 }, () => service.findSessionUser(sessionId)));
 
     expect(results).toEqual(Array.from({ length: 10 }, () => user));
     const [{ now: finishedAt }] = await prisma.$queryRaw<{ now: Date }[]>`

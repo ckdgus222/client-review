@@ -7,9 +7,7 @@ export const assertTestDatabaseUrl = (url: string | undefined) => {
   // 오류 문구에 주소를 통째로 넣지 않는다. 주소 안에 비밀번호가 있다.
   const databaseName = new URL(url).pathname.slice(1);
   if (databaseName !== TEST_DATABASE_NAME) {
-    throw new Error(
-      `TEST_DATABASE_URL의 DB 이름은 ${TEST_DATABASE_NAME}여야 해요. 지금 값: ${databaseName}`,
-    );
+    throw new Error(`TEST_DATABASE_URL의 DB 이름은 ${TEST_DATABASE_NAME}여야 해요. 지금 값: ${databaseName}`);
   }
 
   return url;

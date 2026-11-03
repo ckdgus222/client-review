@@ -36,26 +36,23 @@ describe('App', () => {
   it.each([
     { basename: '/', path: '/abc/def', homeHref: /^\/$/ },
     { basename: '/app', path: '/app/abc', homeHref: /^\/app\/?$/ },
-  ])(
-    'basename이 $basename일 때 링크를 누르면 첫 화면으로 이동한다',
-    async ({ basename, path, homeHref }) => {
-      render(
-        <MemoryRouter basename={basename} initialEntries={[path]}>
-          <App />
-        </MemoryRouter>,
-      )
+  ])('basename이 $basename일 때 링크를 누르면 첫 화면으로 이동한다', async ({ basename, path, homeHref }) => {
+    render(
+      <MemoryRouter basename={basename} initialEntries={[path]}>
+        <App />
+      </MemoryRouter>,
+    )
 
-      expect(screen.getByRole('heading', { level: 1, name: '없는 화면이에요' })).toBeDefined()
-      const homeLink = screen.getByRole('link', { name: '첫 화면으로 가기' })
-      expect(homeLink.getAttribute('href')).toMatch(homeHref)
+    expect(screen.getByRole('heading', { level: 1, name: '없는 화면이에요' })).toBeDefined()
+    const homeLink = screen.getByRole('link', { name: '첫 화면으로 가기' })
+    expect(homeLink.getAttribute('href')).toMatch(homeHref)
 
-      fireEvent.click(homeLink)
+    fireEvent.click(homeLink)
 
-      expect(await screen.findByText('준비 중이에요.')).toBeDefined()
-      expect(screen.queryByRole('heading', { name: '없는 화면이에요' })).toBeNull()
-      expect(screen.queryByText('주소가 맞는지 확인해 주세요.')).toBeNull()
-      expect(screen.queryByRole('link', { name: '첫 화면으로 가기' })).toBeNull()
-      expect(within(screen.getByRole('banner')).getByText('Client Review')).toBeDefined()
-    },
-  )
+    expect(await screen.findByText('준비 중이에요.')).toBeDefined()
+    expect(screen.queryByRole('heading', { name: '없는 화면이에요' })).toBeNull()
+    expect(screen.queryByText('주소가 맞는지 확인해 주세요.')).toBeNull()
+    expect(screen.queryByRole('link', { name: '첫 화면으로 가기' })).toBeNull()
+    expect(within(screen.getByRole('banner')).getByText('Client Review')).toBeDefined()
+  })
 })

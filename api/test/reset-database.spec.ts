@@ -21,9 +21,7 @@ describe('resetDatabase 안전 검사', () => {
 
     expect(queryRaw).toHaveBeenCalledOnce();
     expect(executeRaw).toHaveBeenCalledOnce();
-    expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-      executeRaw.mock.invocationCallOrder[0],
-    );
+    expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(executeRaw.mock.invocationCallOrder[0]);
   });
 
   it.each(['client_review', 'postgres', 'client_review_test_backup', ''])(

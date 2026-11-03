@@ -14,10 +14,7 @@ describe('MailService.sendLoginCode', () => {
 
     expect(log).toHaveBeenCalledTimes(1);
     expect(log.mock.calls[0]).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('000042'),
-        expect.stringContaining('login@example.com'),
-      ]),
+      expect.arrayContaining([expect.stringContaining('000042'), expect.stringContaining('login@example.com')]),
     );
   });
 });
