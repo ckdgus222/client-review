@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
-import { ApiError, type AuthUser, getMe, logout } from '../api/auth.ts'
+import { type AuthUser, getMe, logout } from '../api/auth.ts'
+import { ApiError } from '../api/client.ts'
 import styles from '../components/Button.module.css'
 import { HomePage } from './HomePage.tsx'
 

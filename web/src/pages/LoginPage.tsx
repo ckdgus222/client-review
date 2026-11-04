@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { ApiError, requestCode, verifyCode } from '../api/auth.ts'
+import { requestCode, verifyCode } from '../api/auth.ts'
+import { ApiError } from '../api/client.ts'
 import { Button } from '../components/Button.tsx'
 import { TextField } from '../components/TextField.tsx'
 import styles from './LoginPage.module.css'
