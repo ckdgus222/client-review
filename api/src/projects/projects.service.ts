@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { ProjectRole } from '../generated/prisma/client.js';
+import { type Prisma, ProjectRole } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 // 프로젝트에 이 사람의 역할을 붙인 모양. 목록과 만들기가 같은 모양을 돌려준다.
@@ -34,8 +34,13 @@ export class ProjectsService {
 
   // 특정 프로젝트를 다루는 요청은 모두 여기서 멤버인지 확인한다.
   // 멤버가 아니면 403이 아니라 404다. 남의 프로젝트가 있는지도 알 수 없게 하려는 것이다.
-  async requireMemberRole(projectId: string, userId: string): Promise<ProjectRole> {
-    const member = await this.prisma.projectMember.findUnique({
+  // 트랜잭션 안에서 부를 때는 그 트랜잭션(db)으로 찾아야 잠근 뒤의 상태를 본다.
+  async requireMemberRole(
+    projectId: string,
+    userId: string,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<ProjectRole> {
+    const member = await db.projectMember.findUnique({
       where: { projectId_userId: { projectId, userId } },
       select: { role: true },
     });
