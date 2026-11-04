@@ -7,6 +7,9 @@ export type MyProject = { id: string; name: string; myRole: ProjectRole; created
 
 const PROJECT_FIELDS = { id: true, name: true, createdAt: true } as const;
 
+// 멤버가 아님, 없는 프로젝트, 틀린 모양 id(컨트롤러)가 모두 이 본문으로 답한다. 셋을 구별할 수 없게 하려는 것이다.
+export const projectNotFound = () => new NotFoundException('없는 프로젝트예요');
+
 @Injectable()
 export class ProjectsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -44,7 +47,7 @@ export class ProjectsService {
       where: { projectId_userId: { projectId, userId } },
       select: { role: true },
     });
-    if (!member) throw new NotFoundException('없는 프로젝트예요');
+    if (!member) throw projectNotFound();
     return member.role;
   }
 

@@ -14,7 +14,8 @@ const screenExistsError = () =>
 const isUniqueViolation = (error: unknown) =>
   error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 
-const screenNotFound = () => new NotFoundException('없는 화면이에요');
+// 없는 화면, 남의 화면, 틀린 모양 id(컨트롤러)가 모두 이 본문으로 답한다.
+export const screenNotFound = () => new NotFoundException('없는 화면이에요');
 
 @Injectable()
 export class ScreensService {
