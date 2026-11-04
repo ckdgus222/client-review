@@ -43,6 +43,7 @@ describe('프로젝트 API (e2e)', () => {
   beforeEach(async () => {
     vi.stubEnv('APP_ORIGINS', origin);
     vi.stubEnv('COOKIE_SECURE', undefined);
+    vi.stubEnv('DEVELOPER_EMAIL', 'user@example.com');
     sendLoginCode.mockReset();
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(MailService)
@@ -174,6 +175,127 @@ describe('프로젝트 API (e2e)', () => {
       createdAt: expect.any(String),
     });
     expect(await prisma.project.findMany()).toEqual([{ id: response.body.id, name, createdAt: expect.any(Date) }]);
+  });
+
+  it('다른 이메일로 로그인하면 생성은 403이고 프로젝트와 멤버를 만들지 않는다', async () => {
+    const otherCookie = await login(otherUserId);
+
+    await request(server)
+      .post('/api/projects')
+      .set('Origin', origin)
+      .set('Cookie', otherCookie)
+      .send({ name: '만들 수 없는 프로젝트' })
+      .expect(403)
+      .expect({ statusCode: 403, message: '프로젝트는 개발자만 만들 수 있어요', error: 'Forbidden' });
+
+    expect(await prisma.project.count()).toBe(0);
+    expect(await prisma.projectMember.count()).toBe(0);
+  });
+
+  it.each([
+    { label: '빈 문자열', value: '' },
+    { label: '공백만', value: ' \t\n ' },
+    { label: '없음', value: undefined },
+  ])('개발자 이메일 설정이 $label이면 생성은 403이고 프로젝트와 멤버를 만들지 않는다', async ({ value }) => {
+    vi.stubEnv('DEVELOPER_EMAIL', value);
+
+    await post()
+      .send({ name: '만들 수 없는 프로젝트' })
+      .expect(403)
+      .expect({ statusCode: 403, message: '프로젝트는 개발자만 만들 수 있어요', error: 'Forbidden' });
+
+    expect(await prisma.project.count()).toBe(0);
+    expect(await prisma.projectMember.count()).toBe(0);
+  });
+
+  it.each(['user@example.com', 'User@Example.COM', '  user@example.com  ', '  User@Example.COM  '])(
+    '개발자 이메일 설정이 "%s"이면 user@example.com은 프로젝트와 DEVELOPER 멤버를 만든다',
+    async (developerEmail) => {
+      vi.stubEnv('DEVELOPER_EMAIL', developerEmail);
+
+      const response = await post().send({ name: '개발자 프로젝트' }).expect(201);
+
+      expect(response.body).toEqual({
+        id: expect.any(String),
+        name: '개발자 프로젝트',
+        myRole: 'DEVELOPER',
+        createdAt: expect.any(String),
+      });
+      expect(await prisma.project.findMany()).toEqual([
+        { id: response.body.id, name: '개발자 프로젝트', createdAt: new Date(response.body.createdAt) },
+      ]);
+      expect(await prisma.projectMember.findMany()).toEqual([
+        {
+          id: expect.any(String),
+          projectId: response.body.id,
+          userId,
+          role: 'DEVELOPER',
+          createdAt: expect.any(Date),
+        },
+      ]);
+    },
+  );
+
+  it('개발자 이메일 설정이 바뀌면 다음 요청부터 새 이메일만 만들 수 있고 기존 데이터는 보존한다', async () => {
+    await post().send({ name: '기존 개발자의 프로젝트' }).expect(201);
+    const existingProjects = await prisma.project.findMany();
+    const existingMembers = await prisma.projectMember.findMany();
+    vi.stubEnv('DEVELOPER_EMAIL', 'other@example.com');
+
+    await post()
+      .send({ name: '만들 수 없는 프로젝트' })
+      .expect(403)
+      .expect({ statusCode: 403, message: '프로젝트는 개발자만 만들 수 있어요', error: 'Forbidden' });
+
+    expect(await prisma.project.findMany()).toEqual(existingProjects);
+    expect(await prisma.projectMember.findMany()).toEqual(existingMembers);
+
+    const otherCookie = await login(otherUserId);
+    const response = await request(server)
+      .post('/api/projects')
+      .set('Origin', origin)
+      .set('Cookie', otherCookie)
+      .send({ name: '새 개발자의 프로젝트' })
+      .expect(201);
+
+    expect(response.body).toEqual({
+      id: expect.any(String),
+      name: '새 개발자의 프로젝트',
+      myRole: 'DEVELOPER',
+      createdAt: expect.any(String),
+    });
+    expect(await prisma.project.count()).toBe(2);
+    expect(await prisma.projectMember.count()).toBe(2);
+    expect(await prisma.projectMember.findMany({ where: { projectId: response.body.id } })).toEqual([
+      {
+        id: expect.any(String),
+        projectId: response.body.id,
+        userId: otherUserId,
+        role: 'DEVELOPER',
+        createdAt: expect.any(Date),
+      },
+    ]);
+  });
+
+  it.each([
+    { label: '다른 이메일', value: 'other@example.com' },
+    { label: '없음', value: undefined },
+  ])('개발자 이메일 설정이 $label이어도 클라이언트로 참여한 프로젝트 목록과 상세를 볼 수 있다', async ({ value }) => {
+    vi.stubEnv('DEVELOPER_EMAIL', value);
+    const project = await createProject('클라이언트로 참여', otherUserId);
+    await prisma.projectMember.create({ data: { projectId: project.id, userId, role: 'CLIENT' } });
+    await createProject('참여하지 않은 프로젝트', otherUserId);
+
+    await request(server)
+      .get('/api/projects')
+      .set('Cookie', cookie)
+      .expect(200)
+      .expect([{ id: project.id, name: project.name, myRole: 'CLIENT', createdAt: project.createdAt.toISOString() }]);
+    await request(server)
+      .get(`/api/projects/${project.id}`)
+      .set('Cookie', cookie)
+      .expect(200)
+      .expect({ id: project.id, name: project.name, myRole: 'CLIENT' });
   });
 
   it.each([

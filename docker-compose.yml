@@ -26,6 +26,8 @@ services:
       DATABASE_URL: postgresql://client_review:${POSTGRES_PASSWORD}@db:5432/client_review
       # Docker에서는 nginx(8080)가 내준 화면만 api를 쓴다. 맥의 .env처럼 5173은 넣지 않는다.
       APP_ORIGINS: http://localhost:8080
+      # 루트 .env의 값을 넘긴다. 넘기지 않으면 Docker에서는 아무도 프로젝트를 만들 수 없다.
+      DEVELOPER_EMAIL: ${DEVELOPER_EMAIL}
     depends_on:
       db:
         condition: service_healthy
