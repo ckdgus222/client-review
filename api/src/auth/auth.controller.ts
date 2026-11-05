@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req, Res } from '@ne
 import type { CookieOptions, Request, Response } from 'express';
 import { AuthService } from './auth.service.js';
 import { Public } from './decorators/public.decorator.js';
+import { isDeveloper } from './developer.js';
 import { RequestCodeDto } from './dto/request-code.dto.js';
 import { VerifyCodeDto } from './dto/verify-code.dto.js';
 import { type AuthenticatedRequest, readSessionToken, SESSION_COOKIE } from './guards/session.guard.js';
@@ -52,7 +53,8 @@ export class AuthController {
 
   @Get('me')
   me(@Req() request: AuthenticatedRequest) {
-    return request.user;
+    // web이 만들기 칸을 개발자에게만 보여 주려고 함께 보낸다. 실제로 막는 곳은 프로젝트 만들기 API다.
+    return { ...request.user, canCreateProjects: isDeveloper(request.user.email) };
   }
 
   // 세션이 이미 끝났어도 쿠키를 지울 수 있게 로그인 검사 없이 연다.
