@@ -2,16 +2,32 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import App from './App.tsx'
 import { getMe } from './api/auth.ts'
+import { listProjects } from './api/projects.ts'
 
 vi.mock('./api/auth.ts', async () => {
   const actual = await vi.importActual<typeof import('./api/auth.ts')>('./api/auth.ts')
   return { ...actual, getMe: vi.fn() }
 })
 
-const user = { id: '5b3a934d-ef8e-4ce8-b26a-a9d1cdd4983f', email: 'reader@example.com', name: '김수정' }
+vi.mock('./api/projects.ts', async () => {
+  const actual = await vi.importActual<typeof import('./api/projects.ts')>('./api/projects.ts')
+  return { ...actual, listProjects: vi.fn() }
+})
+
+const user = {
+  canCreateProjects: false,
+  id: '5b3a934d-ef8e-4ce8-b26a-a9d1cdd4983f',
+  email: 'reader@example.com',
+  name: '김수정',
+}
+
+beforeEach(() => {
+  vi.mocked(getMe).mockReset()
+  vi.mocked(listProjects).mockReset().mockResolvedValue([])
+})
 
 describe('App', () => {
-  it('첫 화면에는 사용자 인사를 표시하고 404 제목은 표시하지 않는다', async () => {
+  it('첫 화면에는 내 프로젝트 제목을 표시하고 404 제목은 표시하지 않는다', async () => {
     vi.mocked(getMe).mockResolvedValueOnce(user)
     render(
       <MemoryRouter initialEntries={['/']}>
@@ -20,9 +36,10 @@ describe('App', () => {
     )
 
     expect(
-      await within(screen.getByRole('main')).findByRole('heading', { level: 1, name: `${user.name}님, 안녕하세요` }),
+      await within(screen.getByRole('main')).findByRole('heading', { level: 1, name: '내 프로젝트' }),
     ).toBeDefined()
     expect(screen.queryByRole('heading', { name: '없는 화면이에요' })).toBeNull()
+    expect(listProjects).toHaveBeenCalledExactlyOnceWith()
   })
 
   it.each(['/abc', '/abc/def', '/app/abc', '/abc?from=link#details'])(
@@ -61,8 +78,9 @@ describe('App', () => {
 
     fireEvent.click(homeLink)
 
-    expect(await screen.findByRole('heading', { level: 1, name: `${user.name}님, 안녕하세요` })).toBeDefined()
+    expect(await screen.findByRole('heading', { level: 1, name: '내 프로젝트' })).toBeDefined()
     expect(screen.queryByRole('heading', { name: '없는 화면이에요' })).toBeNull()
+    expect(listProjects).toHaveBeenCalledExactlyOnceWith()
     expect(screen.queryByText('주소가 맞는지 확인해 주세요.')).toBeNull()
     expect(screen.queryByRole('link', { name: '첫 화면으로 가기' })).toBeNull()
     expect(within(screen.getByRole('banner')).getByText('Client Review')).toBeDefined()

@@ -1,6 +1,8 @@
 import { apiPost, toApiError } from './client.ts'
 
 export type AuthUser = { id: string; email: string; name: string }
+// /auth/me만 보낸다. 만들기 칸을 보여 줄지 정하는 값이고, 실제로 막는 곳은 서버의 만들기 API다.
+export type Me = AuthUser & { canCreateProjects: boolean }
 
 export const requestCode = async (email: string) => {
   await apiPost('/auth/email-code', { email })
@@ -13,7 +15,7 @@ export const verifyCode = async (email: string, code: string, name?: string): Pr
 }
 
 // 로그인 안 했으면(401) 오류가 아니라 null이다. 그래서 apiGet 대신 직접 부른다.
-export const getMe = async (): Promise<AuthUser | null> => {
+export const getMe = async (): Promise<Me | null> => {
   const response = await fetch('/api/auth/me')
   if (response.status === 401) return null
   if (!response.ok) throw await toApiError(response)
