@@ -174,7 +174,9 @@ describe('프로젝트 API (e2e)', () => {
       myRole: 'DEVELOPER',
       createdAt: expect.any(String),
     });
-    expect(await prisma.project.findMany()).toEqual([{ id: response.body.id, name, createdAt: expect.any(Date) }]);
+    expect(await prisma.project.findMany()).toEqual([
+      { id: response.body.id, name, currentVersionId: null, createdAt: expect.any(Date) },
+    ]);
   });
 
   it('다른 이메일로 로그인하면 생성은 403이고 프로젝트와 멤버를 만들지 않는다', async () => {
@@ -222,7 +224,12 @@ describe('프로젝트 API (e2e)', () => {
         createdAt: expect.any(String),
       });
       expect(await prisma.project.findMany()).toEqual([
-        { id: response.body.id, name: '개발자 프로젝트', createdAt: new Date(response.body.createdAt) },
+        {
+          id: response.body.id,
+          name: '개발자 프로젝트',
+          currentVersionId: null,
+          createdAt: new Date(response.body.createdAt),
+        },
       ]);
       expect(await prisma.projectMember.findMany()).toEqual([
         {

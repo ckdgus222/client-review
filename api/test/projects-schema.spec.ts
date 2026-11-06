@@ -317,6 +317,7 @@ describe('프로젝트와 화면 테이블', () => {
     expect(await prisma.project.findUniqueOrThrow({ where: { id: row.id } })).toEqual({
       id: row.id,
       name: '프로젝트',
+      currentVersionId: null,
       createdAt: expect.any(Date),
     });
   });

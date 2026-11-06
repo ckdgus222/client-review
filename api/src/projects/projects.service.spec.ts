@@ -48,7 +48,7 @@ describe('ProjectsService', () => {
       createdAt: expect.any(Date),
     });
     expect(await prisma.project.findMany()).toEqual([
-      { id: result.id, name: result.name, createdAt: result.createdAt },
+      { id: result.id, name: result.name, currentVersionId: null, createdAt: result.createdAt },
     ]);
     expect(await prisma.projectMember.findMany()).toEqual([
       {

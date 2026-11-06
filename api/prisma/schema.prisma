@@ -18,6 +18,7 @@ model User {
   createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz
   sessions    Session[]
   memberships ProjectMember[]
+  activities  ActivityEvent[]
 
   @@map("users")
 }
@@ -62,11 +63,17 @@ enum Viewport {
 }
 
 model Project {
-  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name      String
-  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
-  members   ProjectMember[]
-  screens   Screen[]
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String
+  // 게시할 때만 바꾼다. 검수실이 처음 보여 줄 버전이다.
+  currentVersionId String?           @unique @map("current_version_id") @db.Uuid
+  currentVersion   DeliveryVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: NoAction)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  members          ProjectMember[]
+  screens          Screen[]
+  versions         DeliveryVersion[]
+  assets           Asset[]
+  activities       ActivityEvent[]
 
   @@map("projects")
 }
@@ -88,15 +95,98 @@ model ProjectMember {
 
 // 화면 이름표. 버전마다 사진을 이 이름표에 붙여서 1차와 2차의 같은 화면을 잇는다.
 model Screen {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  projectId String    @map("project_id") @db.Uuid
-  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name      String
-  viewport  Viewport
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId      String          @map("project_id") @db.Uuid
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name           String
+  viewport       Viewport
   // 숨겨도 줄은 지우지 않는다. 그래서 숨긴 이름표도 아래 유니크 제약에 걸려 같은 이름표가 둘이 되지 않는다.
-  hiddenAt  DateTime? @map("hidden_at") @db.Timestamptz
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  hiddenAt       DateTime?       @map("hidden_at") @db.Timestamptz
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  versionScreens VersionScreen[]
 
   @@unique([projectId, name, viewport])
   @@map("screens")
+}
+
+enum VersionStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+
+  @@map("version_status")
+}
+
+// 초안은 number와 publishedAt이 비어 있고, 게시하면 둘 다 생긴다. 이 짝과 "초안은 프로젝트마다 1개"는
+// 마이그레이션 SQL의 CHECK 제약과 부분 유니크 인덱스가 지킨다. CHECK는 Prisma 스키마로 적을 수 없고, 부분 유니크는 미리보기 기능으로만 적을 수 있어서 SQL로 넣었다.
+model DeliveryVersion {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId   String          @map("project_id") @db.Uuid
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  number      Int?
+  status      VersionStatus   @default(DRAFT)
+  summary     String          @default("")
+  testUrl     String?         @map("test_url")
+  publishedAt DateTime?       @map("published_at") @db.Timestamptz
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  currentOf   Project?        @relation("CurrentVersion")
+  screens     VersionScreen[]
+  activities  ActivityEvent[]
+
+  @@unique([projectId, number])
+  @@map("delivery_versions")
+}
+
+// 사진 파일 하나의 정보. 2차 초안이 1차 사진을 그대로 쓰면 같은 줄을 가리킨다.
+model Asset {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId      String          @map("project_id") @db.Uuid
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  storageKey     String          @unique @map("storage_key")
+  mime           String
+  bytes          Int
+  width          Int
+  height         Int
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  versionScreens VersionScreen[]
+
+  @@map("assets")
+}
+
+// 버전의 화면 하나에 어떤 사진을 붙였는지. 화면과 사진은 NoAction이라 쓰이는 동안 DB가 지우기를 막는다.
+// 이 검사는 마이그레이션 SQL에서 트랜잭션 끝으로 미룬다.
+model VersionScreen {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  versionId String          @map("version_id") @db.Uuid
+  version   DeliveryVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  screenId  String          @map("screen_id") @db.Uuid
+  screen    Screen          @relation(fields: [screenId], references: [id], onDelete: NoAction)
+  assetId   String          @map("asset_id") @db.Uuid
+  asset     Asset           @relation(fields: [assetId], references: [id], onDelete: NoAction)
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([versionId, screenId])
+  @@map("version_screens")
+}
+
+// 사건 종류는 기능마다 마이그레이션으로 값을 더한다.
+enum ActivityType {
+  VERSION_PUBLISHED
+
+  @@map("activity_type")
+}
+
+// 한 번 쓴 줄은 고치거나 지우지 않는다. 그래서 가리키는 버전도 NoAction으로 지우기를 막는다.
+model ActivityEvent {
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId String           @map("project_id") @db.Uuid
+  project   Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  actorId   String           @map("actor_id") @db.Uuid
+  actor     User             @relation(fields: [actorId], references: [id])
+  type      ActivityType
+  versionId String?          @map("version_id") @db.Uuid
+  version   DeliveryVersion? @relation(fields: [versionId], references: [id], onDelete: NoAction)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("activity_events")
 }
