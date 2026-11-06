@@ -40,8 +40,7 @@ const NotFound = () => (
   </>
 )
 
-export const ProjectSettingsPage = () => {
-  const { id = '' } = useParams()
+const ProjectSettings = ({ id }: { id: string }) => {
   const isValidId = UUID_PATTERN.test(id)
   const { user, error: meError } = useMe()
   const [project, setProject] = useState<ProjectDetail>()
@@ -174,4 +173,11 @@ export const ProjectSettingsPage = () => {
       )}
     </section>
   )
+}
+
+// 방문 기록으로 다른 프로젝트 설정에 바로 가면 React가 이 화면을 다시 써서 이전 프로젝트의 제목·목록·오류가 남는다.
+// key를 id로 주면 id가 바뀔 때 새로 시작하고, 이전 화면에 늦게 온 응답은 버려진다.
+export const ProjectSettingsPage = () => {
+  const { id = '' } = useParams()
+  return <ProjectSettings key={id} id={id} />
 }

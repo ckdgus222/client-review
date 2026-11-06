@@ -57,6 +57,16 @@ const createdScreen: Screen = {
   hiddenAt: null,
 }
 
+const nextProject: ProjectDetail = {
+  id: '6b62c564-585a-4f05-ae57-8d6b3bc5a47f',
+  name: '다음 프로젝트',
+  myRole: 'DEVELOPER',
+}
+
+const nextScreens: Screen[] = [
+  { id: 'c52b65fc-59fb-4b3a-8543-24be0f3b64ed', name: '문의', viewport: 'PC', hiddenAt: null },
+]
+
 const deferred = <T,>() => {
   let resolve!: (value: T) => void
   let reject!: (reason: unknown) => void
@@ -90,6 +100,28 @@ const renderSettings = (basename = '/', id = project.id) => {
       <Routes>
         <Route path="/previous" element={<p>이전 화면</p>} />
         <Route path="/" element={<h1>내 프로젝트</h1>} />
+        <Route path="/projects/:id/settings" element={<ProjectSettingsPage />} />
+        <Route path="/login" element={<h1>로그인</h1>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+// 목록 화면을 거치지 않고 같은 Route에서 A → B로 방문 기록을 이동한다.
+const renderSettingsHistory = (basename = '/', id = project.id) => {
+  const prefix = basename === '/' ? '' : basename
+  return render(
+    <MemoryRouter
+      basename={basename}
+      initialEntries={[
+        `${prefix}/projects/${nextProject.id}/settings`,
+        `${prefix}/projects/${id}/settings`,
+      ]}
+      initialIndex={1}
+    >
+      <CurrentPath />
+      <BackButton />
+      <Routes>
         <Route path="/projects/:id/settings" element={<ProjectSettingsPage />} />
         <Route path="/login" element={<h1>로그인</h1>} />
       </Routes>
@@ -310,6 +342,218 @@ describe('ProjectSettingsPage 로그인과 조회', () => {
     fireEvent.click(link)
 
     expect(await screen.findByRole('heading', { name: '내 프로젝트' })).toBeDefined()
+  })
+})
+
+describe('ProjectSettingsPage 프로젝트 사이 이동', () => {
+  it.each(['/', '/app'])(
+    'basename %s에서 B로 이동하면 A의 제목·목록·오류·입력을 지우고 B에 화면을 만든다',
+    async (basename) => {
+      const pendingMe = deferred<Me>()
+      const pendingProject = deferred<ProjectDetail>()
+      const pendingScreens = deferred<Screen[]>()
+      vi.mocked(getMe).mockResolvedValueOnce(user).mockReturnValueOnce(pendingMe.promise)
+      vi.mocked(getProject).mockResolvedValueOnce(project).mockReturnValueOnce(pendingProject.promise)
+      vi.mocked(listScreens).mockResolvedValueOnce(screens).mockReturnValueOnce(pendingScreens.promise)
+      vi.mocked(createScreen).mockRejectedValueOnce(new ApiError(409, 'SCREEN_EXISTS'))
+      renderSettingsHistory(basename)
+      const input = await screen.findByRole<HTMLInputElement>('textbox', { name: '화면 이름' })
+      fireEvent.change(input, { target: { value: '메인' } })
+      fireEvent.change(screen.getByRole('combobox', { name: '기기' }), { target: { value: 'MOBILE' } })
+      fireEvent.click(screen.getByRole('button', { name: '만들기' }))
+      expect((await screen.findByRole('alert')).textContent).toBe('이미 있는 화면이에요')
+      expect(input.value).toBe('메인')
+
+      fireEvent.click(screen.getByRole('button', { name: '뒤로 가기' }))
+
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${nextProject.id}/settings`)
+      expect(screen.getByText('확인하는 중이에요.')).toBeDefined()
+      expect(screen.queryByRole('heading')).toBeNull()
+      expect(screen.queryByRole('list')).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.queryByRole('textbox')).toBeNull()
+      expect(getMe).toHaveBeenCalledTimes(2)
+      expect(getProject).toHaveBeenNthCalledWith(2, nextProject.id)
+      expect(listScreens).toHaveBeenNthCalledWith(2, nextProject.id)
+
+      await act(async () => pendingMe.resolve(user))
+      expect(screen.getByText('불러오는 중이에요.')).toBeDefined()
+      expect(screen.queryByRole('heading')).toBeNull()
+      expect(screen.queryByRole('list')).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+      await act(async () => {
+        pendingProject.resolve(nextProject)
+        pendingScreens.resolve(nextScreens)
+      })
+
+      expect(screen.getByRole('heading', { name: nextProject.name })).toBeDefined()
+      expect(screen.queryByRole('heading', { name: project.name })).toBeNull()
+      expect(screen.getByRole('listitem').textContent).toBe('01문의 · PC숨기기')
+      expect(screen.queryByRole('heading', { name: '숨긴 화면' })).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+      const nextInput = screen.getByRole<HTMLInputElement>('textbox', { name: '화면 이름' })
+      expect(nextInput.value).toBe('')
+      expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '기기' }).value).toBe('PC')
+
+      fireEvent.change(nextInput, { target: { value: '상품 상세' } })
+      fireEvent.change(screen.getByRole('combobox', { name: '기기' }), { target: { value: 'MOBILE' } })
+      fireEvent.click(screen.getByRole('button', { name: '만들기' }))
+
+      expect(await screen.findByText('상품 상세 · 모바일')).toBeDefined()
+      expect(createScreen).toHaveBeenCalledTimes(2)
+      expect(createScreen).toHaveBeenLastCalledWith(nextProject.id, '상품 상세', 'MOBILE')
+      expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+        '01문의 · PC숨기기',
+        '02상품 상세 · 모바일숨기기',
+      ])
+    },
+  )
+
+  it.each(['프로젝트', '화면 목록', '둘 다'])(
+    'A의 %s 응답이 B보다 늦게 와도 B의 제목·목록·역할을 덮지 않는다',
+    async (source) => {
+      const pendingProject = deferred<ProjectDetail>()
+      const pendingScreens = deferred<Screen[]>()
+      vi.mocked(getProject)
+        .mockReturnValueOnce(pendingProject.promise)
+        .mockResolvedValueOnce({ ...nextProject, myRole: 'CLIENT' })
+      vi.mocked(listScreens).mockReturnValueOnce(pendingScreens.promise).mockResolvedValueOnce(nextScreens)
+      renderSettingsHistory()
+      await screen.findByText('불러오는 중이에요.')
+      await act(async () => {
+        if (source === '프로젝트') pendingScreens.resolve(screens)
+        if (source === '화면 목록') pendingProject.resolve(project)
+      })
+      expect(getProject).toHaveBeenCalledExactlyOnceWith(project.id)
+      expect(listScreens).toHaveBeenCalledExactlyOnceWith(project.id)
+
+      fireEvent.click(screen.getByRole('button', { name: '뒤로 가기' }))
+      await screen.findByRole('heading', { name: nextProject.name })
+      expect(getProject).toHaveBeenNthCalledWith(2, nextProject.id)
+      expect(listScreens).toHaveBeenNthCalledWith(2, nextProject.id)
+      await act(async () => {
+        pendingProject.resolve(project)
+        pendingScreens.resolve(screens)
+      })
+
+      expect(screen.getByRole('heading', { name: nextProject.name })).toBeDefined()
+      expect(screen.queryByRole('heading', { name: project.name })).toBeNull()
+      expect(screen.getByRole('listitem').textContent).toBe('01문의 · PC')
+      expect(screen.queryByRole('heading', { name: '숨긴 화면' })).toBeNull()
+      expect(screen.queryByRole('textbox')).toBeNull()
+      expect(screen.queryByRole('button', { name: /^(만들기|숨기기|다시 보이기)$/ })).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+    },
+  )
+
+  it.each([
+    { source: '프로젝트 404', fail: getProject, status: 404 },
+    { source: '화면 목록 404', fail: listScreens, status: 404 },
+    { source: '프로젝트 500', fail: getProject, status: 500 },
+    { source: '화면 목록 401', fail: listScreens, status: 401 },
+  ])('A의 $source 뒤 정상 B로 이동하면 오류 대신 정상 화면을 보여 준다', async ({ fail, status }) => {
+    vi.mocked(getProject).mockResolvedValueOnce(project).mockResolvedValueOnce(nextProject)
+    vi.mocked(listScreens).mockResolvedValueOnce(screens).mockResolvedValueOnce(nextScreens)
+    // 첫 조회만 실패시키고 B의 응답은 그대로 둔다.
+    vi.mocked(fail).mockReset().mockRejectedValueOnce(new ApiError(status))
+    if (fail === getProject) vi.mocked(getProject).mockResolvedValueOnce(nextProject)
+    if (fail === listScreens) vi.mocked(listScreens).mockResolvedValueOnce(nextScreens)
+    renderSettingsHistory()
+    if (status === 404) await screen.findByRole('heading', { name: '없는 프로젝트예요' })
+    if (status !== 404) await screen.findByRole('alert')
+
+    fireEvent.click(screen.getByRole('button', { name: '뒤로 가기' }))
+
+    expect(await screen.findByRole('heading', { name: nextProject.name })).toBeDefined()
+    expect(screen.getByRole('listitem').textContent).toBe('01문의 · PC숨기기')
+    expect(screen.getByRole<HTMLInputElement>('textbox', { name: '화면 이름' }).value).toBe('')
+    expect(screen.queryByRole('heading', { name: '없는 프로젝트예요' })).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('link', { name: '다시 로그인하기' })).toBeNull()
+  })
+
+  it.each([
+    { source: '프로젝트 404', fail: getProject, status: 404 },
+    { source: '화면 목록 404', fail: listScreens, status: 404 },
+    { source: '프로젝트 500', fail: getProject, status: 500 },
+    { source: '화면 목록 401', fail: listScreens, status: 401 },
+  ])('B를 연 뒤 늦게 온 A의 $source 오류는 B를 가리지 않는다', async ({ fail, status }) => {
+    const pendingProject = deferred<ProjectDetail>()
+    const pendingScreens = deferred<Screen[]>()
+    vi.mocked(getProject).mockReturnValueOnce(pendingProject.promise).mockResolvedValueOnce(nextProject)
+    vi.mocked(listScreens).mockReturnValueOnce(pendingScreens.promise).mockResolvedValueOnce(nextScreens)
+    renderSettingsHistory()
+    await screen.findByText('불러오는 중이에요.')
+    fireEvent.click(screen.getByRole('button', { name: '뒤로 가기' }))
+    await screen.findByRole('heading', { name: nextProject.name })
+
+    await act(async () => {
+      if (fail === getProject) pendingProject.reject(new ApiError(status))
+      if (fail === listScreens) pendingScreens.reject(new ApiError(status))
+      pendingProject.resolve(project)
+      pendingScreens.resolve(screens)
+    })
+
+    expect(screen.getByRole('heading', { name: nextProject.name })).toBeDefined()
+    expect(screen.getByRole('listitem').textContent).toBe('01문의 · PC숨기기')
+    expect(screen.queryByRole('heading', { name: '없는 프로젝트예요' })).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('link', { name: '다시 로그인하기' })).toBeNull()
+  })
+
+  it('잘못된 id에서 정상 B로 이동하면 B만 조회하고 정상 화면을 보여 준다', async () => {
+    vi.mocked(getProject).mockResolvedValueOnce(nextProject)
+    vi.mocked(listScreens).mockResolvedValueOnce(nextScreens)
+    renderSettingsHistory('/', 'abc')
+    await screen.findByRole('heading', { name: '없는 프로젝트예요' })
+    expect(getProject).not.toHaveBeenCalled()
+    expect(listScreens).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '뒤로 가기' }))
+
+    expect(await screen.findByRole('heading', { name: nextProject.name })).toBeDefined()
+    expect(getProject).toHaveBeenCalledExactlyOnceWith(nextProject.id)
+    expect(listScreens).toHaveBeenCalledExactlyOnceWith(nextProject.id)
+    expect(screen.getByRole('listitem').textContent).toBe('01문의 · PC숨기기')
+  })
+
+  it.each([
+    { action: '만들기', request: createScreen, outcome: '성공', updated: createdScreen },
+    { action: '만들기', request: createScreen, outcome: '실패', updated: createdScreen },
+    { action: '숨기기', request: hideScreen, outcome: '성공', updated: { ...screens[0], hiddenAt: '2026-11-06T00:00:00.000Z' } },
+    { action: '숨기기', request: hideScreen, outcome: '실패', updated: screens[0] },
+    { action: '다시 보이기', request: showScreen, outcome: '성공', updated: { ...screens[1], hiddenAt: null } },
+    { action: '다시 보이기', request: showScreen, outcome: '실패', updated: screens[1] },
+  ])('A의 $action 요청 중 B로 이동하면 잠금이 풀리고 늦은 $outcome 응답은 버린다', async ({ action, request, outcome, updated }) => {
+    const pending = deferred<Screen>()
+    vi.mocked(request).mockReturnValueOnce(pending.promise)
+    vi.mocked(getProject).mockResolvedValueOnce(project).mockResolvedValueOnce(nextProject)
+    vi.mocked(listScreens).mockResolvedValueOnce(screens).mockResolvedValueOnce(nextScreens)
+    renderSettingsHistory()
+    fireEvent.change(await screen.findByRole('textbox', { name: '화면 이름' }), { target: { value: '상품 상세' } })
+    fireEvent.click(screen.getAllByRole('button', { name: action })[0])
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(screen.getAllByRole<HTMLButtonElement>('button', { name: action })[0].disabled).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: '뒤로 가기' }))
+    await screen.findByRole('heading', { name: nextProject.name })
+    const input = screen.getByRole<HTMLInputElement>('textbox', { name: '화면 이름' })
+    expect(input.value).toBe('')
+    expect(input.disabled).toBe(false)
+    expect(screen.getAllByRole<HTMLButtonElement>('button').every((button) => !button.disabled)).toBe(true)
+    fireEvent.change(input, { target: { value: 'B에서 쓰던 이름' } })
+
+    await act(async () => {
+      if (outcome === '성공') pending.resolve(updated)
+      if (outcome === '실패') pending.reject(new ApiError(401))
+    })
+
+    expect(screen.getByRole('heading', { name: nextProject.name })).toBeDefined()
+    expect(screen.getByRole('listitem').textContent).toBe('01문의 · PC숨기기')
+    expect(input.value).toBe('B에서 쓰던 이름')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('link', { name: '다시 로그인하기' })).toBeNull()
+    expect(screen.getAllByRole<HTMLButtonElement>('button').every((button) => !button.disabled)).toBe(true)
   })
 })
 
