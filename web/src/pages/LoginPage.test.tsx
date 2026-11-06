@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
 import App from '../App.tsx'
-import { ApiError, requestCode, verifyCode } from '../api/auth.ts'
+import { requestCode, verifyCode } from '../api/auth.ts'
+import { ApiError } from '../api/client.ts'
 import { LoginPage } from './LoginPage.tsx'
 
 vi.mock('../api/auth.ts', async () => {

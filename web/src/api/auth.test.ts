@@ -1,4 +1,5 @@
-import { ApiError, getMe, logout, requestCode, verifyCode } from './auth.ts'
+import { getMe, logout, requestCode, verifyCode } from './auth.ts'
+import { ApiError } from './client.ts'
 
 const email = 'reader@example.com'
 const user = { id: '5b3a934d-ef8e-4ce8-b26a-a9d1cdd4983f', email, name: '김수정' }

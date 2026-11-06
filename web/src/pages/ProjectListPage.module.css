@@ -1,0 +1,71 @@
+/* 로그인 화면과 같은 흰 판이다. 목록은 이름이 길어서 로그인 칸보다 넓게 둔다. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 40rem;
+  margin: var(--space-4) auto 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+/* 기본 바깥 여백이 gap에 더해지지 않게 지운다. */
+.panel p,
+.panel h1 {
+  margin: 0;
+}
+
+/* 좁은 화면에서는 이름과 로그아웃이 함께 다음 줄로 내려간다. */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+/* 제목은 왼쪽, 이름과 로그아웃은 한 묶음으로 오른쪽으로 민다. */
+.account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+
+.user {
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* 입력칸이 남는 폭을 차지하고, 버튼은 입력칸 아래 끝에 맞춘다. */
+.create {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.create > :first-child {
+  flex: 1 1 16rem;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--color-border);
+}
+
+/* 줄 전체를 눌러 들어갈 수 있게 링크를 줄 폭으로 넓힌다. */
+.list a {
+  display: block;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.list a:hover {
+  text-decoration: underline;
+}

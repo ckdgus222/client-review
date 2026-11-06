@@ -77,6 +77,7 @@ describe('로그인 API (e2e)', () => {
   beforeEach(async () => {
     vi.stubEnv('APP_ORIGINS', 'http://localhost:5173,http://localhost:8080');
     vi.stubEnv('COOKIE_SECURE', undefined);
+    vi.stubEnv('DEVELOPER_EMAIL', 'developer@example.com');
     sendLoginCode.mockReset();
     const module = await Test.createTestingModule({
       imports: [AppModule],
@@ -128,13 +129,65 @@ describe('로그인 API (e2e)', () => {
     expect(savedCode.codeHash).toMatch(/^\$2[aby]\$12\$/);
     expect(savedCode.usedAt).not.toBeNull();
 
-    await request(server).get('/api/auth/me').set('Cookie', cookie).expect(200).expect(publicUser);
+    await request(server)
+      .get('/api/auth/me')
+      .set('Cookie', cookie)
+      .expect(200)
+      .expect({ ...publicUser, canCreateProjects: false });
     const logout = await post('/api/auth/logout').set('Cookie', cookie).expect(204);
     expect(logout.text).toBe('');
     expectClearedCookie(logout);
     expect(await prisma.session.count()).toBe(0);
     expect(await prisma.user.count()).toBe(1);
     await request(server).get('/api/auth/me').set('Cookie', cookie).expect(401);
+  });
+
+  it.each([
+    { label: '같은 이메일', value: email, address: email, canCreateProjects: true },
+    { label: '설정의 대소문자가 다름', value: email.toUpperCase(), address: email, canCreateProjects: true },
+    { label: '설정에 앞뒤 공백이 있음', value: `  ${email}  `, address: email, canCreateProjects: true },
+    {
+      label: '설정의 대소문자와 앞뒤 공백이 다름',
+      value: ` \t${email.toUpperCase()}\n `,
+      address: email,
+      canCreateProjects: true,
+    },
+    { label: '로그인 이메일이 정리됨', value: email, address: `  ${email.toUpperCase()}  `, canCreateProjects: true },
+    { label: '다른 이메일', value: 'developer@example.com', address: email, canCreateProjects: false },
+    { label: '설정 없음', value: undefined, address: email, canCreateProjects: false },
+    { label: '설정이 빈 문자열', value: '', address: email, canCreateProjects: false },
+    { label: '설정이 공백만', value: ' \t\n ', address: email, canCreateProjects: false },
+  ])('/me는 $label이면 canCreateProjects가 $canCreateProjects다', async ({ value, address, canCreateProjects }) => {
+    vi.stubEnv('DEVELOPER_EMAIL', value);
+    const { response, cookie } = await login(address);
+    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+    const publicUser = { id: user.id, email, name };
+    expect(response.body).toEqual(publicUser);
+
+    await request(server)
+      .get('/api/auth/me')
+      .set('Cookie', cookie)
+      .expect(200)
+      .expect({ ...publicUser, canCreateProjects });
+  });
+
+  it('/me는 각 세션의 이메일로 권한을 구분하고 프로젝트가 없어도 개발자에게 true를 돌려준다', async () => {
+    vi.stubEnv('DEVELOPER_EMAIL', email);
+    const developer = await login();
+    const client = await login('client@example.com', '클라이언트');
+    expect(await prisma.project.count()).toBe(0);
+    expect(await prisma.projectMember.count()).toBe(0);
+
+    await request(server)
+      .get('/api/auth/me')
+      .set('Cookie', developer.cookie)
+      .expect(200)
+      .expect({ ...developer.response.body, canCreateProjects: true });
+    await request(server)
+      .get('/api/auth/me')
+      .set('Cookie', client.cookie)
+      .expect(200)
+      .expect({ ...client.response.body, canCreateProjects: false });
   });
 
   it.each([
@@ -359,7 +412,7 @@ describe('로그인 API (e2e)', () => {
       .get('/api/auth/me')
       .set('Cookie', sessionCookie(response).split(';')[0])
       .expect(200)
-      .expect(response.body);
+      .expect({ ...response.body, canCreateProjects: false });
   });
 
   it('만료된 코드와 이미 쓴 코드는 CODE_EXPIRED이고 세션을 더 만들지 않는다', async () => {
@@ -529,8 +582,16 @@ describe('로그인 API (e2e)', () => {
     await post('/api/auth/logout').set('Cookie', first.cookie).expect(204);
     expect(await prisma.session.count()).toBe(2);
     await request(server).get('/api/auth/me').set('Cookie', first.cookie).expect(401);
-    await request(server).get('/api/auth/me').set('Cookie', second.cookie).expect(200).expect(first.response.body);
-    await request(server).get('/api/auth/me').set('Cookie', other.cookie).expect(200).expect(other.response.body);
+    await request(server)
+      .get('/api/auth/me')
+      .set('Cookie', second.cookie)
+      .expect(200)
+      .expect({ ...first.response.body, canCreateProjects: false });
+    await request(server)
+      .get('/api/auth/me')
+      .set('Cookie', other.cookie)
+      .expect(200)
+      .expect({ ...other.response.body, canCreateProjects: false });
 
     const remaining = await prisma.session.findMany({ orderBy: { id: 'asc' } });
     await post('/api/auth/logout').expect(204);

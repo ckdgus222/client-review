@@ -12,11 +12,12 @@ datasource db {
 }
 
 model User {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email     String    @unique
-  name      String
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  sessions  Session[]
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email       String          @unique
+  name        String
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  sessions    Session[]
+  memberships ProjectMember[]
 
   @@map("users")
 }
@@ -44,4 +45,58 @@ model Session {
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   @@map("sessions")
+}
+
+enum ProjectRole {
+  DEVELOPER
+  CLIENT
+
+  @@map("project_role")
+}
+
+enum Viewport {
+  PC
+  MOBILE
+
+  @@map("viewport")
+}
+
+model Project {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  members   ProjectMember[]
+  screens   Screen[]
+
+  @@map("projects")
+}
+
+// 개발자는 Project에 따로 적지 않고 여기 DEVELOPER 줄로만 적는다. 적는 곳이 하나라 두 값이 어긋나지 않는다.
+// 프로젝트마다 DEVELOPER 줄이 1개인 것은 마이그레이션 SQL의 부분 유니크 인덱스가 지킨다. Prisma 스키마로는 미리보기 기능으로만 적을 수 있어서 SQL로 넣었다.
+model ProjectMember {
+  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId String      @map("project_id") @db.Uuid
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId    String      @map("user_id") @db.Uuid
+  user      User        @relation(fields: [userId], references: [id])
+  role      ProjectRole
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([projectId, userId])
+  @@map("project_members")
+}
+
+// 화면 이름표. 버전마다 사진을 이 이름표에 붙여서 1차와 2차의 같은 화면을 잇는다.
+model Screen {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId String    @map("project_id") @db.Uuid
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  viewport  Viewport
+  // 숨겨도 줄은 지우지 않는다. 그래서 숨긴 이름표도 아래 유니크 제약에 걸려 같은 이름표가 둘이 되지 않는다.
+  hiddenAt  DateTime? @map("hidden_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([projectId, name, viewport])
+  @@map("screens")
 }
