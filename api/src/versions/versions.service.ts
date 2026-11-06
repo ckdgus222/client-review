@@ -30,7 +30,7 @@ export type DraftChanges = { summary?: string; testUrl?: string | null };
 export const versionNotFound = () => new NotFoundException('없는 버전이에요');
 
 // 오류 본문은 화면 409와 같이 Nest 기본 모양에 code를 더한다. web은 code를 보고 문구를 고른다.
-const conflict = (code: string, message: string) =>
+export const conflict = (code: string, message: string) =>
   new ConflictException({ statusCode: HttpStatus.CONFLICT, message, code });
 
 const isUniqueViolation = (error: unknown) =>
