@@ -50,10 +50,6 @@
   flex: 1 1 16rem;
 }
 
-.error {
-  color: var(--color-danger);
-}
-
 .list {
   margin: 0;
   padding: 0;

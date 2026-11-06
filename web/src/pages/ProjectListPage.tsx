@@ -4,28 +4,17 @@ import { logout } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
 import { createProject, listProjects, type MyProject } from '../api/projects.ts'
 import { Button } from '../components/Button.tsx'
+import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { TextField } from '../components/TextField.tsx'
 import { useMe } from '../hooks/useMe.ts'
 import styles from './ProjectListPage.module.css'
 
 const toMessage = (error: unknown): ReactNode => {
   if (!(error instanceof ApiError)) return '연결을 확인하고 다시 시도해 주세요'
-  // 로그인 화면으로 바로 보내지 않고 링크만 붙여서, 쓰던 이름이 화면에 남는다.
-  if (error.status === 401)
-    return (
-      <>
-        로그인이 끝났어요. 다시 로그인해 주세요 <Link to="/login">다시 로그인하기</Link>
-      </>
-    )
+  if (error.status === 401) return <SessionEnded />
   if (error.status === 422) return '프로젝트 이름은 1~60자로 써 주세요'
   return '잠시 뒤 다시 시도해 주세요'
 }
-
-const ErrorText = ({ message }: { message: ReactNode }) => (
-  <p className={styles.error} role="alert">
-    {message}
-  </p>
-)
 
 const ProjectList = ({ projects, error }: { projects?: MyProject[]; error?: ReactNode }) => {
   if (error) return <ErrorText message={error} />

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import App from './App.tsx'
 import { getMe } from './api/auth.ts'
-import { listProjects } from './api/projects.ts'
+import { getProject, listProjects, listScreens } from './api/projects.ts'
 
 vi.mock('./api/auth.ts', async () => {
   const actual = await vi.importActual<typeof import('./api/auth.ts')>('./api/auth.ts')
@@ -11,7 +11,7 @@ vi.mock('./api/auth.ts', async () => {
 
 vi.mock('./api/projects.ts', async () => {
   const actual = await vi.importActual<typeof import('./api/projects.ts')>('./api/projects.ts')
-  return { ...actual, listProjects: vi.fn() }
+  return { ...actual, listProjects: vi.fn(), getProject: vi.fn(), listScreens: vi.fn() }
 })
 
 const user = {
@@ -24,9 +24,88 @@ const user = {
 beforeEach(() => {
   vi.mocked(getMe).mockReset()
   vi.mocked(listProjects).mockReset().mockResolvedValue([])
+  vi.mocked(getProject).mockReset()
+  vi.mocked(listScreens).mockReset().mockResolvedValue([])
 })
 
 describe('App', () => {
+  it.each(['/', '/app'])('basename이 %s이면 프로젝트 설정 주소에 설정 화면을 그린다', async (basename) => {
+    const project = {
+      id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
+      name: '설정할 프로젝트',
+      myRole: 'DEVELOPER' as const,
+    }
+    const prefix = basename === '/' ? '' : basename
+    vi.mocked(getMe).mockResolvedValueOnce(user)
+    vi.mocked(getProject).mockResolvedValueOnce(project)
+    render(
+      <MemoryRouter basename={basename} initialEntries={[`${prefix}/projects/${project.id}/settings`]}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    const main = within(screen.getByRole('main'))
+    expect(await main.findByRole('heading', { level: 1, name: project.name })).toBeDefined()
+    expect(main.getByRole('textbox', { name: '화면 이름' })).toBeDefined()
+    expect(main.getByRole('combobox', { name: '기기' })).toBeDefined()
+    expect(main.getByText('아직 화면이 없어요.')).toBeDefined()
+    expect(main.getByRole('link', { name: '프로젝트 목록' }).getAttribute('href')).toMatch(
+      basename === '/' ? /^\/$/ : /^\/app\/?$/,
+    )
+    expect(screen.queryByRole('heading', { name: '없는 화면이에요' })).toBeNull()
+    expect(within(screen.getByRole('banner')).getByText('Client Review')).toBeDefined()
+    expect(getProject).toHaveBeenCalledExactlyOnceWith(project.id)
+    expect(listScreens).toHaveBeenCalledExactlyOnceWith(project.id)
+    expect(listProjects).not.toHaveBeenCalled()
+  })
+
+  it.each(['/', '/app'])('basename이 %s이면 목록과 설정을 오갈 때마다 로그인을 다시 확인한다', async (basename) => {
+    const project = {
+      id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
+      name: '이동할 프로젝트',
+      myRole: 'DEVELOPER' as const,
+    }
+    const prefix = basename === '/' ? '' : basename
+    vi.mocked(getMe).mockResolvedValueOnce(user)
+    vi.mocked(listProjects).mockResolvedValue([{ ...project, createdAt: '2026-11-05T00:00:00.000Z' }])
+    vi.mocked(getProject).mockResolvedValueOnce(project)
+    render(
+      <MemoryRouter basename={basename} initialEntries={[`${prefix}/`]}>
+        <App />
+      </MemoryRouter>,
+    )
+    const projectLink = await screen.findByRole('link', { name: project.name })
+    let resolveSettingsUser!: (value: typeof user) => void
+    vi.mocked(getMe).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSettingsUser = resolve
+        }),
+    )
+    fireEvent.click(projectLink)
+
+    expect(screen.getByText('확인하는 중이에요.')).toBeDefined()
+    expect(getMe).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('textbox', { name: '화면 이름' })).toBeNull()
+    resolveSettingsUser(user)
+    expect(await screen.findByRole('heading', { name: project.name })).toBeDefined()
+
+    let resolveListUser!: (value: typeof user) => void
+    vi.mocked(getMe).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveListUser = resolve
+        }),
+    )
+    fireEvent.click(screen.getByRole('link', { name: '프로젝트 목록' }))
+
+    expect(screen.getByText('확인하는 중이에요.')).toBeDefined()
+    expect(getMe).toHaveBeenCalledTimes(3)
+    resolveListUser(user)
+    expect(await screen.findByRole('heading', { name: '내 프로젝트' })).toBeDefined()
+    expect(screen.queryByRole('heading', { name: project.name })).toBeNull()
+  })
+
   it('첫 화면에는 내 프로젝트 제목을 표시하고 404 제목은 표시하지 않는다', async () => {
     vi.mocked(getMe).mockResolvedValueOnce(user)
     render(
