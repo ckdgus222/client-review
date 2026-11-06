@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { StrictMode } from 'react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { type Me, getMe, logout } from '../api/auth.ts'
-import { createProject, listProjects, type MyProject } from '../api/projects.ts'
+import { createProject, getProject, listProjects, listScreens, type MyProject } from '../api/projects.ts'
+import App from '../App.tsx'
 import { ApiError } from '../api/client.ts'
 import styles from '../components/Button.module.css'
 import { ProjectListPage } from './ProjectListPage.tsx'
@@ -13,7 +15,7 @@ vi.mock('../api/auth.ts', async () => {
 
 vi.mock('../api/projects.ts', async () => {
   const actual = await vi.importActual<typeof import('../api/projects.ts')>('../api/projects.ts')
-  return { ...actual, listProjects: vi.fn(), createProject: vi.fn() }
+  return { ...actual, listProjects: vi.fn(), createProject: vi.fn(), getProject: vi.fn(), listScreens: vi.fn() }
 })
 
 const user: Me = {
@@ -64,11 +66,33 @@ const renderProjectList = (basename = '/') => {
   )
 }
 
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+const renderApp = (basename = '/') =>
+  render(
+    <StrictMode>
+      <MemoryRouter basename={basename} initialEntries={[basename]}>
+        <CurrentPath />
+        <App />
+      </MemoryRouter>
+    </StrictMode>,
+  )
+
 beforeEach(() => {
   vi.mocked(getMe).mockReset().mockResolvedValue(user)
   vi.mocked(listProjects).mockReset().mockResolvedValue([])
   vi.mocked(createProject).mockReset().mockResolvedValue(projects[0])
   vi.mocked(logout).mockReset().mockResolvedValue(undefined)
+  vi.mocked(getProject).mockReset().mockResolvedValue(projects[1])
+  vi.mocked(listScreens).mockReset().mockResolvedValue([])
 })
 
 describe('ProjectListPage', () => {
@@ -311,6 +335,127 @@ describe('ProjectListPage 목록', () => {
       expect(screen.getByLabelText('현재 주소').textContent).toBe('/login')
     },
   )
+})
+
+describe('ProjectListPage 만들기 응답과 화면 이동', () => {
+  it.each(['/', '/app'])(
+    'basename이 %s일 때 다른 설정으로 떠난 뒤 성공 응답이 와도 주소와 입력을 보존하고 다음 목록에서 만든 프로젝트를 보여 준다',
+    async (basename) => {
+      const pendingCreate = deferred<MyProject>()
+      const createdProject: MyProject = { ...projects[0], name: '새 의뢰', myRole: 'DEVELOPER' }
+      vi.mocked(createProject).mockReturnValueOnce(pendingCreate.promise)
+      vi.mocked(listProjects).mockResolvedValue([projects[1]])
+      renderApp(basename)
+      fireEvent.change(await screen.findByLabelText('프로젝트 이름'), { target: { value: '새 의뢰' } })
+      fireEvent.click(screen.getByRole('button', { name: '만들기' }))
+      expect(createProject).toHaveBeenCalledExactlyOnceWith('새 의뢰')
+
+      fireEvent.click(screen.getByRole('link', { name: projects[1].name }))
+      const input = await screen.findByLabelText<HTMLInputElement>('화면 이름')
+      fireEvent.change(input, { target: { value: '쓰던 화면 이름' } })
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'MOBILE' } })
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${projects[1].id}/settings`)
+
+      await act(async () => {
+        pendingCreate.resolve(createdProject)
+        await pendingCreate.promise
+      })
+
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${projects[1].id}/settings`)
+      expect(screen.getByRole('heading', { name: projects[1].name })).toBeDefined()
+      expect(screen.getByLabelText<HTMLInputElement>('화면 이름').value).toBe('쓰던 화면 이름')
+      expect(screen.getByRole<HTMLSelectElement>('combobox').value).toBe('MOBILE')
+      expect(screen.queryByRole('alert')).toBeNull()
+
+      vi.mocked(listProjects).mockResolvedValue([createdProject, projects[1]])
+      fireEvent.click(screen.getByRole('link', { name: '프로젝트 목록' }))
+
+      const createdLink = await screen.findByRole('link', { name: '새 의뢰' })
+      const prefix = basename === '/' ? '' : basename
+      expect(createdLink.getAttribute('href')).toBe(`${prefix}/projects/${createdProject.id}/settings`)
+      expect(screen.getByLabelText('현재 주소').textContent).toBe('/')
+      expect(createProject).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it.each([
+    { reason: '세션 만료', error: new ApiError(401) },
+    { reason: '서버 오류', error: new ApiError(500) },
+    { reason: '네트워크 오류', error: new TypeError('Failed to fetch') },
+  ])('다른 설정으로 떠난 뒤 $reason가 와도 주소와 입력을 보존한다', async ({ error }) => {
+    const pendingCreate = deferred<MyProject>()
+    vi.mocked(createProject).mockReturnValueOnce(pendingCreate.promise)
+    vi.mocked(listProjects).mockResolvedValue([projects[1]])
+    renderApp()
+    fireEvent.change(await screen.findByLabelText('프로젝트 이름'), { target: { value: '새 의뢰' } })
+    fireEvent.click(screen.getByRole('button', { name: '만들기' }))
+    expect(createProject).toHaveBeenCalledExactlyOnceWith('새 의뢰')
+
+    fireEvent.click(screen.getByRole('link', { name: projects[1].name }))
+    const input = await screen.findByLabelText<HTMLInputElement>('화면 이름')
+    fireEvent.change(input, { target: { value: '쓰던 화면 이름' } })
+
+    await act(async () => {
+      pendingCreate.reject(error)
+      await pendingCreate.promise.catch(() => undefined)
+    })
+
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${projects[1].id}/settings`)
+    expect(screen.getByRole('heading', { name: projects[1].name })).toBeDefined()
+    expect(screen.getByLabelText<HTMLInputElement>('화면 이름').value).toBe('쓰던 화면 이름')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('link', { name: '다시 로그인하기' })).toBeNull()
+  })
+
+  it('목록을 떠났다가 돌아온 뒤 이전 만들기 응답이 와도 새로 쓰던 이름과 목록 주소를 보존한다', async () => {
+    const pendingCreate = deferred<MyProject>()
+    vi.mocked(createProject).mockReturnValueOnce(pendingCreate.promise)
+    vi.mocked(listProjects).mockResolvedValue([projects[1]])
+    renderApp()
+    fireEvent.change(await screen.findByLabelText('프로젝트 이름'), { target: { value: '첫 의뢰' } })
+    fireEvent.click(screen.getByRole('button', { name: '만들기' }))
+    expect(createProject).toHaveBeenCalledExactlyOnceWith('첫 의뢰')
+    fireEvent.click(screen.getByRole('link', { name: projects[1].name }))
+    expect(await screen.findByLabelText('화면 이름')).toBeDefined()
+
+    fireEvent.click(screen.getByRole('link', { name: '프로젝트 목록' }))
+    const input = await screen.findByLabelText<HTMLInputElement>('프로젝트 이름')
+    fireEvent.change(input, { target: { value: '다음 의뢰' } })
+
+    await act(async () => {
+      pendingCreate.resolve({ ...projects[0], name: '첫 의뢰', myRole: 'DEVELOPER' })
+      await pendingCreate.promise
+    })
+
+    expect(screen.getByLabelText('현재 주소').textContent).toBe('/')
+    expect(screen.getByRole('heading', { name: '내 프로젝트' })).toBeDefined()
+    expect(screen.getByLabelText<HTMLInputElement>('프로젝트 이름').value).toBe('다음 의뢰')
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '만들기' }).disabled).toBe(false)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('StrictMode에서도 목록에 머물면 성공 응답 뒤 만든 프로젝트 설정으로 이동한다', async () => {
+    const pendingCreate = deferred<MyProject>()
+    const createdProject: MyProject = { ...projects[0], name: '새 의뢰', myRole: 'DEVELOPER' }
+    vi.mocked(createProject).mockReturnValueOnce(pendingCreate.promise)
+    vi.mocked(getProject).mockResolvedValue(createdProject)
+    renderApp()
+    fireEvent.change(await screen.findByLabelText('프로젝트 이름'), { target: { value: '새 의뢰' } })
+    fireEvent.click(screen.getByRole('button', { name: '만들기' }))
+    expect(createProject).toHaveBeenCalledExactlyOnceWith('새 의뢰')
+    expect(screen.getByLabelText('현재 주소').textContent).toBe('/')
+    expect(screen.getByRole('heading', { name: '내 프로젝트' })).toBeDefined()
+
+    await act(async () => {
+      pendingCreate.resolve(createdProject)
+      await pendingCreate.promise
+    })
+
+    expect(await screen.findByRole('heading', { name: '새 의뢰' })).toBeDefined()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${createdProject.id}/settings`)
+    expect(screen.getByLabelText<HTMLInputElement>('화면 이름').value).toBe('')
+    expect(screen.queryByRole('heading', { name: '내 프로젝트' })).toBeNull()
+  })
 })
 
 describe('ProjectListPage 만들기', () => {

@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react'
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router'
 import { logout } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
@@ -41,6 +41,15 @@ export const ProjectListPage = () => {
   const [sending, setSending] = useState(false)
   const [createError, setCreateError] = useState<ReactNode>()
   const [logoutError, setLogoutError] = useState<string>()
+  // 만들기 응답을 기다리는 사이 다른 프로젝트로 떠났으면, 늦게 온 응답이 그 화면에서 끌어내지 않게 한다.
+  // 개발 모드의 React는 화면을 붙였다 뗐다 다시 붙여 보므로, 붙을 때마다 true로 돌려놓는다.
+  const isOpen = useRef(true)
+  useEffect(() => {
+    isOpen.current = true
+    return () => {
+      isOpen.current = false
+    }
+  }, [])
 
   // 로그인 확인을 기다리지 않고 같이 부른다. 로그인 안 했으면 401로 실패하지만, 그때 화면은 로그인 화면으로 간다.
   useEffect(() => {
@@ -55,7 +64,7 @@ export const ProjectListPage = () => {
     setCreateError(undefined)
     try {
       const project = await createProject(name)
-      navigate(`/projects/${project.id}/settings`)
+      if (isOpen.current) navigate(`/projects/${project.id}/settings`)
     } catch (caught) {
       // 고쳐서 다시 보내게 쓰던 이름은 그대로 둔다.
       setCreateError(toMessage(caught))
