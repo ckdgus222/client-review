@@ -613,10 +613,10 @@ describe('버전 API (e2e)', () => {
     await getDetail(draft.body.id).expect(200).expect(replaced.body);
   });
 
-  it('10 MiB를 넘는 파일은 413이고 파일과 DB 줄이 남지 않는다', async () => {
+  it('20 MiB를 넘는 파일은 413이고 파일과 DB 줄이 남지 않는다', async () => {
     const draft = await createDraft();
     const screen = await createScreen();
-    const oversized = Buffer.concat([photo, Buffer.alloc(10 * 1024 * 1024 + 1 - photo.length)]);
+    const oversized = Buffer.concat([photo, Buffer.alloc(20 * 1024 * 1024 + 1 - photo.length)]);
 
     await putPhoto(draft.body.id, screen.id).attach('file', oversized, 'large.png').expect(413);
     expect(await assetFiles()).toEqual([]);
@@ -624,19 +624,22 @@ describe('버전 API (e2e)', () => {
     await getDetail(draft.body.id).expect(200).expect(draft.body);
   });
 
-  it.each([10 * 1024 * 1024 - 1, 10 * 1024 * 1024])('%i바이트 사진은 10 MiB 이하라서 허용한다', async (bytes) => {
-    const draft = await createDraft();
-    const screen = await createScreen();
-    // PNG 끝에 패딩을 붙여 픽셀 크기를 바꾸지 않고 multipart 파일 크기만 경계값으로 맞춘다.
-    const input = Buffer.concat([photo, Buffer.alloc(bytes - photo.length)]);
-    expect(input.length).toBe(bytes);
-    expect(await sharp(input).metadata()).toMatchObject({ format: 'png', width: 32, height: 24 });
+  it.each([15 * 1024 * 1024, 20 * 1024 * 1024 - 1, 20 * 1024 * 1024])(
+    '%i바이트 사진은 20 MiB 이하라서 허용한다',
+    async (bytes) => {
+      const draft = await createDraft();
+      const screen = await createScreen();
+      // PNG 끝에 패딩을 붙여 픽셀 크기를 바꾸지 않고 multipart 파일 크기만 경계값으로 맞춘다.
+      const input = Buffer.concat([photo, Buffer.alloc(bytes - photo.length)]);
+      expect(input.length).toBe(bytes);
+      expect(await sharp(input).metadata()).toMatchObject({ format: 'png', width: 32, height: 24 });
 
-    const response = await putPhoto(draft.body.id, screen.id).attach('file', input, 'boundary.png').expect(200);
-    expect(response.body.screens[0].asset).toEqual({ id: expect.any(String), width: 32, height: 24 });
-    expect(await prisma.asset.count()).toBe(1);
-    expect(await assetFiles()).toHaveLength(1);
-  });
+      const response = await putPhoto(draft.body.id, screen.id).attach('file', input, 'boundary.png').expect(200);
+      expect(response.body.screens[0].asset).toEqual({ id: expect.any(String), width: 32, height: 24 });
+      expect(await prisma.asset.count()).toBe(1);
+      expect(await assetFiles()).toHaveLength(1);
+    },
+  );
 
   it.each([
     { label: '가짜 PNG', data: Buffer.from('not an image') },
@@ -915,15 +918,19 @@ describe('버전 API (e2e)', () => {
     const draft = await createDraft();
     const screen = await createScreen();
     const uploaded = await putPhoto(draft.body.id, screen.id).attach('file', photo, 'original.png').expect(200);
-    // 실제로 500 MiB 파일을 만들지 않고 DB의 합계만 한도에 맞춘다. 기존 파일 자체는 실제 PNG다.
+    // 실제로 1,024 MiB 파일을 만들지 않고 DB의 합계만 한도에 맞춘다. 기존 파일 자체는 실제 PNG다.
     const asset = await prisma.asset.update({
       where: { id: uploaded.body.screens[0].asset.id },
-      data: { bytes: 500 * 1024 * 1024 },
+      data: { bytes: 1024 * 1024 * 1024 },
     });
     const original = await readFile(join(directory, asset.storageKey));
     const replacement = await sharp(photo).resize(16, 12).jpeg().toBuffer();
 
-    await putPhoto(draft.body.id, screen.id).attach('file', replacement, 'changed.jpg').expect(413);
+    await putPhoto(draft.body.id, screen.id).attach('file', replacement, 'changed.jpg').expect(413).expect({
+      statusCode: 413,
+      message: '프로젝트 사진 용량(1024 MiB)을 넘어요',
+      error: 'Payload Too Large',
+    });
     await getDetail(draft.body.id).expect(200).expect(uploaded.body);
     expect(await prisma.asset.findMany()).toEqual([asset]);
     expect(await assetFiles()).toEqual([asset.storageKey]);
@@ -935,7 +942,7 @@ describe('버전 API (e2e)', () => {
     const existing = await createScreen();
     const uploaded = await putPhoto(draft.body.id, existing.id).attach('file', photo, 'original.png').expect(200);
     const asset = await prisma.asset.findUniqueOrThrow({ where: { id: uploaded.body.screens[0].asset.id } });
-    const quota = 500 * 1024 * 1024;
+    const quota = 1024 * 1024 * 1024;
     await prisma.asset.update({ where: { id: asset.id }, data: { bytes: quota - asset.bytes } });
     const first = await createScreen();
     const second = await createScreen();

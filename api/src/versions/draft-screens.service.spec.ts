@@ -54,7 +54,7 @@ describe('DraftScreensService', () => {
   let photo: Buffer;
   let oldPhoto: Buffer;
   let storedPhotoBytes: number;
-  const quota = 500 * 1024 * 1024;
+  const quota = 1024 * 1024 * 1024;
   const missingId = '00000000-0000-4000-8000-000000000001';
   const publishedAt = new Date('2026-01-01T00:00:00Z');
 
@@ -451,7 +451,7 @@ describe('DraftScreensService', () => {
     expect(await projectFiles()).toEqual([basename(old.asset.storageKey)]);
   });
 
-  it('프로젝트 Asset 합계가 정확히 500 MiB면 허용하고 공유 사진을 중복 계산하거나 다른 프로젝트를 세지 않는다', async () => {
+  it('프로젝트 Asset 합계가 정확히 1,024 MiB면 허용하고 공유 사진을 중복 계산하거나 다른 프로젝트를 세지 않는다', async () => {
     const shared = await attachScreen(draftId, projectId, quota - storedPhotoBytes - oldPhoto.length);
     await attachScreen();
     const first = await prisma.deliveryVersion.create({
@@ -697,7 +697,7 @@ describe('DraftScreensService', () => {
     expect(await projectFiles()).toEqual(assets.map(({ storageKey }) => basename(storageKey)).sort());
   });
 
-  it('두 사진을 동시에 올려도 함께 500 MiB를 넘을 수 없다', async () => {
+  it('두 사진을 동시에 올려도 함께 1,024 MiB를 넘을 수 없다', async () => {
     const old = await attachScreen(draftId, projectId, quota - storedPhotoBytes);
     const first = await createScreen();
     const second = await createScreen();

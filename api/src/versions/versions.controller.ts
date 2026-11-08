@@ -60,10 +60,10 @@ export class VersionsController {
     return this.versions.updateDraft(versionId, request.user.id, body);
   }
 
-  // file 칸의 사진 한 장을 메모리(Buffer)에 받는다. 10 MiB를 넘으면 multer가 멈추고 Nest가 413으로 바꾼다.
+  // file 칸의 사진 한 장을 메모리(Buffer)에 받는다. 20 MiB를 넘으면 multer가 멈추고 Nest가 413으로 바꾼다.
   // 파일이 2개이거나 칸 이름이 file이 아니면 400이다. 로그인과 Origin 검사(가드)는 파일을 읽기 전에 끝난다.
   @Put('versions/:id/screens/:screenId/asset')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } }))
   putAsset(
     @Req() request: AuthenticatedRequest,
     @Param('id', versionIdPipe) versionId: string,

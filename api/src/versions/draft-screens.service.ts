@@ -7,7 +7,7 @@ import { screenNotFound } from '../screens/screens.service.js';
 import { conflict, type VersionDetail, VersionsService } from './versions.service.js';
 
 const MAX_SCREENS = 20;
-const PROJECT_QUOTA_MIB = 500;
+const PROJECT_QUOTA_MIB = 1024;
 const PROJECT_QUOTA_BYTES = PROJECT_QUOTA_MIB * 1024 * 1024;
 
 @Injectable()
