@@ -37,7 +37,7 @@ describe('App', () => {
     }
     const prefix = basename === '/' ? '' : basename
     vi.mocked(getMe).mockResolvedValueOnce(user)
-    vi.mocked(getProject).mockResolvedValueOnce(project)
+    vi.mocked(getProject).mockResolvedValueOnce({ ...project, currentVersion: null })
     render(
       <MemoryRouter basename={basename} initialEntries={[`${prefix}/projects/${project.id}/settings`]}>
         <App />
@@ -68,7 +68,7 @@ describe('App', () => {
     const prefix = basename === '/' ? '' : basename
     vi.mocked(getMe).mockResolvedValueOnce(user)
     vi.mocked(listProjects).mockResolvedValue([{ ...project, createdAt: '2026-11-05T00:00:00.000Z' }])
-    vi.mocked(getProject).mockResolvedValueOnce(project)
+    vi.mocked(getProject).mockResolvedValueOnce({ ...project, currentVersion: null })
     render(
       <MemoryRouter basename={basename} initialEntries={[`${prefix}/`]}>
         <App />
