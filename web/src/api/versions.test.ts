@@ -1,6 +1,7 @@
 import { ApiError } from './client.ts'
 import {
   assetUrl,
+  versionLabel,
   createDraft,
   getVersion,
   listActivity,
@@ -331,4 +332,14 @@ describe('assetUrl', () => {
       expect(fetch).not.toHaveBeenCalled()
     },
   )
+})
+
+describe('versionLabel', () => {
+  it.each([
+    [0, '초안'],
+    [1, '1차'],
+    [2, '2차'],
+  ] as const)('%i의 이름은 %s다', (number, label) => {
+    expect(versionLabel(number)).toBe(label)
+  })
 })

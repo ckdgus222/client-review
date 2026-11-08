@@ -1,0 +1,131 @@
+/* 사진을 크게 보여 주려고 목록·설정 화면보다 넓은 흰 판이다. */
+.room {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 72rem;
+  margin: var(--space-4) auto 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+/* 기본 바깥 여백이 gap에 더해지지 않게 지운다. */
+.room p,
+.room h1,
+.room h2 {
+  margin: 0;
+}
+
+.room h1 {
+  overflow-wrap: anywhere;
+}
+
+.room h2 {
+  font-size: var(--font-size-md);
+}
+
+/* 링크 글자만 눌리게 한다. 줄 전체로 늘어나면 빈 곳을 눌러도 다른 화면으로 간다. */
+.room > a {
+  align-self: flex-start;
+}
+
+/* 제목은 왼쪽, 링크 묶음은 오른쪽이다. 좁은 화면에서는 링크가 다음 줄로 내려간다. */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.versionBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* 고르기 칸 모양을 설정 화면의 기기 칸에 맞춘다. */
+.versionPicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+
+.versionPicker select {
+  min-height: 44px;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 400;
+}
+
+/* 개발자가 줄을 나눠 쓴 설명을 그대로 보여 준다. */
+.summary {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 왼쪽 화면 목록, 오른쪽 큰 사진이다. 좁은 화면에서는 목록이 사진 위로 올라간다. */
+.body {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+
+@media (max-width: 48rem) {
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.screens {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--color-border);
+}
+
+.screens button {
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-2);
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+/* 지금 보고 있는 화면이다. 색만으로 구분하지 않게 굵기도 바꾼다. */
+.screens button[aria-pressed='true'] {
+  background: var(--color-bg);
+  font-weight: 600;
+}
+
+.photo {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+/* 판보다 큰 사진은 폭에 맞춰 줄인다. width·height 속성은 사진이 오기 전에 자리를 잡아 화면이 덜컹거리지 않게 한다. */
+.photo img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}

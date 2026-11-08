@@ -1,0 +1,562 @@
+/// <reference types="node" />
+import { readFileSync } from 'node:fs'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
+import { getMe, type Me } from '../api/auth.ts'
+import { ApiError } from '../api/client.ts'
+import { getProject, type ProjectDetail } from '../api/projects.ts'
+import { getVersion, listVersions, type VersionDetail, type VersionSummary } from '../api/versions.ts'
+import { ReviewRoomPage } from './ReviewRoomPage.tsx'
+import styles from './ReviewRoomPage.module.css'
+
+vi.mock('../api/auth.ts', async () => {
+  const actual = await vi.importActual<typeof import('../api/auth.ts')>('../api/auth.ts')
+  return { ...actual, getMe: vi.fn() }
+})
+
+vi.mock('../api/projects.ts', async () => {
+  const actual = await vi.importActual<typeof import('../api/projects.ts')>('../api/projects.ts')
+  return { ...actual, getProject: vi.fn() }
+})
+
+vi.mock('../api/versions.ts', async () => {
+  const actual = await vi.importActual<typeof import('../api/versions.ts')>('../api/versions.ts')
+  return { ...actual, listVersions: vi.fn(), getVersion: vi.fn() }
+})
+
+const user: Me = {
+  id: '5b3a934d-ef8e-4ce8-b26a-a9d1cdd4983f',
+  email: 'reader@example.com',
+  name: '김수정',
+  canCreateProjects: false,
+}
+const project: ProjectDetail = {
+  id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
+  name: '오브젝트 스토어',
+  myRole: 'DEVELOPER',
+  currentVersion: { id: 'd565474f-17a5-4a8e-9b61-bde406fefdf3', number: 2 },
+}
+const currentVersion: VersionDetail = {
+  id: project.currentVersion!.id,
+  projectId: project.id,
+  number: 2,
+  status: 'IN_REVIEW',
+  summary: '메인을 고쳤어요.\n모바일도 확인해 주세요.',
+  testUrl: 'https://example.com/review?version=2',
+  publishedAt: '2026-11-08T09:00:00.000Z',
+  screens: [
+    {
+      screenId: 'fdba89f1-38f6-4910-a5c7-6774a8e2f9ef',
+      name: '메인',
+      viewport: 'PC',
+      hiddenAt: null,
+      asset: { id: 'b11c0462-6cc9-467c-98af-bd92cae7d7b4', width: 1440, height: 900 },
+    },
+    {
+      screenId: 'afb028f9-4966-4d5b-b13b-94e5636b5e75',
+      name: '메인',
+      viewport: 'MOBILE',
+      hiddenAt: null,
+      asset: { id: '46003560-248e-4bc1-a64d-b58e253c3022', width: 390, height: 844 },
+    },
+  ],
+}
+const firstRevision: VersionDetail = {
+  ...currentVersion,
+  id: '7b13b773-8835-45f0-b46f-c555b5033dc7',
+  number: 1,
+  status: 'APPROVED',
+  summary: '지난 버전 설명',
+  testUrl: null,
+  publishedAt: '2026-11-07T09:00:00.000Z',
+  // 지난 버전에만 있던 더 오래된 화면이 앞에 있어도 같은 screenId를 이어서 보아야 한다.
+  screens: [
+    {
+      screenId: '581ad983-2dfa-4f8e-98ab-338ec16dba77',
+      name: '소개',
+      viewport: 'PC',
+      hiddenAt: null,
+      asset: { id: 'old-intro-photo', width: 1280, height: 900 },
+    },
+    { ...currentVersion.screens[0], asset: { id: 'old-pc-photo', width: 1280, height: 720 } },
+    { ...currentVersion.screens[1], name: '옛 메인', asset: { id: 'old-mobile-photo', width: 360, height: 800 } },
+  ],
+}
+const initialVersion: VersionDetail = {
+  ...firstRevision,
+  id: 'bd309e09-1844-4494-8431-42def26af78f',
+  number: 0,
+  summary: '처음 게시한 초안',
+  publishedAt: '2026-11-06T09:00:00.000Z',
+  screens: [firstRevision.screens[1]],
+}
+const draft: VersionSummary = {
+  id: '24f86b45-afd2-4c27-a774-90586f6e8473',
+  number: null,
+  status: 'DRAFT',
+  publishedAt: null,
+}
+const versions: VersionSummary[] = [draft, currentVersion, firstRevision, initialVersion]
+const nextProject: ProjectDetail = {
+  id: '6b62c564-585a-4f05-ae57-8d6b3bc5a47f',
+  name: '다음 프로젝트',
+  myRole: 'CLIENT',
+  currentVersion: null,
+}
+
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+const CurrentPath = () => {
+  const location = useLocation()
+  return (
+    <output aria-label="현재 주소">
+      {location.pathname}
+      {location.search}
+    </output>
+  )
+}
+const BackButton = () => {
+  const navigate = useNavigate()
+  return <button onClick={() => navigate(-1)}>뒤로 가기</button>
+}
+const renderReview = (path = `/projects/${project.id}`, basename = '/') => {
+  const prefix = basename === '/' ? '' : basename
+  return render(
+    <MemoryRouter basename={basename} initialEntries={[`${prefix}/previous`, `${prefix}${path}`]} initialIndex={1}>
+      <CurrentPath />
+      <BackButton />
+      <Link to={`/projects/${nextProject.id}`}>다른 검수실로</Link>
+      <Routes>
+        <Route path="/previous" element={<p>이전 화면</p>} />
+        <Route path="/" element={<h1>내 프로젝트</h1>} />
+        <Route path="/projects/:id" element={<ReviewRoomPage />} />
+        <Route path="/login" element={<h1>로그인</h1>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+beforeEach(() => {
+  vi.mocked(getMe).mockReset().mockResolvedValue(user)
+  vi.mocked(getProject).mockReset().mockResolvedValue(project)
+  vi.mocked(listVersions).mockReset().mockResolvedValue(versions)
+  vi.mocked(getVersion)
+    .mockReset()
+    .mockImplementation(async (id) => {
+      const detail = [currentVersion, firstRevision, initialVersion].find((version) => version.id === id)
+      if (!detail) throw new ApiError(404)
+      return detail
+    })
+})
+
+describe('ReviewRoomPage 화면과 버전', () => {
+  it('현재 버전의 화면 순서와 첫 사진의 주소, 크기, 이름을 보여 준다', async () => {
+    renderReview()
+
+    const image = await screen.findByRole('img', { name: '메인 · PC' })
+    expect(image.getAttribute('src')).toBe(`/api/assets/${currentVersion.screens[0].asset.id}`)
+    expect(image.getAttribute('width')).toBe('1440')
+    expect(image.getAttribute('height')).toBe('900')
+    expect(
+      within(screen.getByRole('list'))
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['메인 · PC', '메인 · 모바일'])
+    expect(screen.getByRole('button', { name: '메인 · PC' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: '메인 · 모바일' }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(currentVersion.id)
+    expect(getProject).toHaveBeenCalledExactlyOnceWith(project.id)
+    expect(listVersions).toHaveBeenCalledExactlyOnceWith(project.id)
+    expect(getVersion).toHaveBeenCalledExactlyOnceWith(currentVersion.id)
+  })
+
+  it('화면 버튼을 누르면 선택 표시와 큰 사진이 함께 바뀐다', async () => {
+    renderReview()
+    fireEvent.click(await screen.findByRole('button', { name: '메인 · 모바일' }))
+
+    const image = screen.getByRole('img', { name: '메인 · 모바일' })
+    expect(image.getAttribute('src')).toBe(`/api/assets/${currentVersion.screens[1].asset.id}`)
+    expect(image.getAttribute('width')).toBe('390')
+    expect(image.getAttribute('height')).toBe('844')
+    expect(screen.getByRole('button', { name: '메인 · 모바일' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: '메인 · PC' }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getAllByRole('img')).toHaveLength(1)
+    expect(getVersion).toHaveBeenCalledTimes(1)
+  })
+
+  it('게시 전 버전은 빼고 게시 번호 2·1·0을 2차·1차·초안으로 고르게 한다', async () => {
+    renderReview()
+    const picker = await screen.findByRole('combobox', { name: '버전' })
+
+    expect(
+      within(picker)
+        .getAllByRole<HTMLOptionElement>('option')
+        .map((option) => [option.value, option.textContent]),
+    ).toEqual([
+      [currentVersion.id, '2차'],
+      [firstRevision.id, '1차'],
+      [initialVersion.id, '초안'],
+    ])
+    expect(screen.queryByRole('option', { name: '게시 전 버전' })).toBeNull()
+  })
+
+  it('버전 변경을 주소에 남기고 처음 자동으로 보던 화면도 같은 screenId로 유지한다', async () => {
+    renderReview()
+    await screen.findByRole('img', { name: '메인 · PC' })
+    fireEvent.change(screen.getByRole('combobox', { name: '버전' }), { target: { value: firstRevision.id } })
+
+    const image = await screen.findByRole('img', { name: '메인 · PC' })
+    expect(image.getAttribute('src')).toBe('/api/assets/old-pc-photo')
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${project.id}?version=${firstRevision.id}`)
+    expect(getVersion).toHaveBeenLastCalledWith(firstRevision.id)
+    expect(screen.getByRole('button', { name: '메인 · PC' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('직접 고른 화면은 다음 버전에도 있으면 유지하고 없으면 첫 화면을 보여 준다', async () => {
+    renderReview()
+    fireEvent.click(await screen.findByRole('button', { name: '메인 · 모바일' }))
+    fireEvent.change(screen.getByRole('combobox', { name: '버전' }), { target: { value: firstRevision.id } })
+    expect((await screen.findByRole('img', { name: '옛 메인 · 모바일' })).getAttribute('src')).toBe(
+      '/api/assets/old-mobile-photo',
+    )
+    expect(screen.getByRole('button', { name: '옛 메인 · 모바일' }).getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.change(screen.getByRole('combobox', { name: '버전' }), { target: { value: initialVersion.id } })
+
+    expect((await screen.findByRole('img', { name: '메인 · PC' })).getAttribute('src')).toBe('/api/assets/old-pc-photo')
+    expect(screen.getByRole('button', { name: '메인 · PC' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.queryByRole('button', { name: '옛 메인 · 모바일' })).toBeNull()
+  })
+
+  it.each([firstRevision, initialVersion])(
+    '주소로 지정한 $number번 게시 버전을 처음부터 보여 준다',
+    async (version) => {
+      renderReview(`/projects/${project.id}?version=${version.id}`)
+
+      expect(await screen.findByText(version.summary)).toBeDefined()
+      expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(version.id)
+      expect(getVersion).toHaveBeenCalledExactlyOnceWith(version.id)
+      expect(screen.getByRole('link', { name: '3차 준비' })).toBeDefined()
+    },
+  )
+
+  it('설명의 줄바꿈을 유지하고 테스트 주소는 새 탭에서 연다', async () => {
+    // Vitest의 CSS 모듈 이름에 실제 스타일을 연결해 줄바꿈 속성까지 확인한다.
+    const reviewCss = readFileSync(`${import.meta.dirname}/ReviewRoomPage.module.css`, 'utf8')
+    render(<style>{reviewCss.replaceAll('.summary', `.${styles.summary}`)}</style>)
+    renderReview()
+    const summary = await screen.findByText(currentVersion.summary, { collapseWhitespace: false })
+
+    expect(summary.textContent).toBe(currentVersion.summary)
+    expect(getComputedStyle(summary).whiteSpace).toBe('pre-wrap')
+    const link = screen.getByRole('link', { name: '테스트 주소' })
+    expect(link.getAttribute('href')).toBe(currentVersion.testUrl)
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toBe('noreferrer')
+  })
+
+  it('테스트 주소가 없으면 링크를 만들지 않는다', async () => {
+    renderReview(`/projects/${project.id}?version=${initialVersion.id}`)
+    await screen.findByRole('img')
+
+    expect(screen.queryByRole('link', { name: '테스트 주소' })).toBeNull()
+  })
+
+  it('게시 후 숨긴 화면도 지난 버전에서는 사진을 볼 수 있다', async () => {
+    vi.mocked(getVersion).mockResolvedValueOnce({
+      ...initialVersion,
+      screens: [{ ...initialVersion.screens[0], hiddenAt: '2026-11-08T10:00:00.000Z' }],
+    })
+    renderReview(`/projects/${project.id}?version=${initialVersion.id}`)
+
+    expect((await screen.findByRole('img', { name: '메인 · PC' })).getAttribute('src')).toBe('/api/assets/old-pc-photo')
+    expect(screen.getByRole('button', { name: '메인 · PC' })).toBeDefined()
+  })
+
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    '%s에게 게시 전이면 안내를 보여 주고 버전을 조회하지 않는다',
+    async (myRole) => {
+      vi.mocked(getProject).mockResolvedValueOnce({ ...project, myRole, currentVersion: null })
+      vi.mocked(listVersions).mockResolvedValueOnce(myRole === 'DEVELOPER' ? [draft] : [])
+      renderReview()
+
+      expect(await screen.findByText('아직 게시한 버전이 없어요.')).toBeDefined()
+      expect(screen.queryByRole('img')).toBeNull()
+      expect(screen.queryByRole('combobox')).toBeNull()
+      expect(getVersion).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each([
+    { currentVersion: null, label: '초안 준비' },
+    { currentVersion: { id: initialVersion.id, number: 0 }, label: '1차 준비' },
+    { currentVersion: { id: firstRevision.id, number: 1 }, label: '2차 준비' },
+  ])('개발자에게 활동 일지·$label·설정 링크를 보여 준다', async ({ currentVersion, label }) => {
+    vi.mocked(getProject).mockResolvedValueOnce({ ...project, currentVersion })
+    renderReview()
+    await screen.findByRole('heading', { name: project.name })
+
+    expect(screen.getByRole('link', { name: label }).getAttribute('href')).toBe(`/projects/${project.id}/draft`)
+    expect(screen.getByRole('link', { name: '설정' }).getAttribute('href')).toBe(`/projects/${project.id}/settings`)
+    expect(screen.getByRole('link', { name: '활동 일지' }).getAttribute('href')).toBe(
+      `/projects/${project.id}/activity`,
+    )
+    if (currentVersion?.number === 0) {
+      expect(await screen.findByRole('option', { name: '초안' })).toBeDefined()
+      expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(initialVersion.id)
+    }
+  })
+
+  it.each([null, project.currentVersion])('클라이언트의 메뉴에는 활동 일지만 있다: %s', async (currentVersion) => {
+    vi.mocked(getProject).mockResolvedValueOnce({ ...project, currentVersion, myRole: 'CLIENT' })
+    renderReview()
+    const nav = await screen.findByRole('navigation')
+
+    expect(
+      within(nav)
+        .getAllByRole('link')
+        .map((link) => [link.textContent, link.getAttribute('href')]),
+    ).toEqual([['활동 일지', `/projects/${project.id}/activity`]])
+    expect(screen.queryByRole('link', { name: /준비|설정/ })).toBeNull()
+  })
+})
+
+describe('ReviewRoomPage 로그인과 오류', () => {
+  it('로그인 확인 중에는 사진과 프로젝트를 보여 주지 않는다', async () => {
+    const pending = deferred<Me>()
+    vi.mocked(getMe).mockReturnValueOnce(pending.promise)
+    renderReview()
+    await act(async () => {})
+
+    expect(screen.getByText('확인하는 중이에요.')).toBeDefined()
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.queryByRole('heading')).toBeNull()
+    expect(getMe).toHaveBeenCalledExactlyOnceWith()
+    await act(async () => pending.resolve(user))
+    expect(await screen.findByRole('img')).toBeDefined()
+  })
+
+  it.each(['/', '/app'])('basename %s에서 비로그인이면 /login으로 교체한다', async (basename) => {
+    vi.mocked(getMe).mockResolvedValueOnce(null)
+    renderReview(`/projects/${project.id}`, basename)
+
+    expect(await screen.findByRole('heading', { name: '로그인' })).toBeDefined()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe('/login')
+    expect(screen.queryByRole('img')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '뒤로 가기' }))
+    expect(await screen.findByText('이전 화면')).toBeDefined()
+  })
+
+  it.each([new TypeError('Failed to fetch'), new ApiError(500)])(
+    '로그인 확인 오류 %s는 안내를 보여 주고 주소를 보존한다',
+    async (error) => {
+      vi.mocked(getMe).mockRejectedValueOnce(error)
+      renderReview()
+
+      expect(await screen.findByText('불러오지 못했어요. 잠시 뒤 새로고침해 주세요')).toBeDefined()
+      expect(screen.queryByRole('img')).toBeNull()
+      expect(screen.queryByRole('heading')).toBeNull()
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${project.id}`)
+    },
+  )
+
+  it.each(['abc', '..', '.'])('잘못된 프로젝트 id %s는 프로젝트·버전 API를 부르지 않는다', async (id) => {
+    renderReview(`/projects/${id}`)
+
+    expect(await screen.findByRole('heading', { name: '없는 프로젝트예요' })).toBeDefined()
+    expect(screen.getByRole('link', { name: '프로젝트 목록' }).getAttribute('href')).toBe('/')
+    expect(getProject).not.toHaveBeenCalled()
+    expect(listVersions).not.toHaveBeenCalled()
+    expect(getVersion).not.toHaveBeenCalled()
+  })
+
+  it('프로젝트 id가 틀리면 정상 모양의 버전 쿼리가 있어도 버전 API를 부르지 않는다', async () => {
+    renderReview(`/projects/abc?version=${currentVersion.id}`)
+
+    expect(await screen.findByRole('heading', { name: '없는 프로젝트예요' })).toBeDefined()
+    expect(getProject).not.toHaveBeenCalled()
+    expect(listVersions).not.toHaveBeenCalled()
+    expect(getVersion).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { source: '프로젝트', fail: () => vi.mocked(getProject).mockRejectedValueOnce(new ApiError(404)) },
+    { source: '버전 목록', fail: () => vi.mocked(listVersions).mockRejectedValueOnce(new ApiError(404)) },
+  ])('$source 404도 없는 프로젝트로 표시한다', async ({ fail }) => {
+    fail()
+    renderReview()
+
+    expect(await screen.findByRole('heading', { name: '없는 프로젝트예요' })).toBeDefined()
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.queryByRole('heading', { name: project.name })).toBeNull()
+  })
+
+  it.each(['abc', '..', ''])('잘못된 버전 id %s는 상세를 요청하지 않고 최신 버전 링크를 보여 준다', async (id) => {
+    renderReview(`/projects/${project.id}?version=${id}`)
+
+    expect(await screen.findByRole('heading', { name: '없는 버전이에요' })).toBeDefined()
+    expect(getVersion).not.toHaveBeenCalled()
+    const link = screen.getByRole('link', { name: '최신 버전 보기' })
+    expect(link.getAttribute('href')).toBe(`/projects/${project.id}`)
+    fireEvent.click(link)
+    expect(await screen.findByRole('img', { name: '메인 · PC' })).toBeDefined()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${project.id}`)
+    expect(getVersion).toHaveBeenCalledExactlyOnceWith(currentVersion.id)
+  })
+
+  it.each([
+    { reason: '404', detail: null },
+    { reason: '다른 프로젝트 버전', detail: { ...firstRevision, projectId: nextProject.id } },
+    { reason: '게시 전 버전', detail: { ...firstRevision, status: 'DRAFT' as const, number: null, publishedAt: null } },
+  ])('$reason이면 사진과 설명을 숨기고 최신 버전 링크를 보여 준다', async ({ detail }) => {
+    if (detail) vi.mocked(getVersion).mockResolvedValueOnce(detail)
+    if (!detail) vi.mocked(getVersion).mockRejectedValueOnce(new ApiError(404))
+    renderReview(`/projects/${project.id}?version=${firstRevision.id}`)
+
+    expect(await screen.findByRole('heading', { name: '없는 버전이에요' })).toBeDefined()
+    expect(screen.getByRole('link', { name: '최신 버전 보기' }).getAttribute('href')).toBe(`/projects/${project.id}`)
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.queryByText(firstRevision.summary)).toBeNull()
+    expect(screen.queryByRole('combobox')).toBeNull()
+  })
+
+  describe.each([
+    { source: '프로젝트', fail: (error: Error) => vi.mocked(getProject).mockRejectedValueOnce(error) },
+    { source: '버전 목록', fail: (error: Error) => vi.mocked(listVersions).mockRejectedValueOnce(error) },
+    { source: '버전 상세', fail: (error: Error) => vi.mocked(getVersion).mockRejectedValueOnce(error) },
+  ])('$source 실패', ({ fail }) => {
+    it('401이면 다시 로그인 문구와 링크를 보여 주고 클릭할 때 로그인으로 간다', async () => {
+      fail(new ApiError(401))
+      renderReview()
+
+      expect((await screen.findByRole('alert')).textContent).toContain('로그인이 끝났어요. 다시 로그인해 주세요')
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${project.id}`)
+      expect(screen.queryByRole('img')).toBeNull()
+      const link = screen.getByRole('link', { name: '다시 로그인하기' })
+      expect(link.getAttribute('href')).toBe('/login')
+      fireEvent.click(link)
+      expect(await screen.findByRole('heading', { name: '로그인' })).toBeDefined()
+    })
+
+    it.each([
+      { error: new ApiError(500), message: '잠시 뒤 다시 시도해 주세요' },
+      { error: new TypeError('Failed to fetch'), message: '연결을 확인하고 다시 시도해 주세요' },
+    ])('$error이면 오류 문구를 표시한다', async ({ error, message }) => {
+      fail(error)
+      renderReview()
+
+      expect((await screen.findByRole('alert')).textContent).toBe(message)
+      expect(screen.queryByRole('img')).toBeNull()
+      expect(screen.queryByText('아직 게시한 버전이 없어요.')).toBeNull()
+      expect(screen.queryByRole('heading', { name: '없는 프로젝트예요' })).toBeNull()
+      expect(screen.queryByRole('heading', { name: '없는 버전이에요' })).toBeNull()
+    })
+  })
+})
+
+describe('ReviewRoomPage 늦은 응답과 화면 이동', () => {
+  it.each(['프로젝트', '버전 목록'])(
+    '%s가 늦으면 두 응답을 받을 때까지 빈 버전 안내 대신 불러오는 중을 보여 준다',
+    async (source) => {
+      const pendingProject = deferred<ProjectDetail>()
+      const pendingVersions = deferred<VersionSummary[]>()
+      vi.mocked(getProject).mockReturnValueOnce(pendingProject.promise)
+      vi.mocked(listVersions).mockReturnValueOnce(pendingVersions.promise)
+      renderReview()
+      await screen.findByText('불러오는 중이에요.')
+      await act(async () => {
+        if (source === '프로젝트') pendingVersions.resolve(versions)
+        if (source === '버전 목록') pendingProject.resolve(project)
+      })
+
+      expect(screen.getByText('불러오는 중이에요.')).toBeDefined()
+      expect(screen.queryByText('아직 게시한 버전이 없어요.')).toBeNull()
+      expect(getProject).toHaveBeenCalledExactlyOnceWith(project.id)
+      expect(listVersions).toHaveBeenCalledExactlyOnceWith(project.id)
+      await act(async () => {
+        pendingProject.resolve(project)
+        pendingVersions.resolve(versions)
+      })
+      expect(await screen.findByRole('img')).toBeDefined()
+    },
+  )
+
+  it.each(['성공', '404', '서버 오류'])('버전을 바꿨다가 돌아오면 늦은 이전 요청의 %s를 버린다', async (result) => {
+    const pending = deferred<VersionDetail>()
+    renderReview()
+    await screen.findByRole('img')
+    vi.mocked(getVersion).mockReturnValueOnce(pending.promise)
+    fireEvent.change(screen.getByRole('combobox', { name: '버전' }), { target: { value: firstRevision.id } })
+
+    expect(screen.getByText('불러오는 중이에요.')).toBeDefined()
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.queryByText(currentVersion.summary)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '뒤로 가기' }))
+    expect(await screen.findByRole('img', { name: '메인 · PC' })).toBeDefined()
+    await act(async () => {
+      if (result === '성공') pending.resolve(firstRevision)
+      if (result !== '성공') pending.reject(new ApiError(result === '404' ? 404 : 500))
+      await pending.promise.catch(() => undefined)
+    })
+
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${project.id}`)
+    expect(screen.getByRole('img').getAttribute('src')).toBe(`/api/assets/${currentVersion.screens[0].asset.id}`)
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(currentVersion.id)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('heading', { name: '없는 버전이에요' })).toBeNull()
+    expect(getVersion).toHaveBeenCalledTimes(3)
+  })
+
+  it('다른 프로젝트 검수실로 가면 조회 중에도 이전 제목·사진·설명·개발자 메뉴가 남지 않는다', async () => {
+    renderReview()
+    await screen.findByRole('img')
+    const pending = deferred<ProjectDetail>()
+    vi.mocked(getProject).mockReturnValueOnce(pending.promise)
+    vi.mocked(listVersions).mockResolvedValueOnce([])
+    fireEvent.click(screen.getByRole('link', { name: '다른 검수실로' }))
+    await screen.findByText('불러오는 중이에요.')
+
+    expect(screen.queryByRole('heading', { name: project.name })).toBeNull()
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.queryByText(currentVersion.summary)).toBeNull()
+    expect(screen.queryByRole('link', { name: /준비|설정/ })).toBeNull()
+    await act(async () => pending.resolve(nextProject))
+    expect(await screen.findByRole('heading', { name: nextProject.name })).toBeDefined()
+    expect(screen.getByText('아직 게시한 버전이 없어요.')).toBeDefined()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${nextProject.id}`)
+    expect(getProject).toHaveBeenLastCalledWith(nextProject.id)
+    expect(listVersions).toHaveBeenLastCalledWith(nextProject.id)
+    expect(getVersion).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['성공', '404'])('다른 프로젝트로 이동한 뒤 이전 버전의 늦은 %s가 새 화면을 덮지 않는다', async (result) => {
+    const pending = deferred<VersionDetail>()
+    vi.mocked(getVersion).mockReturnValueOnce(pending.promise)
+    renderReview()
+    await screen.findByRole('heading', { name: project.name })
+    expect(getVersion).toHaveBeenCalledExactlyOnceWith(currentVersion.id)
+    vi.mocked(getProject).mockResolvedValueOnce(nextProject)
+    vi.mocked(listVersions).mockResolvedValueOnce([])
+    fireEvent.click(screen.getByRole('link', { name: '다른 검수실로' }))
+    await screen.findByRole('heading', { name: nextProject.name })
+    await act(async () => {
+      if (result === '성공') pending.resolve(currentVersion)
+      if (result === '404') pending.reject(new ApiError(404))
+      await pending.promise.catch(() => undefined)
+    })
+
+    expect(screen.getByText('아직 게시한 버전이 없어요.')).toBeDefined()
+    expect(screen.queryByRole('heading', { name: project.name })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '없는 버전이에요' })).toBeNull()
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${nextProject.id}`)
+  })
+})

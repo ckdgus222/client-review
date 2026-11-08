@@ -14,6 +14,12 @@ export type ProjectDetail = {
 }
 export type Screen = { id: string; name: string; viewport: Viewport; hiddenAt: string | null }
 
+// 설정 화면과 검수실이 화면 이름표를 같은 글자로 보여 준다. 예: "메인 · 모바일"
+export const VIEWPORT_LABELS: Record<Viewport, string> = { PC: 'PC', MOBILE: '모바일' }
+
+export const screenLabel = (screen: { name: string; viewport: Viewport }) =>
+  `${screen.name} · ${VIEWPORT_LABELS[screen.viewport]}`
+
 export const listProjects = async (): Promise<MyProject[]> => {
   const response = await apiGet('/projects')
   return response.json()

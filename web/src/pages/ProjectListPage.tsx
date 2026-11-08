@@ -25,7 +25,7 @@ const ProjectList = ({ projects, error }: { projects?: MyProject[]; error?: Reac
     <ul className={styles.list}>
       {projects.map((project) => (
         <li key={project.id}>
-          <Link to={`/projects/${project.id}/settings`}>{project.name}</Link>
+          <Link to={`/projects/${project.id}`}>{project.name}</Link>
         </li>
       ))}
     </ul>

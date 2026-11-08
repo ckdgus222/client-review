@@ -4,11 +4,13 @@ import { LoginPage } from './pages/LoginPage.tsx'
 import { NotFoundPage } from './pages/NotFoundPage.tsx'
 import { ProjectListPage } from './pages/ProjectListPage.tsx'
 import { ProjectSettingsPage } from './pages/ProjectSettingsPage.tsx'
+import { ReviewRoomPage } from './pages/ReviewRoomPage.tsx'
 
 const App = () => (
   <PageLayout>
     <Routes>
       <Route path="/" element={<ProjectListPage />} />
+      <Route path="/projects/:id" element={<ReviewRoomPage />} />
       <Route path="/projects/:id/settings" element={<ProjectSettingsPage />} />
       <Route path="/login" element={<LoginPage />} />
       {/* 다른 어느 주소와도 맞지 않으면 여기로 온다. */}

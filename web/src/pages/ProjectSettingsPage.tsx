@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router'
 import { ApiError } from '../api/client.ts'
+import { isUuid } from '../api/ids.ts'
 import {
   createScreen,
   getProject,
@@ -8,7 +9,9 @@ import {
   listScreens,
   type ProjectDetail,
   type Screen,
+  screenLabel,
   showScreen,
+  VIEWPORT_LABELS,
   type Viewport,
 } from '../api/projects.ts'
 import { Button } from '../components/Button.tsx'
@@ -16,14 +19,6 @@ import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { TextField } from '../components/TextField.tsx'
 import { useMe } from '../hooks/useMe.ts'
 import styles from './ProjectSettingsPage.module.css'
-
-// 주소에서 온 id라 '.'이나 '..'도 올 수 있다. encodeURIComponent가 이 둘은 감싸지 않아서 다른 API를 부를 수 있으므로,
-// UUID 모양이 아니면 서버를 부르기 전에 없는 프로젝트로 본다.
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-const VIEWPORT_LABELS: Record<Viewport, string> = { PC: 'PC', MOBILE: '모바일' }
-
-const screenLabel = (screen: Screen) => `${screen.name} · ${VIEWPORT_LABELS[screen.viewport]}`
 
 const toMessage = (error: unknown): ReactNode => {
   if (!(error instanceof ApiError)) return '연결을 확인하고 다시 시도해 주세요'
@@ -41,7 +36,7 @@ const NotFound = () => (
 )
 
 const ProjectSettings = ({ id }: { id: string }) => {
-  const isValidId = UUID_PATTERN.test(id)
+  const isValidId = isUuid(id)
   const { user, error: meError } = useMe()
   const [project, setProject] = useState<ProjectDetail>()
   const [screens, setScreens] = useState<Screen[]>([])

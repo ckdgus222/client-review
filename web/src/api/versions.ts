@@ -80,5 +80,9 @@ export const listActivity = async (projectId: string): Promise<ActivityItem[]> =
   return response.json()
 }
 
+// 버전 이름은 모든 화면이 이 함수로만 만든다. 부르는 쪽에서 `if (number)`로 확인하면 0(초안)이 거짓이라
+// 번호 없는 버전처럼 보이니, 번호가 있는지는 `number !== null`로 본다.
+export const versionLabel = (number: number) => (number === 0 ? '초안' : `${number}차`)
+
 // 요청하지 않고 주소만 만든다. <img src>에 넣으면 브라우저가 쿠키를 붙여 받고, 바뀌지 않은 사진은 다시 받지 않는다.
 export const assetUrl = (assetId: string) => `/api/assets/${encodeURIComponent(assetId)}`

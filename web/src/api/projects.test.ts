@@ -7,6 +7,8 @@ import {
   listProjects,
   listScreens,
   showScreen,
+  screenLabel,
+  VIEWPORT_LABELS,
 } from './projects.ts'
 
 const projectId = '43a30b6d-1b77-46ba-8743-061b463c1d37'
@@ -257,5 +259,19 @@ describe.each([
     await expect(call()).rejects.toBe(networkError)
 
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('화면 이름표', () => {
+  it('기기 이름을 PC와 모바일로 표시한다', () => {
+    expect(VIEWPORT_LABELS).toEqual({ PC: 'PC', MOBILE: '모바일' })
+  })
+
+  it.each([
+    { name: '메인', viewport: 'PC' as const, label: '메인 · PC' },
+    { name: '메인', viewport: 'MOBILE' as const, label: '메인 · 모바일' },
+    { name: '상품 상세', viewport: 'PC' as const, label: '상품 상세 · PC' },
+  ])('$label 이름표를 만든다', ({ name, viewport, label }) => {
+    expect(screenLabel({ name, viewport })).toBe(label)
   })
 })

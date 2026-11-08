@@ -43,7 +43,7 @@
   flex: 1 1 14rem;
 }
 
-/* 라벨과 고르기 칸 모양을 TextField에 맞춘다. 한 곳에서만 써서 공통 부품으로 만들지 않는다. */
+/* 라벨과 고르기 칸 모양을 TextField에 맞춘다. 고르기 칸은 이 화면과 검수실 두 곳뿐이라 공통 부품으로 만들지 않는다. */
 .viewport {
   display: flex;
   flex-direction: column;
