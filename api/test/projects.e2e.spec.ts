@@ -161,7 +161,7 @@ describe('프로젝트 API (e2e)', () => {
       .get(`/api/projects/${project.id}`)
       .set('Cookie', cookie)
       .expect(200)
-      .expect({ id: project.id, name: project.name, myRole: 'DEVELOPER' });
+      .expect({ id: project.id, name: project.name, myRole: 'DEVELOPER', currentVersion: null });
   });
 
   it.each(['가', '가'.repeat(60)])('이름 경계값 %s는 앞뒤 공백을 지운 뒤 허용한다', async (name) => {
@@ -302,7 +302,7 @@ describe('프로젝트 API (e2e)', () => {
       .get(`/api/projects/${project.id}`)
       .set('Cookie', cookie)
       .expect(200)
-      .expect({ id: project.id, name: project.name, myRole: 'CLIENT' });
+      .expect({ id: project.id, name: project.name, myRole: 'CLIENT', currentVersion: null });
   });
 
   it.each([
@@ -337,19 +337,22 @@ describe('프로젝트 API (e2e)', () => {
     expect(await prisma.projectMember.count()).toBe(0);
   });
 
-  it.each(['DEVELOPER', 'CLIENT'] as const)('상세는 요청한 멤버의 %s 역할과 id, name만 돌려준다', async (role) => {
-    const project = await createProject('함께 보는 프로젝트');
-    await prisma.projectMember.create({
-      data: { projectId: project.id, userId: otherUserId, role: 'CLIENT' },
-    });
-    const memberCookie = role === 'DEVELOPER' ? cookie : await login(otherUserId);
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    '상세는 요청한 멤버의 %s 역할과 id, name, currentVersion을 돌려준다',
+    async (role) => {
+      const project = await createProject('함께 보는 프로젝트');
+      await prisma.projectMember.create({
+        data: { projectId: project.id, userId: otherUserId, role: 'CLIENT' },
+      });
+      const memberCookie = role === 'DEVELOPER' ? cookie : await login(otherUserId);
 
-    await request(server)
-      .get(`/api/projects/${project.id}`)
-      .set('Cookie', memberCookie)
-      .expect(200)
-      .expect({ id: project.id, name: project.name, myRole: role });
-  });
+      await request(server)
+        .get(`/api/projects/${project.id}`)
+        .set('Cookie', memberCookie)
+        .expect(200)
+        .expect({ id: project.id, name: project.name, myRole: role, currentVersion: null });
+    },
+  );
 
   it('남의 프로젝트, 없는 UUID, 틀린 모양 id는 모두 같은 404 본문을 돌려준다', async () => {
     await createProject('내 프로젝트');

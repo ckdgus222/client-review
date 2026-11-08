@@ -228,6 +228,103 @@ describe('버전 API (e2e)', () => {
     ]);
   });
 
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    '프로젝트 상세는 %s에게 게시 전 null, 1차 게시 뒤 1차, 2차 게시 뒤 2차를 돌려준다',
+    async (role) => {
+      const memberCookie = role === 'DEVELOPER' ? cookie : clientCookie;
+      const projectDetail = { id: projectId, name: '버전 검수 프로젝트', myRole: role };
+      await request(server)
+        .get(`/api/projects/${projectId}`)
+        .set('Cookie', memberCookie)
+        .expect(200)
+        .expect({ ...projectDetail, currentVersion: null });
+
+      const first = await createDraft();
+      const screen = await createScreen();
+      await putPhoto(first.body.id, screen.id).attach('file', photo, 'screen.png').expect(200);
+      await request(server)
+        .get(`/api/projects/${projectId}`)
+        .set('Cookie', memberCookie)
+        .expect(200)
+        .expect({ ...projectDetail, currentVersion: null });
+
+      await post(`/api/versions/${first.body.id}/publish`).expect(200);
+      await request(server)
+        .get(`/api/projects/${projectId}`)
+        .set('Cookie', memberCookie)
+        .expect(200)
+        .expect({ ...projectDetail, currentVersion: { id: first.body.id, number: 1 } });
+
+      const second = await createDraft();
+      expect(second.body.id).not.toBe(first.body.id);
+      await request(server)
+        .get(`/api/projects/${projectId}`)
+        .set('Cookie', memberCookie)
+        .expect(200)
+        .expect({ ...projectDetail, currentVersion: { id: first.body.id, number: 1 } });
+
+      await post(`/api/versions/${second.body.id}/publish`).expect(200);
+      await request(server)
+        .get(`/api/projects/${projectId}`)
+        .set('Cookie', memberCookie)
+        .expect(200)
+        .expect({ ...projectDetail, currentVersion: { id: second.body.id, number: 2 } });
+
+      // 지난 버전을 다시 게시하려다 실패해도 현재 버전이 1차로 돌아가지 않는다.
+      await post(`/api/versions/${first.body.id}/publish`).expect(409).expect(versionNotDraftBody);
+      await request(server)
+        .get(`/api/projects/${projectId}`)
+        .set('Cookie', memberCookie)
+        .expect(200)
+        .expect({ ...projectDetail, currentVersion: { id: second.body.id, number: 2 } });
+    },
+  );
+
+  it.each(['NO_SCREENS', 'SCREEN_HIDDEN'] as const)(
+    '2차 게시가 %s 409이면 두 멤버의 프로젝트 상세는 계속 1차를 가리킨다',
+    async (code) => {
+      const first = await createDraft();
+      const screen = await createScreen();
+      await putPhoto(first.body.id, screen.id).attach('file', photo, 'screen.png').expect(200);
+      await post(`/api/versions/${first.body.id}/publish`).expect(200);
+      const second = await createDraft();
+      if (code === 'NO_SCREENS') await removeScreen(second.body.id, screen.id).expect(200);
+      if (code === 'SCREEN_HIDDEN') await post(`/api/screens/${screen.id}/hide`).expect(200);
+
+      const failed = await post(`/api/versions/${second.body.id}/publish`).expect(409);
+      expect(failed.body).toEqual({ statusCode: 409, message: expect.any(String), code });
+
+      for (const role of ['DEVELOPER', 'CLIENT'] as const) {
+        await request(server)
+          .get(`/api/projects/${projectId}`)
+          .set('Cookie', role === 'DEVELOPER' ? cookie : clientCookie)
+          .expect(200)
+          .expect({
+            id: projectId,
+            name: '버전 검수 프로젝트',
+            myRole: role,
+            currentVersion: { id: first.body.id, number: 1 },
+          });
+      }
+    },
+  );
+
+  it('현재 버전이 있어도 비멤버에게 프로젝트 상세는 없는 프로젝트와 같은 404다', async () => {
+    const draft = await post(`/api/projects/${otherProjectId}/versions`, clientCookie).expect(201);
+    const screen = await createScreen(otherProjectId);
+    await request(server)
+      .put(`/api/versions/${draft.body.id}/screens/${screen.id}/asset`)
+      .set('Origin', origin)
+      .set('Cookie', clientCookie)
+      .attach('file', photo, 'screen.png')
+      .expect(200);
+    await post(`/api/versions/${draft.body.id}/publish`, clientCookie).expect(200);
+
+    for (const id of [otherProjectId, missingId]) {
+      await request(server).get(`/api/projects/${id}`).set('Cookie', cookie).expect(404).expect(projectNotFoundBody);
+    }
+  });
+
   it('목록은 초안·2차·1차 순으로 네 칸만 주고 클라이언트에게 초안을 숨긴다', async () => {
     const first = await createDraft();
     const screen = await createScreen();
@@ -612,6 +709,13 @@ describe('버전 API (e2e)', () => {
       currentVersionId: null,
     });
     expect(await prisma.activityEvent.count()).toBe(0);
+    for (const role of ['DEVELOPER', 'CLIENT'] as const) {
+      await request(server)
+        .get(`/api/projects/${projectId}`)
+        .set('Cookie', role === 'DEVELOPER' ? cookie : clientCookie)
+        .expect(200)
+        .expect({ id: projectId, name: '버전 검수 프로젝트', myRole: role, currentVersion: null });
+    }
   });
 
   it('숨긴 화면 업로드는 SCREEN_HIDDEN 409이고 새 파일을 지운다', async () => {
@@ -675,6 +779,18 @@ describe('버전 API (e2e)', () => {
     });
     await getDetail(draft.body.id).expect(200).expect(published);
     expect(await prisma.activityEvent.count()).toBe(1);
+    for (const role of ['DEVELOPER', 'CLIENT'] as const) {
+      await request(server)
+        .get(`/api/projects/${projectId}`)
+        .set('Cookie', role === 'DEVELOPER' ? cookie : clientCookie)
+        .expect(200)
+        .expect({
+          id: projectId,
+          name: '버전 검수 프로젝트',
+          myRole: role,
+          currentVersion: { id: draft.body.id, number: 1 },
+        });
+    }
   });
 
   it('게시한 버전의 PATCH·PUT·DELETE·재게시는 VERSION_NOT_DRAFT 409이고 사진과 일지를 보존한다', async () => {

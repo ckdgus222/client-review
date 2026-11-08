@@ -56,7 +56,7 @@ export class ProjectsService {
     // 멤버 줄이 있으면 FK 때문에 프로젝트 줄도 있다.
     const project = await this.prisma.project.findUniqueOrThrow({
       where: { id: projectId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, currentVersion: { select: { id: true, number: true } } },
     });
     return { ...project, myRole };
   }
