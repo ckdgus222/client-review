@@ -20,7 +20,7 @@ const missingId = '00000000-0000-4000-8000-000000000001';
 const projectNotFoundBody = { statusCode: 404, message: '없는 프로젝트예요', error: 'Not Found' };
 const versionNotFoundBody = { statusCode: 404, message: '없는 버전이에요', error: 'Not Found' };
 const screenNotFoundBody = { statusCode: 404, message: '없는 화면이에요', error: 'Not Found' };
-const draftExistsBody = { statusCode: 409, message: '이미 작성 중인 초안이 있어요', code: 'DRAFT_EXISTS' };
+const draftExistsBody = { statusCode: 409, message: '이미 준비 중인 버전이 있어요', code: 'DRAFT_EXISTS' };
 const versionNotDraftBody = { statusCode: 409, message: '게시한 버전은 고칠 수 없어요', code: 'VERSION_NOT_DRAFT' };
 const httpsPrefix = 'https://example.com/';
 
@@ -202,17 +202,22 @@ describe('버전 API (e2e)', () => {
     expect(published.body).toEqual({
       ...reuploaded.body,
       status: 'IN_REVIEW',
-      number: 1,
+      number: 0,
       publishedAt: expect.any(String),
     });
     expect(new Date(published.body.publishedAt).toISOString()).toBe(published.body.publishedAt);
+    expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: draft.body.id } })).toMatchObject({
+      number: 0,
+      status: 'IN_REVIEW',
+      publishedAt: new Date(published.body.publishedAt),
+    });
     await getDetail(draft.body.id, clientCookie).expect(200).expect(published.body);
     // 조각 11의 GET /projects/:id 응답 변경 없이도 게시 결과를 목록에서 확인할 수 있어야 한다.
     await request(server)
       .get(`/api/projects/${projectId}/versions`)
       .set('Cookie', clientCookie)
       .expect(200)
-      .expect([{ id: draft.body.id, number: 1, status: 'IN_REVIEW', publishedAt: published.body.publishedAt }]);
+      .expect([{ id: draft.body.id, number: 0, status: 'IN_REVIEW', publishedAt: published.body.publishedAt }]);
     expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
       currentVersionId: draft.body.id,
     });
@@ -253,7 +258,7 @@ describe('버전 API (e2e)', () => {
         .get(`/api/projects/${projectId}`)
         .set('Cookie', memberCookie)
         .expect(200)
-        .expect({ ...projectDetail, currentVersion: { id: first.body.id, number: 1 } });
+        .expect({ ...projectDetail, currentVersion: { id: first.body.id, number: 0 } });
 
       const second = await createDraft();
       expect(second.body.id).not.toBe(first.body.id);
@@ -261,14 +266,14 @@ describe('버전 API (e2e)', () => {
         .get(`/api/projects/${projectId}`)
         .set('Cookie', memberCookie)
         .expect(200)
-        .expect({ ...projectDetail, currentVersion: { id: first.body.id, number: 1 } });
+        .expect({ ...projectDetail, currentVersion: { id: first.body.id, number: 0 } });
 
       await post(`/api/versions/${second.body.id}/publish`).expect(200);
       await request(server)
         .get(`/api/projects/${projectId}`)
         .set('Cookie', memberCookie)
         .expect(200)
-        .expect({ ...projectDetail, currentVersion: { id: second.body.id, number: 2 } });
+        .expect({ ...projectDetail, currentVersion: { id: second.body.id, number: 1 } });
 
       // 지난 버전을 다시 게시하려다 실패해도 현재 버전이 1차로 돌아가지 않는다.
       await post(`/api/versions/${first.body.id}/publish`).expect(409).expect(versionNotDraftBody);
@@ -276,12 +281,12 @@ describe('버전 API (e2e)', () => {
         .get(`/api/projects/${projectId}`)
         .set('Cookie', memberCookie)
         .expect(200)
-        .expect({ ...projectDetail, currentVersion: { id: second.body.id, number: 2 } });
+        .expect({ ...projectDetail, currentVersion: { id: second.body.id, number: 1 } });
     },
   );
 
   it.each(['NO_SCREENS', 'SCREEN_HIDDEN'] as const)(
-    '2차 게시가 %s 409이면 두 멤버의 프로젝트 상세는 계속 1차를 가리킨다',
+    '2차 게시가 %s 409이면 현재 버전을 보존하고 재시도는 빈 번호 없이 1·2로 이어진다',
     async (code) => {
       const first = await createDraft();
       const screen = await createScreen();
@@ -293,6 +298,12 @@ describe('버전 API (e2e)', () => {
 
       const failed = await post(`/api/versions/${second.body.id}/publish`).expect(409);
       expect(failed.body).toEqual({ statusCode: 409, message: expect.any(String), code });
+      expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: second.body.id } })).toMatchObject({
+        number: null,
+        status: 'DRAFT',
+        publishedAt: null,
+      });
+      expect(await prisma.activityEvent.count({ where: { projectId } })).toBe(1);
 
       for (const role of ['DEVELOPER', 'CLIENT'] as const) {
         await request(server)
@@ -303,9 +314,30 @@ describe('버전 API (e2e)', () => {
             id: projectId,
             name: '버전 검수 프로젝트',
             myRole: role,
-            currentVersion: { id: first.body.id, number: 1 },
+            currentVersion: { id: first.body.id, number: 0 },
           });
       }
+
+      if (code === 'SCREEN_HIDDEN') await removeScreen(second.body.id, screen.id).expect(200);
+      const replacement = await createScreen();
+      await putPhoto(second.body.id, replacement.id).attach('file', photo, 'replacement.png').expect(200);
+      const retried = await post(`/api/versions/${second.body.id}/publish`).expect(200);
+      expect(retried.body).toMatchObject({ number: 1, status: 'IN_REVIEW' });
+      const third = await createDraft();
+      const publishedThird = await post(`/api/versions/${third.body.id}/publish`).expect(200);
+      expect(publishedThird.body).toMatchObject({ number: 2, status: 'IN_REVIEW' });
+      expect(
+        await prisma.deliveryVersion.findMany({
+          where: { projectId },
+          orderBy: { number: 'asc' },
+          select: { id: true, number: true },
+        }),
+      ).toEqual([
+        { id: first.body.id, number: 0 },
+        { id: second.body.id, number: 1 },
+        { id: third.body.id, number: 2 },
+      ]);
+      expect(await prisma.activityEvent.count({ where: { projectId } })).toBe(3);
     },
   );
 
@@ -325,19 +357,24 @@ describe('버전 API (e2e)', () => {
     }
   });
 
-  it('목록은 초안·2차·1차 순으로 네 칸만 주고 클라이언트에게 초안을 숨긴다', async () => {
+  it('게시 번호는 0·1·2이고 목록은 null·2·1·0 순이며 클라이언트에게도 0번을 보여 준다', async () => {
     const first = await createDraft();
     const screen = await createScreen();
     await putPhoto(first.body.id, screen.id).attach('file', photo, 'screen.png').expect(200);
     const publishedFirst = await post(`/api/versions/${first.body.id}/publish`).expect(200);
+    expect(publishedFirst.body.number).toBe(0);
     const second = await createDraft();
     const publishedSecond = await post(`/api/versions/${second.body.id}/publish`).expect(200);
-    expect(publishedSecond.body.number).toBe(2);
+    expect(publishedSecond.body.number).toBe(1);
+    const third = await createDraft();
+    const publishedThird = await post(`/api/versions/${third.body.id}/publish`).expect(200);
+    expect(publishedThird.body.number).toBe(2);
     const draft = await createDraft();
     await prisma.deliveryVersion.create({ data: { projectId: otherProjectId } });
     const publishedList = [
-      { id: second.body.id, number: 2, status: 'IN_REVIEW', publishedAt: publishedSecond.body.publishedAt },
-      { id: first.body.id, number: 1, status: 'IN_REVIEW', publishedAt: publishedFirst.body.publishedAt },
+      { id: third.body.id, number: 2, status: 'IN_REVIEW', publishedAt: publishedThird.body.publishedAt },
+      { id: second.body.id, number: 1, status: 'IN_REVIEW', publishedAt: publishedSecond.body.publishedAt },
+      { id: first.body.id, number: 0, status: 'IN_REVIEW', publishedAt: publishedFirst.body.publishedAt },
     ];
 
     await request(server)
@@ -350,7 +387,19 @@ describe('버전 API (e2e)', () => {
       .set('Cookie', clientCookie)
       .expect(200)
       .expect(publishedList);
-    expect(await prisma.activityEvent.count()).toBe(2);
+    expect(
+      await prisma.deliveryVersion.findMany({
+        where: { projectId },
+        orderBy: { number: { sort: 'desc', nulls: 'first' } },
+        select: { id: true, number: true },
+      }),
+    ).toEqual([
+      { id: draft.body.id, number: null },
+      { id: third.body.id, number: 2 },
+      { id: second.body.id, number: 1 },
+      { id: first.body.id, number: 0 },
+    ]);
+    expect(await prisma.activityEvent.count()).toBe(3);
   });
 
   it('화면 상세는 업로드 순서나 이름순 대신 화면을 만든 순서이고 숨긴 시각도 돌려준다', async () => {
@@ -698,7 +747,7 @@ describe('버전 API (e2e)', () => {
     expect(await prisma.deliveryVersion.count()).toBe(1);
   });
 
-  it('빈 초안 게시가 NO_SCREENS 409이면 번호·현재 버전·일지가 생기지 않는다', async () => {
+  it('빈 초안 게시가 NO_SCREENS 409이면 번호·현재 버전·일지가 없고 사진을 올린 뒤에는 0번이다', async () => {
     const draft = await createDraft();
 
     await post(`/api/versions/${draft.body.id}/publish`)
@@ -716,6 +765,16 @@ describe('버전 API (e2e)', () => {
         .expect(200)
         .expect({ id: projectId, name: '버전 검수 프로젝트', myRole: role, currentVersion: null });
     }
+
+    const screen = await createScreen();
+    await putPhoto(draft.body.id, screen.id).attach('file', photo, 'screen.png').expect(200);
+    const published = await post(`/api/versions/${draft.body.id}/publish`).expect(200);
+    expect(published.body).toMatchObject({ number: 0, status: 'IN_REVIEW' });
+    expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: draft.body.id } })).toMatchObject({
+      number: 0,
+      status: 'IN_REVIEW',
+    });
+    expect(await prisma.activityEvent.count()).toBe(1);
   });
 
   it('숨긴 화면 업로드는 SCREEN_HIDDEN 409이고 새 파일을 지운다', async () => {
@@ -755,11 +814,11 @@ describe('버전 API (e2e)', () => {
     expect(await assetFiles()).toEqual(files);
     await removeScreen(draft.body.id, hidden.id).expect(200);
     const published = await post(`/api/versions/${draft.body.id}/publish`).expect(200);
-    expect(published.body).toMatchObject({ number: 1, status: 'IN_REVIEW' });
+    expect(published.body).toMatchObject({ number: 0, status: 'IN_REVIEW' });
     expect(await prisma.activityEvent.count()).toBe(1);
   });
 
-  it('동시 게시는 하나만 200이고 번호와 일지가 한 번만 생긴다', async () => {
+  it('동시 게시는 하나만 200이고 0번과 일지가 한 번만 생기며 다음 게시 번호는 1이다', async () => {
     const draft = await createDraft();
     const screen = await createScreen();
     await putPhoto(draft.body.id, screen.id).attach('file', photo, 'screen.png').expect(200);
@@ -774,7 +833,7 @@ describe('버전 API (e2e)', () => {
     expect(published).toMatchObject({
       id: draft.body.id,
       status: 'IN_REVIEW',
-      number: 1,
+      number: 0,
       publishedAt: expect.any(String),
     });
     await getDetail(draft.body.id).expect(200).expect(published);
@@ -788,9 +847,18 @@ describe('버전 API (e2e)', () => {
           id: projectId,
           name: '버전 검수 프로젝트',
           myRole: role,
-          currentVersion: { id: draft.body.id, number: 1 },
+          currentVersion: { id: draft.body.id, number: 0 },
         });
     }
+
+    const next = await createDraft();
+    const publishedNext = await post(`/api/versions/${next.body.id}/publish`).expect(200);
+    expect(publishedNext.body).toMatchObject({ number: 1, status: 'IN_REVIEW' });
+    expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: next.body.id } })).toMatchObject({
+      number: 1,
+      status: 'IN_REVIEW',
+    });
+    expect(await prisma.activityEvent.count()).toBe(2);
   });
 
   it('게시한 버전의 PATCH·PUT·DELETE·재게시는 VERSION_NOT_DRAFT 409이고 사진과 일지를 보존한다', async () => {
@@ -837,7 +905,7 @@ describe('버전 API (e2e)', () => {
     const published = await post(`/api/versions/${draft.body.id}/publish`).expect(200);
     expect(published.body).toEqual({
       ...replaced.body,
-      number: 1,
+      number: 0,
       status: 'IN_REVIEW',
       publishedAt: expect.any(String),
     });

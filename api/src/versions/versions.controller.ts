@@ -83,7 +83,7 @@ export class VersionsController {
     return this.draftScreens.removeScreen(versionId, screenId, request.user.id);
   }
 
-  // 게시는 새로 만드는 것이 아니라 초안의 상태를 바꾸는 것이라 201 대신 200이다.
+  // 게시는 새로 만드는 것이 아니라 게시 전 버전의 상태를 바꾸는 것이라 201 대신 200이다.
   @Post('versions/:id/publish')
   @HttpCode(HttpStatus.OK)
   publish(@Req() request: AuthenticatedRequest, @Param('id', versionIdPipe) versionId: string) {

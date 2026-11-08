@@ -3,7 +3,7 @@ import type { Viewport } from './projects.ts'
 
 export type VersionStatus = 'DRAFT' | 'IN_REVIEW' | 'APPROVED'
 
-// 초안은 아직 번호와 게시 시각이 없다.
+// 게시 전 버전은 아직 번호와 게시 시각이 없다. 번호 0은 "초안", 1부터는 "1차"·"2차"로 부른다.
 export type VersionSummary = { id: string; number: number | null; status: VersionStatus; publishedAt: string | null }
 
 export type VersionScreen = {

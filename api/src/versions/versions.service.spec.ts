@@ -483,7 +483,7 @@ describe('VersionsService', () => {
     expect(first).toEqual({
       id: draft.id,
       projectId,
-      number: 1,
+      number: 0,
       status: 'IN_REVIEW',
       summary: '첫 설명',
       testUrl: 'https://example.com',
@@ -500,13 +500,18 @@ describe('VersionsService', () => {
     });
     expect(first.publishedAt!.getTime()).toBeGreaterThanOrEqual(startedAt);
     expect(first.publishedAt!.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: first.id } })).toMatchObject({
+      number: 0,
+      status: 'IN_REVIEW',
+      publishedAt: first.publishedAt,
+    });
     expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
       currentVersionId: first.id,
     });
     const next = await service.createDraft(projectId, developerId);
     expect(next.screens).toEqual(first.screens);
     const second = await service.publish(next.id, developerId);
-    expect(second).toEqual({ ...next, number: 2, status: 'IN_REVIEW', publishedAt: expect.any(Date) });
+    expect(second).toEqual({ ...next, number: 1, status: 'IN_REVIEW', publishedAt: expect.any(Date) });
     expect(await service.getDetail(first.id, clientId)).toEqual(first);
     expect(await service.getDetail(second.id, clientId)).toEqual(second);
     expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
@@ -554,7 +559,7 @@ describe('VersionsService', () => {
     const before = await service.getDetail(draft.id, developerId);
     expect(await service.publish(draft.id, developerId)).toEqual({
       ...before,
-      number: 1,
+      number: 0,
       status: 'IN_REVIEW',
       publishedAt: expect.any(Date),
     });
@@ -600,7 +605,7 @@ describe('VersionsService', () => {
     expect(failures).toHaveLength(1);
     expectConflict(failures[0].reason, 'VERSION_NOT_DRAFT');
     expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: draft.id } })).toMatchObject({
-      number: 1,
+      number: 0,
       status: 'IN_REVIEW',
       publishedAt: expect.any(Date),
     });
@@ -618,6 +623,46 @@ describe('VersionsService', () => {
       },
     ]);
   });
+
+  it.each([false, true])(
+    '첫 게시의 일지 저장 실패(저장 후 실패=%s)도 번호를 소비하지 않고 재시도는 0부터 시작한다',
+    async (failAfterWrite) => {
+      const draft = await service.createDraft(projectId, developerId);
+      await attachScreen(draft.id, { name: '메인', viewport: 'PC' });
+      const failure = new Error('첫 게시 일지 저장 실패');
+      const record = activity.record.bind(activity);
+      vi.spyOn(activity, 'record').mockImplementationOnce(async (tx, event) => {
+        if (failAfterWrite) await record(tx, event);
+        throw failure;
+      });
+
+      await expect(service.publish(draft.id, developerId)).rejects.toBe(failure);
+      expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: draft.id } })).toMatchObject({
+        number: null,
+        status: 'DRAFT',
+        publishedAt: null,
+      });
+      expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
+        currentVersionId: null,
+      });
+      expect(await prisma.activityEvent.count()).toBe(0);
+
+      expect(await service.publish(draft.id, developerId)).toMatchObject({ number: 0, status: 'IN_REVIEW' });
+      const next = await service.createDraft(projectId, developerId);
+      expect(await service.publish(next.id, developerId)).toMatchObject({ number: 1, status: 'IN_REVIEW' });
+      expect(
+        await prisma.deliveryVersion.findMany({
+          where: { projectId },
+          orderBy: { number: 'asc' },
+          select: { id: true, number: true },
+        }),
+      ).toEqual([
+        { id: draft.id, number: 0 },
+        { id: next.id, number: 1 },
+      ]);
+      expect(await prisma.activityEvent.count()).toBe(2);
+    },
+  );
 
   it.each([false, true])(
     '일지 저장 실패(저장 후 실패=%s)는 게시 전체를 취소하고 재시도 때 같은 다음 번호를 쓴다',

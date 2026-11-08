@@ -162,14 +162,14 @@ describe('활동 일지 API (e2e)', () => {
           type: 'VERSION_PUBLISHED',
           createdAt: secondEvent.createdAt.toISOString(),
           actorName: '개발자',
-          version: { id: second.body.id, number: 2 },
+          version: { id: second.body.id, number: 1 },
         },
         {
           id: firstEvent.id,
           type: 'VERSION_PUBLISHED',
           createdAt: firstEvent.createdAt.toISOString(),
           actorName: '개발자',
-          version: { id: first.versionId, number: 1 },
+          version: { id: first.versionId, number: 0 },
         },
       ]);
     },
@@ -191,7 +191,7 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: expect.any(String),
         actorName: '다른 개발자',
-        version: { id: other.versionId, number: 1 },
+        version: { id: other.versionId, number: 0 },
       },
     ]);
     await getActivity(otherProjectId, clientCookie).expect(404).expect(projectNotFoundBody);
@@ -316,7 +316,7 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: expect.any(String),
         actorName: '개발자',
-        version: { id: draft.versionId, number: 1 },
+        version: { id: draft.versionId, number: 0 },
       },
     ]);
   });
@@ -362,7 +362,7 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: expect.any(String),
         actorName: '개발자',
-        version: { id: draft.versionId, number: 1 },
+        version: { id: draft.versionId, number: 0 },
       },
     ]);
 

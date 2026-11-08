@@ -639,7 +639,7 @@ describe('DraftScreensService', () => {
     await expectPreserved(old);
     expect(await prisma.deliveryVersion.findUnique({ where: { id: draftId } })).toMatchObject({
       status: 'IN_REVIEW',
-      number: 1,
+      number: 0,
     });
     expect(await prisma.asset.count()).toBe(1);
     expect(await projectFiles()).toEqual([basename(old.asset.storageKey)]);
