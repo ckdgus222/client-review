@@ -9,9 +9,17 @@ export type ActivityView = {
   createdAt: Date;
   actorName: string;
   version: { id: string; number: number | null } | null;
+  // 초대 수락·접근 철회·승인자 변경의 대상 사람. 대상이 없는 사건(게시, 초대)은 null이다.
+  memberName: string | null;
 };
 
-type ActivityEventInput = { projectId: string; actorId: string; type: ActivityType; versionId?: string };
+type ActivityEventInput = {
+  projectId: string;
+  actorId: string;
+  type: ActivityType;
+  versionId?: string;
+  memberId?: string;
+};
 
 @Injectable()
 export class ActivityService {
@@ -36,9 +44,14 @@ export class ActivityService {
         createdAt: true,
         actor: { select: { name: true } },
         version: { select: { id: true, number: true } },
+        member: { select: { user: { select: { name: true } } } },
       },
       orderBy: { createdAt: 'desc' },
     });
-    return events.map(({ actor, ...event }) => ({ ...event, actorName: actor.name }));
+    return events.map(({ actor, member, ...event }) => ({
+      ...event,
+      actorName: actor.name,
+      memberName: member?.user.name ?? null,
+    }));
   }
 }
