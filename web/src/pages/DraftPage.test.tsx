@@ -217,6 +217,11 @@ describe('DraftPage 불러오기와 버전 이름', () => {
       vi.mocked(createDraft).mockReturnValueOnce(pending.promise)
       renderDraft()
       const start = await screen.findByRole<HTMLButtonElement>('button', { name: `${label} 준비 시작` })
+      expect(
+        screen.getByText(
+          '준비를 시작하면 지금 버전의 화면 구성과 테스트 주소를 그대로 가져와요. 바뀐 화면만 새 사진으로 바꾸면 돼요.',
+        ),
+      ).toBeDefined()
       expect(getVersion).not.toHaveBeenCalled()
       fireEvent.click(start)
       fireEvent.click(start)

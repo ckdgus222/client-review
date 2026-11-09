@@ -149,7 +149,9 @@ const DraftEditor = ({ id }: { id: string }) => {
       <section className={styles.page}>
         {roomLink}
         <h1>{project.name}</h1>
-        <p>준비를 시작하면 지금 버전의 화면 구성을 그대로 가져와요. 바뀐 화면만 새 사진으로 바꾸면 돼요.</p>
+        <p>
+          준비를 시작하면 지금 버전의 화면 구성과 테스트 주소를 그대로 가져와요. 바뀐 화면만 새 사진으로 바꾸면 돼요.
+        </p>
         {actionError && <ErrorText message={actionError} />}
         <div>
           <Button disabled={busy} onClick={() => run(async () => fillForm(await createDraft(id)))}>

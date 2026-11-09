@@ -63,20 +63,22 @@ export class VersionsService {
       if (role !== ProjectRole.DEVELOPER) throw new ForbiddenException('개발자만 할 수 있어요');
 
       // 사진은 새로 만들지 않고 같은 Asset을 가리킨다. 숨긴 화면은 새 게시 전 버전에 넣지 않는다.
-      const { currentVersionId } = await tx.project.findUniqueOrThrow({
+      const { currentVersion } = await tx.project.findUniqueOrThrow({
         where: { id: projectId },
-        select: { currentVersionId: true },
+        select: { currentVersion: { select: { id: true, testUrl: true } } },
       });
-      const copied = currentVersionId
+      const copied = currentVersion
         ? await tx.versionScreen.findMany({
-            where: { versionId: currentVersionId, screen: { hiddenAt: null } },
+            where: { versionId: currentVersion.id, screen: { hiddenAt: null } },
             select: { screenId: true, assetId: true },
           })
         : [];
+      // 테스트 주소는 보통 차수마다 같아서 이어받는다. 설명은 이번 차수에서 바뀐 점이라 빈 칸에서 시작한다.
+      const testUrl = currentVersion?.testUrl ?? null;
 
       // 게시 전 버전이 이미 있으면 "게시 전 버전은 프로젝트마다 1개" 인덱스가 거절한다. 그래서 먼저 찾아보는 코드를 두지 않는다.
       const draft = await tx.deliveryVersion
-        .create({ data: { projectId, screens: { create: copied } }, select: { id: true } })
+        .create({ data: { projectId, testUrl, screens: { create: copied } }, select: { id: true } })
         .catch((error) => {
           throw isUniqueViolation(error) ? conflict('DRAFT_EXISTS', '이미 준비 중인 버전이 있어요') : error;
         });

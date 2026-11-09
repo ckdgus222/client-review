@@ -203,7 +203,7 @@ describe('VersionsService', () => {
       number: null,
       status: 'DRAFT',
       summary: '',
-      testUrl: null,
+      testUrl: 'https://example.com/old',
       publishedAt: null,
       screens: [
         {
@@ -235,6 +235,64 @@ describe('VersionsService', () => {
     expect(await prisma.activityEvent.count()).toBe(0);
   });
 
+  it.each([null, 'https://example.com/previous'])(
+    'createDraft는 현재 주소가 null이면 지난 주소(%s)를 가져오지 않고 설명도 비운다',
+    async (previousTestUrl) => {
+      const previous = await prisma.deliveryVersion.create({
+        data: {
+          projectId,
+          number: 0,
+          status: 'IN_REVIEW',
+          publishedAt,
+          summary: '지난 설명',
+          testUrl: previousTestUrl,
+        },
+      });
+      const current = await prisma.deliveryVersion.create({
+        data: { projectId, number: 1, status: 'IN_REVIEW', publishedAt, summary: '현재 설명', testUrl: null },
+      });
+      await prisma.project.update({ where: { id: projectId }, data: { currentVersionId: current.id } });
+
+      const draft = await service.createDraft(projectId, developerId);
+
+      expect(draft).toMatchObject({ summary: '', testUrl: null });
+      expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: draft.id } })).toMatchObject({
+        summary: '',
+        testUrl: null,
+      });
+      expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: current.id } })).toEqual(current);
+      expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: previous.id } })).toEqual(previous);
+    },
+  );
+
+  it.each(['https://example.com/new', null])(
+    '이어받은 테스트 주소를 updateDraft로 %s로 바꿔도 현재 버전의 주소와 설명은 그대로다',
+    async (testUrl) => {
+      const current = await prisma.deliveryVersion.create({
+        data: {
+          projectId,
+          number: 0,
+          status: 'IN_REVIEW',
+          publishedAt,
+          summary: '게시한 설명',
+          testUrl: 'https://example.com/current',
+        },
+      });
+      await prisma.project.update({ where: { id: projectId }, data: { currentVersionId: current.id } });
+      const draft = await service.createDraft(projectId, developerId);
+      expect(draft).toMatchObject({ summary: '', testUrl: current.testUrl });
+
+      const updated = await service.updateDraft(draft.id, developerId, { testUrl });
+
+      expect(updated).toEqual({ ...draft, testUrl });
+      expect(await service.getDetail(draft.id, developerId)).toEqual(updated);
+      expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: current.id } })).toEqual(current);
+      expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
+        currentVersionId: current.id,
+      });
+    },
+  );
+
   it('createDraft는 현재 버전의 모든 화면이 숨겨졌으면 빈 초안을 만든다', async () => {
     const current = await prisma.deliveryVersion.create({
       data: { projectId, number: 1, status: 'IN_REVIEW', publishedAt },
@@ -244,6 +302,27 @@ describe('VersionsService', () => {
 
     expect(await service.createDraft(projectId, developerId)).toMatchObject({ screens: [] });
     expect(await prisma.asset.count()).toBe(1);
+  });
+
+  it('createDraft는 현재 버전의 모든 화면이 숨겨져도 테스트 주소는 복사하고 설명은 비운다', async () => {
+    const current = await prisma.deliveryVersion.create({
+      data: {
+        projectId,
+        number: 0,
+        status: 'IN_REVIEW',
+        publishedAt,
+        summary: '숨기기 전 설명',
+        testUrl: 'https://example.com/current',
+      },
+    });
+    await attachScreen(current.id, { name: '숨긴 화면', viewport: 'PC', hiddenAt });
+    await prisma.project.update({ where: { id: projectId }, data: { currentVersionId: current.id } });
+
+    const draft = await service.createDraft(projectId, developerId);
+
+    expect(draft).toMatchObject({ screens: [], summary: '', testUrl: current.testUrl });
+    expect(await service.getDetail(draft.id, developerId)).toEqual(draft);
+    expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: current.id } })).toEqual(current);
   });
 
   it('createDraft는 기존 초안이 있으면 DRAFT_EXISTS이며 기존 내용과 화면을 보존한다', async () => {

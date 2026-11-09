@@ -233,6 +233,33 @@ describe('버전 API (e2e)', () => {
     ]);
   });
 
+  it.each([
+    { label: '일반 주소', testUrl: 'https://example.com/review' },
+    { label: '2000자 주소', testUrl: httpsPrefix + 'a'.repeat(2000 - httpsPrefix.length) },
+  ])('게시한 $label를 새 게시 전 버전에 복사하고 설명은 비운다', async ({ testUrl }) => {
+    const first = await createDraft();
+    await patch(first.body.id).send({ summary: '처음 게시한 설명', testUrl }).expect(200);
+    const screen = await createScreen();
+    await putPhoto(first.body.id, screen.id).attach('file', photo, 'screen.png').expect(200);
+    const published = await post(`/api/versions/${first.body.id}/publish`).expect(200);
+    expect(published.body).toMatchObject({ summary: '처음 게시한 설명', testUrl });
+
+    const next = await createDraft();
+
+    expect(next.body).toEqual({
+      ...published.body,
+      id: expect.any(String),
+      number: null,
+      status: 'DRAFT',
+      summary: '',
+      testUrl,
+      publishedAt: null,
+    });
+    expect(next.body.id).not.toBe(first.body.id);
+    await getDetail(next.body.id).expect(200).expect(next.body);
+    await getDetail(first.body.id, clientCookie).expect(200).expect(published.body);
+  });
+
   it.each(['DEVELOPER', 'CLIENT'] as const)(
     '프로젝트 상세는 %s에게 게시 전 null, 1차 게시 뒤 1차, 2차 게시 뒤 2차를 돌려준다',
     async (role) => {
