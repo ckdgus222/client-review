@@ -5,3 +5,8 @@ dist/
 *.tsbuildinfo
 api/src/generated/
 api/.assets/
+# 브라우저 e2e와 커밋 검사가 쓰는 실행 결과
+.e2e-results/
+e2e/.assets/
+e2e/test-results/
+e2e/playwright-report/

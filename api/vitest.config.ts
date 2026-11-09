@@ -16,5 +16,10 @@ export default defineConfig({
     globalSetup: ['./test/global-setup.ts'],
     // 테스트 파일마다 표를 비운다. 동시에 돌면 서로 데이터를 지워서 하나씩 차례로 돌린다.
     fileParallelism: false,
+    // .only가 남으면 다른 테스트가 조용히 빠진다. 남아 있으면 실행을 실패시킨다.
+    allowOnly: false,
+    // 커밋 검사(verify.mjs)가 이 JSON에서 어떤 e2e 테스트가 통과했는지 읽는다.
+    reporters: ['default', 'json'],
+    outputFile: { json: '../.e2e-results/api.json' },
   },
 });
