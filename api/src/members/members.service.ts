@@ -19,7 +19,7 @@ export type MemberView = { id: string; name: string; email: string; role: Projec
 export type PendingInvitationView = { email: string; expiresAt: Date };
 
 // 없는 참여자, 남의 프로젝트 참여자, 이미 철회한 참여자가 모두 이 본문으로 답한다. 셋을 구별할 수 없게 하려는 것이다.
-const memberNotFound = () => new NotFoundException('없는 참여자예요');
+export const memberNotFound = () => new NotFoundException('없는 참여자예요');
 
 @Injectable()
 export class MembersService {
