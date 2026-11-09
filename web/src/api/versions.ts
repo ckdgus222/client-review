@@ -22,12 +22,14 @@ export type VersionDetail = VersionSummary & {
 }
 
 // 일지는 게시된 버전만 가리켜서 번호가 늘 있다.
+// memberName은 초대 수락·접근 철회·승인자 변경의 대상 사람이다. 대상이 없는 사건(게시, 초대)은 null이다.
 export type ActivityItem = {
   id: string
-  type: 'VERSION_PUBLISHED'
+  type: 'VERSION_PUBLISHED' | 'INVITATION_CREATED' | 'INVITATION_ACCEPTED' | 'MEMBER_REVOKED' | 'APPROVER_CHANGED'
   createdAt: string
   actorName: string
   version: { id: string; number: number } | null
+  memberName: string | null
 }
 
 // testUrl에 빈 글을 보내면 서버가 주소를 지운다.

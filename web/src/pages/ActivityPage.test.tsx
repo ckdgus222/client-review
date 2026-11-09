@@ -16,6 +16,7 @@ const project: ProjectDetail = {
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
   currentVersion: { id: 'd565474f-17a5-4a8e-9b61-bde406fefdf3', number: 2 },
+  approver: null,
 }
 const items: ActivityItem[] = [
   {
@@ -23,6 +24,7 @@ const items: ActivityItem[] = [
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-09T09:04:00.000Z',
     actorName: '최개발',
+    memberName: null,
     version: project.currentVersion,
   },
   {
@@ -30,6 +32,7 @@ const items: ActivityItem[] = [
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-08T23:59:00.000Z',
     actorName: '김개발',
+    memberName: null,
     version: { id: '7b13b773-8835-45f0-b46f-c555b5033dc7', number: 1 },
   },
   {
@@ -37,6 +40,7 @@ const items: ActivityItem[] = [
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-07T00:01:00.000Z',
     actorName: '이개발',
+    memberName: null,
     version: { id: '24f86b45-afd2-4c27-a774-90586f6e8473', number: 0 },
   },
 ]
