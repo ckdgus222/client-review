@@ -29,6 +29,14 @@ const assertClientSlot = async (tx: Prisma.TransactionClient, projectId: string)
   if (count >= MAX_CLIENTS) throw conflict('PROJECT_FULL', `클라이언트는 ${MAX_CLIENTS}명까지 참여할 수 있어요`);
 };
 
+// 같은 이메일의 쓰지 않은 초대를 무효로 한다. 다시 초대할 때와 접근을 철회할 때 같은 기준을 쓴다.
+// 그래서 그 이메일로 쓸 수 있는 링크는 늘 많아야 1개다.
+export const revokeUnusedInvitations = (tx: Prisma.TransactionClient, projectId: string, email: string) =>
+  tx.invitation.updateMany({
+    where: { projectId, email, acceptedAt: null, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+
 @Injectable()
 export class InvitationsService {
   constructor(
@@ -55,11 +63,7 @@ export class InvitationsService {
       if (activeMember) throw conflict('ALREADY_MEMBER', '이미 참여한 사람이에요');
       await assertClientSlot(tx, projectId);
 
-      // 같은 이메일의 쓰지 않은 예전 초대를 무효로 한 뒤 새로 넣는다. 그래서 쓸 수 있는 링크는 이메일마다 1개다.
-      await tx.invitation.updateMany({
-        where: { projectId, email, acceptedAt: null, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
+      await revokeUnusedInvitations(tx, projectId, email);
       // 7일 만료는 서버 시계가 아니라 DB 시계로 정한다. 확인할 때도 DB 시계로 비교한다.
       const [invitation] = await tx.$queryRaw<{ expires_at: Date }[]>`
         INSERT INTO invitations (project_id, email, token_hash, invited_by_id, expires_at)

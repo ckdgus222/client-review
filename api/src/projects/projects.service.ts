@@ -7,6 +7,12 @@ export type MyProject = { id: string; name: string; myRole: ProjectRole; created
 
 const PROJECT_FIELDS = { id: true, name: true, createdAt: true } as const;
 
+// 프로젝트 상세와 승인자 바꾸기가 같은 모양으로 승인자를 돌려준다.
+export type ApproverView = { memberId: string; name: string } | null;
+export const APPROVER_FIELDS = { id: true, user: { select: { name: true } } } as const;
+export const toApproverView = (approver: { id: string; user: { name: string } } | null): ApproverView =>
+  approver ? { memberId: approver.id, name: approver.user.name } : null;
+
 // 멤버가 아님, 없는 프로젝트, 틀린 모양 id(컨트롤러)가 모두 이 본문으로 답한다. 셋을 구별할 수 없게 하려는 것이다.
 export const projectNotFound = () => new NotFoundException('없는 프로젝트예요');
 
@@ -62,11 +68,11 @@ export class ProjectsService {
         id: true,
         name: true,
         currentVersion: { select: { id: true, number: true } },
-        approver: { select: { id: true, user: { select: { name: true } } } },
+        approver: { select: APPROVER_FIELDS },
       },
     });
     const { approver, ...rest } = project;
-    return { ...rest, myRole, approver: approver ? { memberId: approver.id, name: approver.user.name } : null };
+    return { ...rest, myRole, approver: toApproverView(approver) };
   }
 
   // 같은 프로젝트의 쓰기 명령은 프로젝트 줄을 잠가서 하나씩 차례로 처리한다.
