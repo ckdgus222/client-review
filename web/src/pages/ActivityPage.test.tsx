@@ -1,0 +1,370 @@
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { Link, MemoryRouter, useLocation } from 'react-router'
+import App from '../App.tsx'
+import type { Me } from '../api/auth.ts'
+import type { ProjectDetail } from '../api/projects.ts'
+import type { ActivityItem, VersionDetail } from '../api/versions.ts'
+
+const user: Me = {
+  id: '5b3a934d-ef8e-4ce8-b26a-a9d1cdd4983f',
+  email: 'reader@example.com',
+  name: '김수정',
+  canCreateProjects: false,
+}
+const project: ProjectDetail = {
+  id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
+  name: '오브젝트 스토어',
+  myRole: 'DEVELOPER',
+  currentVersion: { id: 'd565474f-17a5-4a8e-9b61-bde406fefdf3', number: 2 },
+}
+const items: ActivityItem[] = [
+  {
+    id: 'f6dadf8d-5cb9-4602-80db-8c868ebaf601',
+    type: 'VERSION_PUBLISHED',
+    createdAt: '2026-11-09T09:04:00.000Z',
+    actorName: '최개발',
+    version: project.currentVersion,
+  },
+  {
+    id: 'ae3ddac8-e194-4396-ab22-f28b81e040b0',
+    type: 'VERSION_PUBLISHED',
+    createdAt: '2026-11-08T23:59:00.000Z',
+    actorName: '김개발',
+    version: { id: '7b13b773-8835-45f0-b46f-c555b5033dc7', number: 1 },
+  },
+  {
+    id: '695d8b02-3c89-4a80-b86d-5a01e345c9a5',
+    type: 'VERSION_PUBLISHED',
+    createdAt: '2026-11-07T00:01:00.000Z',
+    actorName: '이개발',
+    version: { id: '24f86b45-afd2-4c27-a774-90586f6e8473', number: 0 },
+  },
+]
+const nextProject: ProjectDetail = {
+  ...project,
+  id: '6b62c564-585a-4f05-ae57-8d6b3bc5a47f',
+  name: '다음 프로젝트',
+  currentVersion: null,
+}
+const projectUrl = `/api/projects/${project.id}`
+const activityUrl = `${projectUrl}/activity`
+const nextProjectUrl = `/api/projects/${nextProject.id}`
+const activityPath = `/projects/${project.id}/activity`
+const nextActivityPath = `/projects/${nextProject.id}/activity`
+const responses = new Map<string, () => Response | Promise<Response>>()
+const fetchMock = vi.fn<typeof fetch>()
+
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+const CurrentPath = () => {
+  const { pathname, search } = useLocation()
+  return <output aria-label="현재 주소">{pathname + search}</output>
+}
+const renderActivity = (path = activityPath, basename = '/') => {
+  const prefix = basename === '/' ? '' : basename
+  return render(
+    <MemoryRouter basename={basename} initialEntries={[`${prefix}${path}`]}>
+      <CurrentPath />
+      <Link to={nextActivityPath}>다른 프로젝트 일지로</Link>
+      <App />
+    </MemoryRouter>,
+  )
+}
+
+beforeEach(() => {
+  responses.clear()
+  responses.set('/api/auth/me', () => Response.json(user))
+  responses.set(projectUrl, () => Response.json(project))
+  responses.set(activityUrl, () => Response.json(items))
+  responses.set(nextProjectUrl, () => Response.json(nextProject))
+  responses.set(`${nextProjectUrl}/activity`, () => Response.json([]))
+  fetchMock.mockReset().mockImplementation(async (input) => {
+    const respond = responses.get(String(input))
+    if (!respond) throw new Error(`예상하지 않은 요청: ${String(input)}`)
+    return respond()
+  })
+  vi.stubGlobal('fetch', fetchMock)
+})
+
+afterEach(() => vi.unstubAllGlobals())
+
+describe('ActivityPage 기록 표시', () => {
+  it('서버가 준 최신순으로 이름과 초안·1차·2차 문장을 표시한다', async () => {
+    renderActivity()
+    const list = await screen.findByRole('list')
+    const rows = within(list).getAllByRole('listitem')
+
+    expect(rows.map((row) => row.querySelector('span')?.textContent)).toEqual([
+      '최개발님이 2차를 게시했어요',
+      '김개발님이 1차를 게시했어요',
+      '이개발님이 초안을 게시했어요',
+    ])
+    expect(fetchMock.mock.calls.map(([url]) => url).sort()).toEqual(['/api/auth/me', projectUrl, activityUrl].sort())
+  })
+
+  it('같은 시각의 기록도 서버 순서를 그대로 유지한다', async () => {
+    responses.set(activityUrl, () => Response.json([{ ...items[1], createdAt: items[0].createdAt }, items[0]]))
+    renderActivity()
+
+    const rows = within(await screen.findByRole('list')).getAllByRole('listitem')
+    expect(rows.map((row) => row.querySelector('span')?.textContent)).toEqual([
+      '김개발님이 1차를 게시했어요',
+      '최개발님이 2차를 게시했어요',
+    ])
+  })
+
+  it('각 기록의 time에 원본 시각과 ko-KR로 바꾼 시각을 표시한다', async () => {
+    renderActivity()
+    const rows = within(await screen.findByRole('list')).getAllByRole('listitem')
+    const format = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' })
+
+    rows.forEach((row, index) => {
+      const time = row.querySelector('time')
+      expect(time?.getAttribute('datetime')).toBe(items[index].createdAt)
+      expect(time?.textContent).toBe(format.format(new Date(items[index].createdAt)))
+    })
+  })
+
+  it('버전이 없는 기록은 일반 문장과 시각만 표시하고 링크를 만들지 않는다', async () => {
+    responses.set(activityUrl, () => Response.json([{ ...items[0], version: null }]))
+    renderActivity()
+
+    const row = within(await screen.findByRole('list')).getByRole('listitem')
+    expect(within(row).getByText('최개발님이 버전을 게시했어요')).toBeDefined()
+    expect(within(row).queryByRole('link')).toBeNull()
+    expect(row.querySelector('time')?.getAttribute('datetime')).toBe(items[0].createdAt)
+  })
+
+  it('기록이 없으면 빈 목록 안내를 표시한다', async () => {
+    responses.set(activityUrl, () => Response.json([]))
+    renderActivity()
+
+    expect(await screen.findByText('아직 기록이 없어요.')).toBeDefined()
+    expect(screen.queryByRole('list')).toBeNull()
+  })
+
+  it.each(['/', '/app'])('basename %s의 실제 App 경로에서 제목과 검수실 링크를 표시한다', async (basename) => {
+    renderActivity(activityPath, basename)
+
+    expect(await screen.findByRole('heading', { level: 1, name: `${project.name} 활동 일지` })).toBeDefined()
+    const prefix = basename === '/' ? '' : basename
+    expect(screen.getByRole('link', { name: '검수실' }).getAttribute('href')).toBe(`${prefix}/projects/${project.id}`)
+    const rows = screen.getAllByRole('listitem')
+    rows.forEach((row, index) => {
+      expect(within(row).getByRole('link').getAttribute('href')).toBe(
+        `${prefix}/projects/${project.id}?version=${items[index].version!.id}`,
+      )
+    })
+    expect(screen.queryByRole('heading', { name: '없는 화면이에요' })).toBeNull()
+  })
+
+  it.each([
+    { role: 'DEVELOPER' as const, basename: '/' },
+    { role: 'CLIENT' as const, basename: '/app' },
+  ])('$role도 검수실에서 활동 일지를 열고 초안 기록을 눌러 그 버전을 본다', async ({ role, basename }) => {
+    responses.set(projectUrl, () => Response.json({ ...project, myRole: role }))
+    const versions: VersionDetail[] = items.map((item) => ({
+      ...item.version!,
+      projectId: project.id,
+      status: 'IN_REVIEW',
+      publishedAt: item.createdAt,
+      summary: `${item.version!.number}번 버전 설명`,
+      testUrl: null,
+      screens: [
+        {
+          screenId: 'fdba89f1-38f6-4910-a5c7-6774a8e2f9ef',
+          name: '메인',
+          viewport: 'PC',
+          hiddenAt: null,
+          asset: { id: `photo-${item.version!.number}`, width: 1440, height: 900 },
+        },
+      ],
+    }))
+    responses.set(`${projectUrl}/versions`, () => Response.json(versions))
+    versions.forEach((version) => {
+      responses.set(`/api/versions/${version.id}`, () => Response.json(version))
+    })
+    renderActivity(`/projects/${project.id}`, basename)
+    expect(await screen.findByText('2번 버전 설명')).toBeDefined()
+    fireEvent.click(screen.getByRole('link', { name: '활동 일지' }))
+
+    expect(await screen.findByRole('heading', { name: `${project.name} 활동 일지` })).toBeDefined()
+    expect(screen.getAllByRole('listitem')).toHaveLength(3)
+    fireEvent.click(screen.getByRole('link', { name: /이개발님이 초안을 게시했어요/ }))
+
+    expect(await screen.findByText('0번 버전 설명')).toBeDefined()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(
+      `/projects/${project.id}?version=${items[2].version!.id}`,
+    )
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(items[2].version!.id)
+    expect(screen.getByRole('img', { name: '메인 · PC' }).getAttribute('src')).toBe('/api/assets/photo-0')
+    expect(screen.queryByText('2번 버전 설명')).toBeNull()
+  })
+})
+
+describe('ActivityPage 로그인과 불러오기', () => {
+  it('로그인 확인 중에는 이미 받은 일지와 프로젝트 이름을 보여 주지 않는다', async () => {
+    const pending = deferred<Response>()
+    responses.set('/api/auth/me', () => pending.promise)
+    renderActivity()
+    await act(async () => {})
+
+    expect(screen.getByText('확인하는 중이에요.')).toBeDefined()
+    expect(screen.queryByRole('list')).toBeNull()
+    expect(screen.queryByRole('heading', { name: `${project.name} 활동 일지` })).toBeNull()
+    await act(async () => pending.resolve(Response.json(user)))
+    expect(screen.getAllByRole('listitem')).toHaveLength(3)
+  })
+
+  it('로그인 확인이 401이면 실제 로그인 화면으로 이동한다', async () => {
+    responses.set('/api/auth/me', () => Response.json({}, { status: 401 }))
+    renderActivity()
+
+    expect(await screen.findByRole('heading', { name: '로그인' })).toBeDefined()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe('/login')
+    expect(screen.queryByRole('list')).toBeNull()
+  })
+
+  it.each(['서버 오류', '연결 실패'])('로그인 확인의 %s는 현재 주소에서 안내한다', async (failure) => {
+    responses.set('/api/auth/me', () => {
+      if (failure === '연결 실패') throw new TypeError('Failed to fetch')
+      return Response.json({}, { status: 500 })
+    })
+    renderActivity()
+
+    expect(await screen.findByText('불러오지 못했어요. 잠시 뒤 새로고침해 주세요')).toBeDefined()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(activityPath)
+    expect(screen.queryByRole('list')).toBeNull()
+    expect(screen.queryByRole('heading', { name: '로그인' })).toBeNull()
+  })
+
+  it.each([projectUrl, activityUrl])('%s 응답 전에는 빈 기록 안내 대신 불러오는 중이라고 표시한다', async (url) => {
+    const pending = deferred<Response>()
+    responses.set(url, () => pending.promise)
+    renderActivity()
+
+    expect(await screen.findByText('불러오는 중이에요.')).toBeDefined()
+    expect(screen.queryByText('아직 기록이 없어요.')).toBeNull()
+    expect(screen.queryByRole('list')).toBeNull()
+    await act(async () => pending.resolve(Response.json(url === projectUrl ? project : items)))
+    expect(screen.getAllByRole('listitem')).toHaveLength(3)
+  })
+
+  it.each(['not-a-uuid', '123', 'ebf058f0-dc9e-4a14-adcd-cb2712594e5z'])(
+    '틀린 id %s는 프로젝트·일지 요청 없이 없는 프로젝트로 안내한다',
+    async (id) => {
+      renderActivity(`/projects/${id}/activity`)
+
+      expect(await screen.findByRole('heading', { name: '없는 프로젝트예요' })).toBeDefined()
+      expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/auth/me')
+      expect(screen.getByRole('link', { name: '프로젝트 목록' }).getAttribute('href')).toBe('/')
+      expect(screen.queryByRole('list')).toBeNull()
+    },
+  )
+})
+
+describe.each([
+  { source: '프로젝트', url: projectUrl },
+  { source: '활동 일지', url: activityUrl },
+])('ActivityPage $source 오류', ({ url }) => {
+  it('404이면 다른 응답이 성공해도 프로젝트 이름과 기록을 숨긴다', async () => {
+    responses.set(url, () => Response.json({}, { status: 404 }))
+    renderActivity()
+
+    expect(await screen.findByRole('heading', { name: '없는 프로젝트예요' })).toBeDefined()
+    expect(screen.queryByRole('list')).toBeNull()
+    expect(screen.queryByRole('heading', { name: `${project.name} 활동 일지` })).toBeNull()
+    expect(screen.queryByText('아직 기록이 없어요.')).toBeNull()
+  })
+
+  it('401이면 현재 주소에 만료 안내를 표시하고 다시 로그인 링크로 이동한다', async () => {
+    responses.set(url, () => Response.json({}, { status: 401 }))
+    renderActivity()
+
+    expect((await screen.findByRole('alert')).textContent).toContain('로그인이 끝났어요')
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(activityPath)
+    const login = screen.getByRole('link', { name: '다시 로그인하기' })
+    expect(login.getAttribute('href')).toBe('/login')
+    expect(screen.queryByRole('list')).toBeNull()
+    fireEvent.click(login)
+    expect(await screen.findByRole('heading', { name: '로그인' })).toBeDefined()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe('/login')
+  })
+
+  it.each([
+    { status: 403, message: '잠시 뒤 다시 시도해 주세요' },
+    { status: 500, message: '잠시 뒤 다시 시도해 주세요' },
+    { status: 502, message: '잠시 뒤 다시 시도해 주세요' },
+    { status: null, message: '연결을 확인하고 다시 시도해 주세요' },
+  ])('$status 실패는 안내 문구를 표시한다', async ({ status, message }) => {
+    responses.set(url, () => {
+      if (status === null) throw new TypeError('Failed to fetch')
+      if (status === 502) return new Response('Bad Gateway', { status })
+      return Response.json({}, { status })
+    })
+    renderActivity()
+
+    expect((await screen.findByRole('alert')).textContent).toBe(message)
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(activityPath)
+    expect(screen.queryByRole('list')).toBeNull()
+    expect(screen.queryByText('아직 기록이 없어요.')).toBeNull()
+  })
+})
+
+describe('ActivityPage 프로젝트 이동', () => {
+  it('다른 일지를 불러오는 동안 이전 프로젝트의 제목과 기록을 남기지 않는다', async () => {
+    const pending = deferred<Response>()
+    responses.set(`${nextProjectUrl}/activity`, () => pending.promise)
+    renderActivity()
+    await screen.findByRole('list')
+    fireEvent.click(screen.getByRole('link', { name: '다른 프로젝트 일지로' }))
+
+    expect(screen.queryByRole('list')).toBeNull()
+    expect(screen.queryByRole('heading', { name: `${project.name} 활동 일지` })).toBeNull()
+    expect(await screen.findByText('불러오는 중이에요.')).toBeDefined()
+    await act(async () => pending.resolve(Response.json([])))
+    expect(screen.getByRole('heading', { name: `${nextProject.name} 활동 일지` })).toBeDefined()
+    expect(screen.getByText('아직 기록이 없어요.')).toBeDefined()
+    expect(screen.getByRole('link', { name: '검수실' }).getAttribute('href')).toBe(`/projects/${nextProject.id}`)
+  })
+
+  it.each(['성공', '404', '서버 오류'])('이전 일지의 늦은 %s 응답이 새 프로젝트를 덮지 않는다', async (result) => {
+    const pending = deferred<Response>()
+    responses.set(activityUrl, () => pending.promise)
+    renderActivity()
+    await screen.findByText('불러오는 중이에요.')
+    fireEvent.click(screen.getByRole('link', { name: '다른 프로젝트 일지로' }))
+    await screen.findByRole('heading', { name: `${nextProject.name} 활동 일지` })
+    await act(async () => {
+      pending.resolve(
+        result === '성공' ? Response.json(items) : Response.json({}, { status: result === '404' ? 404 : 500 }),
+      )
+    })
+
+    expect(screen.getByRole('heading', { name: `${nextProject.name} 활동 일지` })).toBeDefined()
+    expect(screen.getByText('아직 기록이 없어요.')).toBeDefined()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(nextActivityPath)
+    expect(screen.queryByRole('list')).toBeNull()
+    expect(screen.queryByRole('heading', { name: '없는 프로젝트예요' })).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it.each([401, 404, 500])('이전 프로젝트의 %s 오류가 다른 프로젝트에 남지 않는다', async (status) => {
+    responses.set(activityUrl, () => Response.json({}, { status }))
+    renderActivity()
+    await screen.findByText(
+      status === 404 ? '없는 프로젝트예요' : status === 401 ? /로그인이 끝났어요/ : '잠시 뒤 다시 시도해 주세요',
+    )
+    fireEvent.click(screen.getByRole('link', { name: '다른 프로젝트 일지로' }))
+
+    expect(await screen.findByRole('heading', { name: `${nextProject.name} 활동 일지` })).toBeDefined()
+    expect(screen.getByText('아직 기록이 없어요.')).toBeDefined()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('heading', { name: '없는 프로젝트예요' })).toBeNull()
+  })
+})
