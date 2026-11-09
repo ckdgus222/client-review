@@ -3,7 +3,7 @@ import { Link, Navigate, useParams } from 'react-router'
 import { ApiError } from '../api/client.ts'
 import { isUuid } from '../api/ids.ts'
 import { getProject, type ProjectDetail } from '../api/projects.ts'
-import { type ActivityItem, listActivity, versionLabel } from '../api/versions.ts'
+import { type ActivityItem, listActivity, timeFormat, versionLabel } from '../api/versions.ts'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { ProjectNotFound } from '../components/ProjectNotFound.tsx'
 import { useMe } from '../hooks/useMe.ts'
@@ -14,9 +14,6 @@ const toMessage = (error: unknown): ReactNode => {
   if (error.status === 401) return <SessionEnded />
   return '잠시 뒤 다시 시도해 주세요'
 }
-
-// 서버는 UTC 시각을 보내고, 화면에는 보는 사람 컴퓨터의 시간대로 "2026. 11. 9. 오후 3:04"처럼 보인다.
-const timeFormat = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' })
 
 // 서버는 사건 종류(type)만 보내고 문장은 화면이 만든다. 지금 사건은 게시 하나다.
 const describe = ({ actorName, version }: ActivityItem) => {

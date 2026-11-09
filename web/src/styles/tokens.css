@@ -19,6 +19,9 @@
   /* 누를 수 없는 버튼과 입력칸 */
   --color-disabled-bg: #eeeeee;
   --color-disabled-text: #adadad;
+  /* 검수실: 지금 고른 화면·현재 버전 표시의 선과 글자, 흰 사진 뒤의 회색 바탕 */
+  --color-review-selected: #6a7566;
+  --color-canvas: #e9e9e6;
 
   --space-1: 4px;
   --space-2: 8px;

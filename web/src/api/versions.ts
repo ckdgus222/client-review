@@ -84,5 +84,9 @@ export const listActivity = async (projectId: string): Promise<ActivityItem[]> =
 // 번호 없는 버전처럼 보이니, 번호가 있는지는 `number !== null`로 본다.
 export const versionLabel = (number: number) => (number === 0 ? '초안' : `${number}차`)
 
+// 서버는 UTC 시각을 보내고, 화면에는 보는 사람 컴퓨터의 시간대로 "2026. 11. 9. 오후 3:04"처럼 보인다.
+// 활동 일지와 검수실이 같은 모양으로 보이게 함께 쓴다.
+export const timeFormat = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' })
+
 // 요청하지 않고 주소만 만든다. <img src>에 넣으면 브라우저가 쿠키를 붙여 받고, 바뀌지 않은 사진은 다시 받지 않는다.
 export const assetUrl = (assetId: string) => `/api/assets/${encodeURIComponent(assetId)}`

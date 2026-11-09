@@ -1,24 +1,19 @@
-/* 사진을 크게 보여 주려고 목록·설정 화면보다 넓은 흰 판이다. */
+/* 사진을 크게 보여 주려고 PageLayout의 바깥 여백을 지우고 화면 끝까지 쓴다(시안 "모노 인덱스").
+   값은 PageLayout.module.css .main의 padding과 같다. 그쪽을 바꾸면 함께 바꾼다.
+   --gutter는 이 화면 안쪽의 양옆 여백이다. 좁은 화면에서는 이 값 하나만 줄인다. */
 .room {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  max-width: 72rem;
-  margin: var(--space-4) auto 0;
-  padding: var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+  --gutter: var(--space-4);
+  margin: calc(var(--space-4) * -1);
   background: var(--color-surface);
 }
 
-/* 기본 바깥 여백이 gap에 더해지지 않게 지운다. */
-.room p,
-.room h1,
-.room h2 {
+/* 기본 바깥 여백을 지운다. :where는 우선순위가 0이라 아래 클래스의 여백이 이긴다. */
+.room :where(p, h1, h2) {
   margin: 0;
 }
 
 .room h1 {
+  font-size: var(--font-size-lg);
   overflow-wrap: anywhere;
 }
 
@@ -26,27 +21,38 @@
   font-size: var(--font-size-md);
 }
 
-/* 링크 글자만 눌리게 한다. 줄 전체로 늘어나면 빈 곳을 눌러도 다른 화면으로 간다. */
-.room > a {
-  align-self: flex-start;
-}
-
-/* 제목은 왼쪽, 링크 묶음은 오른쪽이다. 좁은 화면에서는 링크가 다음 줄로 내려간다. */
+/* 위쪽 줄: 왼쪽은 제목과 버전, 오른쪽은 메뉴다. 좁은 화면에서는 메뉴가 다음 줄로 내려간다. */
 .top {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--gutter);
+}
+
+.heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
 }
 
 .links {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
+  font-size: var(--font-size-sm);
 }
 
-.versionBar {
+/* 손가락으로 누르기 쉽게 높이를 44px로 키운다. */
+.links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+.versionControl {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -71,55 +77,126 @@
   font-weight: 400;
 }
 
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+}
+
+.status[data-current='true'] {
+  color: var(--color-review-selected);
+}
+
+.dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+.status[data-current='true'] .dot {
+  background: currentColor;
+}
+
+.notice {
+  margin: 0 var(--gutter) var(--space-3);
+  padding: var(--space-3);
+  border-left: 2px solid var(--color-review-selected);
+  background: var(--color-bg);
+  font-size: var(--font-size-sm);
+}
+
+/* 설명, 게시 시각, 테스트 주소를 한 줄에 둔다. */
+.info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: 0 var(--gutter) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+}
+
 /* 개발자가 줄을 나눠 쓴 설명을 그대로 보여 준다. */
 .summary {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-/* 왼쪽 화면 목록, 오른쪽 큰 사진이다. 좁은 화면에서는 목록이 사진 위로 올라간다. */
-.body {
-  display: grid;
-  grid-template-columns: 14rem minmax(0, 1fr);
-  gap: var(--space-3);
-  align-items: start;
+.hint {
+  color: var(--color-text-muted);
 }
 
-@media (max-width: 48rem) {
-  .body {
-    grid-template-columns: minmax(0, 1fr);
-  }
+/* 왼쪽 화면 목록, 가운데 큰 사진이다. 오른쪽 쪽지 칸은 5번 기능에서 더한다. */
+.workspace {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr);
+  min-height: 74vh;
 }
 
 .screens {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   margin: 0;
-  padding: 0;
+  padding: var(--space-3) var(--space-2);
   list-style: none;
-  border-top: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg);
 }
 
 .screens button {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
   width: 100%;
   min-height: 44px;
   padding: var(--space-2);
-  border: 0;
-  border-bottom: 1px solid var(--color-border);
-  background: transparent;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
   color: var(--color-text);
+  font-size: var(--font-size-sm);
   text-align: left;
   overflow-wrap: anywhere;
   cursor: pointer;
 }
 
-/* 지금 보고 있는 화면이다. 색만으로 구분하지 않게 굵기도 바꾼다. */
+/* 지금 보고 있는 화면이다. 색만으로 구분하지 않게 굵기도 바꾼다.
+   outline은 키보드 포커스 표시가 쓰므로 선은 box-shadow로 한 겹 더 그린다. */
 .screens button[aria-pressed='true'] {
-  background: var(--color-bg);
+  border-color: var(--color-review-selected);
+  box-shadow: inset 0 0 0 1px var(--color-review-selected);
   font-weight: 600;
 }
 
+/* 웹 화면 사진은 위쪽이 중요해서 위에 맞춰 자른다. */
+.thumbnail {
+  width: 100%;
+  aspect-ratio: 2.2;
+  object-fit: cover;
+  object-position: top;
+  background: var(--color-canvas);
+}
+
+/* 흰 사진이 바탕과 섞이지 않게 회색 바탕 위에 둔다. */
+.canvas {
+  padding: 0 var(--gutter) var(--gutter);
+  background: var(--color-canvas);
+}
+
+.caption {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  font-size: var(--font-size-sm);
+}
+
 .photo {
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
+  background: var(--color-surface);
 }
 
 /* 판보다 큰 사진은 폭에 맞춰 줄인다. width·height 속성은 사진이 오기 전에 자리를 잡아 화면이 덜컹거리지 않게 한다. */
@@ -128,4 +205,60 @@
   max-width: 100%;
   height: auto;
   margin: 0 auto;
+}
+
+/* 안내·오류·불러오는 중 문구 */
+.message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--gutter);
+  border-top: 1px solid var(--color-border);
+}
+
+/* 다른 화면으로 가는 링크라 Button 대신 Link를 주 버튼 모양으로 보인다.
+   값은 Button.module.css의 .button·.primary와 같다. 그쪽을 바꾸면 함께 바꾼다. */
+.messageAction {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* 1200px 이하: 화면 목록이 작은 사진 없이 사진 위의 버튼 줄이 된다. */
+@media (max-width: 75rem) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+
+  .screens {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: var(--space-3) var(--gutter);
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .screens button {
+    justify-content: center;
+  }
+
+  .thumbnail {
+    display: none;
+  }
+}
+
+/* 768px 이하: 양옆 여백을 줄여 사진을 조금 더 크게 보여 준다. */
+@media (max-width: 48rem) {
+  .room {
+    --gutter: var(--space-3);
+  }
 }

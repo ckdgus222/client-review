@@ -7,8 +7,10 @@ import {
   assetUrl,
   getVersion,
   listVersions,
+  timeFormat,
   versionLabel,
   type VersionDetail,
+  type VersionScreen,
   type VersionSummary,
 } from '../api/versions.ts'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
@@ -27,60 +29,91 @@ const isNotFound = (error: unknown) => error instanceof ApiError && error.status
 // 어떤 버전을 불러왔는지 함께 적어 둔다. 버전을 바꾼 직후에는 id가 달라서 이전 버전 화면을 보여 주지 않는다.
 type LoadedVersion = { versionId: string; detail?: VersionDetail; missing?: boolean; error?: ReactNode }
 
-type VersionViewProps = {
-  version: VersionDetail
+type VersionPickerProps = {
+  versionId: string
   versions: VersionSummary[]
-  selectedScreenId?: string
+  isCurrent: boolean
   onSelectVersion: (versionId: string) => void
+}
+
+// 제목 옆에 두는 버전 고르기와 상태 표시다.
+const VersionPicker = ({ versionId, versions, isCurrent, onSelectVersion }: VersionPickerProps) => (
+  <div className={styles.versionControl}>
+    <label className={styles.versionPicker}>
+      버전
+      <select value={versionId} onChange={(event) => onSelectVersion(event.target.value)}>
+        {/* 개발자 목록에는 게시 전 버전도 오는데, 검수실은 게시한 버전만 고른다. */}
+        {versions.map(
+          (item) =>
+            item.number !== null && (
+              <option key={item.id} value={item.id}>
+                {versionLabel(item.number)}
+              </option>
+            ),
+        )}
+      </select>
+    </label>
+    {/* 색만으로 구분하지 않게 글자와 점 모양(채운 점, 빈 점)도 함께 바뀐다. */}
+    <span className={styles.status} data-current={isCurrent}>
+      <span className={styles.dot} aria-hidden="true" />
+      {isCurrent ? '검수 중' : '읽기 전용'}
+    </span>
+  </div>
+)
+
+type VersionViewProps = {
+  projectId: string
+  version: VersionDetail
+  selected?: VersionScreen
+  isCurrent: boolean
   onSelectScreen: (screenId: string) => void
 }
 
-const VersionView = ({ version, versions, selectedScreenId, onSelectVersion, onSelectScreen }: VersionViewProps) => {
-  // 버전을 바꿔도 같은 화면(예: 메인 · PC)을 이어서 보여 줘서, 차수끼리 비교하기 쉽다. 그 화면이 없으면 첫 화면이다.
-  const selected = version.screens.find((screen) => screen.screenId === selectedScreenId) ?? version.screens[0]
-
-  return (
-    <>
-      <div className={styles.versionBar}>
-        <label className={styles.versionPicker}>
-          버전
-          <select
-            value={version.id}
-            onChange={(event) => {
-              // 처음에 저절로 보인 첫 화면도 "보던 화면"으로 붙잡아 둔다. 안 그러면 새 버전의 첫 화면으로 바뀐다.
-              if (selected) onSelectScreen(selected.screenId)
-              onSelectVersion(event.target.value)
-            }}
-          >
-            {/* 개발자 목록에는 게시 전 버전도 오는데, 검수실은 게시한 버전만 고른다. */}
-            {versions.map(
-              (item) =>
-                item.number !== null && (
-                  <option key={item.id} value={item.id}>
-                    {versionLabel(item.number)}
-                  </option>
-                ),
-            )}
-          </select>
-        </label>
-        {version.testUrl && (
-          <a href={version.testUrl} target="_blank" rel="noreferrer">
-            테스트 주소
-          </a>
-        )}
-      </div>
+const VersionView = ({ projectId, version, selected, isCurrent, onSelectScreen }: VersionViewProps) => (
+  <>
+    {!isCurrent && (
+      <p className={styles.notice}>
+        지난 버전이에요. 읽기만 할 수 있어요. <Link to={`/projects/${projectId}`}>최신 버전 보기</Link>
+      </p>
+    )}
+    <div className={styles.info}>
       {version.summary && <p className={styles.summary}>{version.summary}</p>}
-      <div className={styles.body}>
-        <ul className={styles.screens}>
-          {version.screens.map((screen) => (
-            <li key={screen.screenId}>
-              <button type="button" aria-pressed={screen === selected} onClick={() => onSelectScreen(screen.screenId)}>
-                {screenLabel(screen)}
-              </button>
-            </li>
-          ))}
-        </ul>
-        {selected && (
+      {version.publishedAt && (
+        <span className={styles.hint}>{timeFormat.format(new Date(version.publishedAt))} 게시</span>
+      )}
+      {version.testUrl && (
+        <a href={version.testUrl} target="_blank" rel="noreferrer">
+          테스트 주소
+        </a>
+      )}
+    </div>
+    <div className={styles.workspace}>
+      <ul className={styles.screens}>
+        {version.screens.map((screen, index) => (
+          <li key={screen.screenId}>
+            <button type="button" aria-pressed={screen === selected} onClick={() => onSelectScreen(screen.screenId)}>
+              {/* 화면 이름은 버튼 글자가 알려 줘서 작은 사진은 빈 alt다. 번호도 읽지 않게 숨긴다.
+                  1200px 이하에서는 작은 사진을 숨기는데, lazy라서 숨긴 사진은 받지 않는다. */}
+              <img className={styles.thumbnail} src={assetUrl(screen.asset.id)} alt="" loading="lazy" />
+              <span>
+                <strong aria-hidden="true">{String(index + 1).padStart(2, '0')}</strong> {screenLabel(screen)}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {selected && (
+        <div className={styles.canvas}>
+          <p className={styles.caption}>
+            {/* 검수실에는 게시한 버전만 와서 번호가 늘 있다. 타입이 null을 허용해서 확인만 한다. */}
+            <span>
+              {version.number !== null && `${versionLabel(version.number)} · `}
+              {screenLabel(selected)}
+            </span>
+            <span>
+              사진 {version.screens.indexOf(selected) + 1} / {version.screens.length}
+            </span>
+          </p>
           <div className={styles.photo}>
             <img
               src={assetUrl(selected.asset.id)}
@@ -89,11 +122,11 @@ const VersionView = ({ version, versions, selectedScreenId, onSelectVersion, onS
               alt={screenLabel(selected)}
             />
           </div>
-        )}
-      </div>
-    </>
-  )
-}
+        </div>
+      )}
+    </div>
+  </>
+)
 
 const ReviewRoom = ({ id }: { id: string }) => {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -157,25 +190,58 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 현재 버전은 가장 최근에 게시한 버전이라, 다음 차수는 그 번호 + 1이다.
   const nextLabel = versionLabel(project.currentVersion ? project.currentVersion.number + 1 : 0)
   const current = loaded?.versionId === versionId ? loaded : undefined
+  const detail = current?.detail
+  // 버전을 바꿔도 같은 화면(예: 메인 · PC)을 이어서 보여 줘서, 차수끼리 비교하기 쉽다. 그 화면이 없으면 첫 화면이다.
+  const selected = detail?.screens.find((screen) => screen.screenId === selectedScreenId) ?? detail?.screens[0]
+  const isCurrent = detail?.id === project.currentVersion?.id
+
+  const selectVersion = (nextId: string) => {
+    // 처음에 저절로 보인 첫 화면도 "보던 화면"으로 붙잡아 둔다. 안 그러면 새 버전의 첫 화면으로 바뀐다.
+    if (selected) setSelectedScreenId(selected.screenId)
+    setSearchParams({ version: nextId })
+  }
 
   const renderBody = () => {
-    if (versionId === undefined) return <p>아직 게시한 버전이 없어요.</p>
-    if (!isUuid(versionId) || current?.missing) {
+    if (versionId === undefined) {
       return (
-        <>
-          <h2>없는 버전이에요</h2>
-          <Link to={`/projects/${id}`}>최신 버전 보기</Link>
-        </>
+        <div className={styles.message}>
+          <h2>아직 게시한 버전이 없어요.</h2>
+          {isDeveloper ? (
+            <>
+              <p>화면 사진을 준비해서 첫 버전을 게시해 주세요.</p>
+              <Link className={styles.messageAction} to={`/projects/${id}/draft`}>
+                {nextLabel} 준비
+              </Link>
+            </>
+          ) : (
+            <p>개발자가 버전을 게시하면 여기서 확인할 수 있어요.</p>
+          )}
+        </div>
       )
     }
-    if (current?.error) return <ErrorText message={current.error} />
-    if (!current?.detail) return <p>불러오는 중이에요.</p>
+    if (!isUuid(versionId) || current?.missing) {
+      return (
+        <div className={styles.message}>
+          <h2>없는 버전이에요</h2>
+          <p>주소가 맞는지 확인해 주세요.</p>
+          <Link to={`/projects/${id}`}>최신 버전 보기</Link>
+        </div>
+      )
+    }
+    if (current?.error) {
+      return (
+        <div className={styles.message}>
+          <ErrorText message={current.error} />
+        </div>
+      )
+    }
+    if (!detail) return <p className={styles.message}>불러오는 중이에요.</p>
     return (
       <VersionView
-        version={current.detail}
-        versions={versions}
-        selectedScreenId={selectedScreenId}
-        onSelectVersion={(nextId) => setSearchParams({ version: nextId })}
+        projectId={id}
+        version={detail}
+        selected={selected}
+        isCurrent={isCurrent}
         onSelectScreen={setSelectedScreenId}
       />
     )
@@ -183,10 +249,15 @@ const ReviewRoom = ({ id }: { id: string }) => {
 
   return (
     <section className={styles.room}>
-      <Link to="/">프로젝트 목록</Link>
       <div className={styles.top}>
-        <h1>{project.name}</h1>
+        <div className={styles.heading}>
+          <h1>{project.name}</h1>
+          {detail && (
+            <VersionPicker versionId={detail.id} versions={versions} isCurrent={isCurrent} onSelectVersion={selectVersion} />
+          )}
+        </div>
         <nav className={styles.links}>
+          <Link to="/">프로젝트 목록</Link>
           <Link to={`/projects/${id}/activity`}>활동 일지</Link>
           {isDeveloper && <Link to={`/projects/${id}/draft`}>{nextLabel} 준비</Link>}
           {isDeveloper && <Link to={`/projects/${id}/settings`}>설정</Link>}
