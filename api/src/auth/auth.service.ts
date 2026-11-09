@@ -105,6 +105,8 @@ export class AuthService {
         INSERT INTO sessions (user_id, token_hash, expires_at)
         VALUES (${sessionUser.id}::uuid, ${hashSessionToken(token)}, now() + interval '7 days')
       `;
+      // 마지막 접속은 로그인할 때 바로 적는다. 아래 5분 규칙만 쓰면 로그인하고 5분 안에 로그아웃한 사람은 기록이 없다.
+      await tx.$executeRaw`UPDATE users SET last_seen_at = now() WHERE id = ${sessionUser.id}::uuid`;
       return sessionUser;
     });
 
@@ -126,10 +128,15 @@ export class AuthService {
     const { is_stale, ...user } = found;
     // 요청마다 DB에 쓰지 않으려고 5분이 지났을 때만 바꾼다.
     // UPDATE에도 5분 조건을 다시 걸어, 동시에 여러 요청이 와도 한 번만 바뀐다.
+    // 사용자의 마지막 접속도 같은 문장에서 고친다. 세션 줄은 로그아웃하면 지워져서 그 시각이 사라지기 때문이다.
     if (is_stale) {
       await this.prisma.$executeRaw`
-        UPDATE sessions SET last_seen_at = now()
-        WHERE token_hash = ${tokenHash} AND last_seen_at < now() - interval '5 minutes'
+        WITH touched AS (
+          UPDATE sessions SET last_seen_at = now()
+          WHERE token_hash = ${tokenHash} AND last_seen_at < now() - interval '5 minutes'
+          RETURNING user_id
+        )
+        UPDATE users SET last_seen_at = now() WHERE id IN (SELECT user_id FROM touched)
       `;
     }
 

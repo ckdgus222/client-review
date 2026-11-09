@@ -336,7 +336,10 @@ describe('AuthService.verifyCode', () => {
       user: { id: user.id, email, name: user.name },
       token: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
     });
-    expect(await prisma.user.findMany()).toEqual([user]);
+    const users = await prisma.user.findMany();
+    expect(users).toEqual([{ ...user, lastSeenAt: expect.any(Date) }]);
+    expect(users[0].lastSeenAt!.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(users[0].lastSeenAt!.getTime()).toBeLessThanOrEqual(after.getTime());
     const sessions = await prisma.session.findMany();
     expect(sessions).toHaveLength(1);
     const [session] = sessions;
@@ -363,14 +366,21 @@ describe('AuthService.verifyCode', () => {
   it('새 사용자는 앞자리 0이 있는 코드와 이름으로 가입하고 세션을 받는다', async () => {
     await service.requestCode(email);
     expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(email, code);
+    const [{ now: before }] = await prisma.$queryRaw<{ now: Date }[]>`SELECT now()`;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2000-01-01T00:00:00Z'));
 
     const result = await service.verifyCode(email, sendLoginCode.mock.calls[0][1], name);
 
+    const [{ now: after }] = await prisma.$queryRaw<{ now: Date }[]>`SELECT now()`;
     expect(result).toEqual({
       user: { id: expect.any(String), email, name },
       token: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
     });
-    expect(await prisma.user.findMany()).toEqual([expect.objectContaining(result.user)]);
+    const users = await prisma.user.findMany();
+    expect(users).toEqual([expect.objectContaining({ ...result.user, lastSeenAt: expect.any(Date) })]);
+    expect(users[0].lastSeenAt!.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(users[0].lastSeenAt!.getTime()).toBeLessThanOrEqual(after.getTime());
     expect(await prisma.session.findMany()).toEqual([
       expect.objectContaining({
         userId: result.user.id,
@@ -754,12 +764,90 @@ describe('AuthService.verifyCode', () => {
       data: { email, name: '원래 이름' },
     });
     await createLoginCode();
+    const [{ now: before }] = await prisma.$queryRaw<{ now: Date }[]>`SELECT now()`;
 
     const result = await service.verifyCode(email, code, '바꿀 이름');
 
+    const [{ now: after }] = await prisma.$queryRaw<{ now: Date }[]>`SELECT now()`;
     expect(result.user).toEqual({ id: user.id, email, name: user.name });
-    expect(await prisma.user.findMany()).toEqual([user]);
+    const users = await prisma.user.findMany();
+    expect(users).toEqual([{ ...user, lastSeenAt: expect.any(Date) }]);
+    expect(users[0].lastSeenAt!.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(users[0].lastSeenAt!.getTime()).toBeLessThanOrEqual(after.getTime());
     expect(await prisma.session.findMany()).toEqual([expect.objectContaining({ userId: user.id })]);
+  });
+
+  it.each(['새 사용자', '기존 사용자'])('%s가 로그인하고 5분 안에 로그아웃해도 접속 기록은 남는다', async (state) => {
+    const otherUser = await prisma.user.create({
+      data: { email: 'other@example.com', name: '다른 사용자' },
+    });
+    if (state === '기존 사용자') {
+      await prisma.$executeRaw`
+        INSERT INTO users (email, name, last_seen_at)
+        VALUES (${email}, ${name}, now() - interval '1 day')
+      `;
+    }
+    await createLoginCode();
+    const [{ now: before }] = await prisma.$queryRaw<{ now: Date }[]>`SELECT now()`;
+
+    const result = await service.verifyCode(email, code, name);
+
+    const [{ now: after }] = await prisma.$queryRaw<{ now: Date }[]>`SELECT now()`;
+    const loggedInUser = await prisma.user.findUniqueOrThrow({ where: { email } });
+    expect(loggedInUser.lastSeenAt).toBeInstanceOf(Date);
+    expect(loggedInUser.lastSeenAt!.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(loggedInUser.lastSeenAt!.getTime()).toBeLessThanOrEqual(after.getTime());
+    expect(await prisma.user.findUniqueOrThrow({ where: { id: otherUser.id } })).toEqual(otherUser);
+    const session = await prisma.session.findUniqueOrThrow({
+      where: { tokenHash: sessionTokens.hashSessionToken(result.token) },
+    });
+    expect(after.getTime() - session.lastSeenAt.getTime()).toBeLessThan(300_000);
+
+    await service.deleteSession(result.token);
+
+    expect(await prisma.session.count()).toBe(0);
+    await expect(service.findSessionUser(result.token)).resolves.toBeNull();
+    expect(await prisma.user.findUniqueOrThrow({ where: { email } })).toEqual(loggedInUser);
+  });
+
+  it('기존 사용자가 틀린 코드로 로그인하면 마지막 접속 시각을 바꾸지 않는다', async () => {
+    await prisma.$executeRaw`
+      INSERT INTO users (email, name, last_seen_at)
+      VALUES (${email}, ${name}, now() - interval '1 day')
+    `;
+    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+    await createLoginCode();
+
+    const error = await service.verifyCode(email, wrongCode).catch((error: unknown) => error);
+
+    expectCodeError(error, 'CODE_WRONG');
+    expect(await prisma.user.findMany()).toEqual([user]);
+    expect(await prisma.session.count()).toBe(0);
+  });
+
+  it('기존 사용자의 세션 저장이 실패하면 마지막 접속 시각과 코드 사용을 되돌린다', async () => {
+    await prisma.$executeRaw`
+      INSERT INTO users (email, name, last_seen_at)
+      VALUES (${email}, ${name}, now() - interval '1 day')
+    `;
+    const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+    await createLoginCode();
+    const token = sessionTokens.createSessionToken();
+    await prisma.$executeRaw`
+      INSERT INTO sessions (user_id, token_hash, expires_at)
+      VALUES (${user.id}::uuid, ${sessionTokens.hashSessionToken(token)}, now() + interval '7 days')
+    `;
+    const sessions = await prisma.session.findMany();
+    vi.spyOn(sessionTokens, 'createSessionToken').mockReturnValue(token);
+
+    await expect(service.verifyCode(email, code)).rejects.toThrow();
+
+    expect(await prisma.user.findMany()).toEqual([user]);
+    expect(await prisma.session.findMany()).toEqual(sessions);
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({
+      attempts: 1,
+      usedAt: null,
+    });
   });
 });
 
@@ -806,6 +894,9 @@ describe('AuthService.findSessionUser', () => {
       data: { email: 'session@example.com', name: '세션 사용자' },
       select: { id: true, email: true, name: true },
     });
+    await prisma.$executeRaw`
+      UPDATE users SET last_seen_at = now() - interval '1 hour' WHERE id = ${user.id}::uuid
+    `;
   });
 
   afterEach(() => {
@@ -829,10 +920,12 @@ describe('AuthService.findSessionUser', () => {
     '저장되지 않은 토큰 %j로 다른 세션을 찾거나 바꾸지 못한다',
     async (token) => {
       const before = await createSession(user.id, sessionId, 360);
+      const userBefore = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
 
       await expect(service.findSessionUser(token)).resolves.toBeNull();
 
       expect(await prisma.session.findMany()).toEqual([before]);
+      expect(await prisma.user.findMany()).toEqual([userBefore]);
     },
   );
 
@@ -858,18 +951,22 @@ describe('AuthService.findSessionUser', () => {
 
   it('1초 전에 만료된 세션은 null이고 마지막 사용 시각을 갱신하지 않는다', async () => {
     const before = await createSession(user.id, sessionId, 360, -1);
+    const userBefore = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
 
     await expect(service.findSessionUser(sessionId)).resolves.toBeNull();
 
     expect(await prisma.session.findMany()).toEqual([before]);
+    expect(await prisma.user.findMany()).toEqual([userBefore]);
   });
 
   it('24시간 1초 동안 쓰지 않은 세션은 null이고 되살리지 않는다', async () => {
     const before = await createSession(user.id, sessionId, 24 * 60 * 60 + 1);
+    const userBefore = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
 
     await expect(service.findSessionUser(sessionId)).resolves.toBeNull();
 
     expect(await prisma.session.findMany()).toEqual([before]);
+    expect(await prisma.user.findMany()).toEqual([userBefore]);
   });
 
   it('24시간이 되기 1분 전인 세션은 사용자를 돌려준다', async () => {
@@ -878,8 +975,9 @@ describe('AuthService.findSessionUser', () => {
     await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
   });
 
-  it('6분 지난 세션은 마지막 사용 시각만 DB의 현재 시각으로 갱신한다', async () => {
+  it('6분 지난 세션은 세션과 사용자의 마지막 사용 시각만 DB의 현재 시각으로 갱신한다', async () => {
     const before = await createSession(user.id, sessionId, 360);
+    const userBefore = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     const [{ now: startedAt }] = await prisma.$queryRaw<{ now: Date }[]>`
       SELECT now()
     `;
@@ -897,13 +995,17 @@ describe('AuthService.findSessionUser', () => {
     expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(finishedAt.getTime());
     // 활동해도 최초 만료 시각(최대 7일)은 늘어나지 않는다.
     expect(after).toEqual({ ...before, lastSeenAt: after.lastSeenAt });
+    const userAfter = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(userAfter).toEqual({ ...userBefore, lastSeenAt: after.lastSeenAt });
 
     await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
     expect(await prisma.session.findUniqueOrThrow({ where: { tokenHash } })).toEqual(after);
+    expect(await prisma.user.findMany()).toEqual([userAfter]);
   });
 
   it('조회 뒤 다른 요청이 먼저 갱신하면 마지막 사용 시각을 덮어쓰지 않는다', async () => {
     await createSession(user.id, sessionId, 360);
+    const userBefore = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     const executeRaw = prisma.$executeRaw.bind(prisma);
     // 이 호출은 await만 하므로 PrismaPromise 대신 일반 Promise로 감쌀 수 있다.
     const sessionDatabase: {
@@ -931,14 +1033,18 @@ describe('AuthService.findSessionUser', () => {
       where: { tokenHash },
     });
     expect(after.lastSeenAt).toEqual(refreshedLastSeenAt);
+    // 세션 UPDATE가 0줄이면 사용자 기록도 바뀌면 안 된다.
+    expect(await prisma.user.findMany()).toEqual([userBefore]);
   });
 
   it('4분 지난 세션은 마지막 사용 시각을 그대로 둔다', async () => {
     const before = await createSession(user.id, sessionId, 240);
+    const userBefore = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
 
     await expect(service.findSessionUser(sessionId)).resolves.toEqual(user);
 
     expect(await prisma.session.findMany()).toEqual([before]);
+    expect(await prisma.user.findMany()).toEqual([userBefore]);
   });
 
   it.each([
@@ -974,11 +1080,13 @@ describe('AuthService.findSessionUser', () => {
         const before = await tx.session.findUniqueOrThrow({
           where: { tokenHash },
         });
+        const userBefore = await tx.user.findUniqueOrThrow({ where: { id: user.id } });
         const transactionService = new AuthService(tx as PrismaService, new MailService());
 
         await expect(transactionService.findSessionUser(sessionId)).resolves.toEqual(allowed ? user : null);
 
         expect(await tx.session.findMany()).toEqual([before]);
+        expect(await tx.user.findMany()).toEqual([userBefore]);
       });
     },
   );
@@ -1007,6 +1115,10 @@ describe('AuthService.findSessionUser', () => {
         where: { id: otherUserSession.id },
       }),
     ).toEqual(otherUserSession);
+    expect(await prisma.user.findUniqueOrThrow({ where: { id: otherUser.id } })).toEqual(otherUser);
+    expect(await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).toMatchObject({
+      lastSeenAt: after.lastSeenAt,
+    });
   });
 
   it.each(['2000-01-01T00:00:00Z', '2100-01-01T00:00:00Z'])(
@@ -1036,6 +1148,9 @@ describe('AuthService.findSessionUser', () => {
       expect(after.lastSeenAt.getTime()).toBeGreaterThanOrEqual(startedAt.getTime());
       expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(finishedAt.getTime());
       expect(after).toEqual({ ...stale, lastSeenAt: after.lastSeenAt });
+      expect(await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).toMatchObject({
+        lastSeenAt: after.lastSeenAt,
+      });
       expect(await prisma.session.findUniqueOrThrow({ where: { id: fresh.id } })).toEqual(fresh);
       expect(await prisma.session.findUniqueOrThrow({ where: { id: expired.id } })).toEqual(expired);
       expect(await prisma.session.findUniqueOrThrow({ where: { id: idle.id } })).toEqual(idle);
@@ -1061,15 +1176,25 @@ describe('AuthService.findSessionUser', () => {
     expect(await prisma.session.count()).toBe(0);
   });
 
-  it('6분 지난 같은 세션을 동시에 열 번 조회해도 모두 같은 사용자를 돌려준다', async () => {
+  it('6분 지난 같은 세션을 동시에 열 번 조회해도 모두 같은 사용자를 돌려주고 한 번만 갱신한다', async () => {
     const before = await createSession(user.id, sessionId, 360);
+    const userBefore = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     const [{ now: startedAt }] = await prisma.$queryRaw<{ now: Date }[]>`
       SELECT now()
     `;
+    const executeRaw = prisma.$executeRaw.bind(prisma);
+    const updatedCounts: Promise<number>[] = [];
+    // SQL을 가짜로 처리하지 않고 실제 DB가 바꾼 줄 수를 모은다.
+    vi.spyOn(prisma, '$executeRaw').mockImplementation((...args) => {
+      const result = executeRaw(...args);
+      updatedCounts.push(result);
+      return result;
+    });
 
     const results = await Promise.all(Array.from({ length: 10 }, () => service.findSessionUser(sessionId)));
 
     expect(results).toEqual(Array.from({ length: 10 }, () => user));
+    expect((await Promise.all(updatedCounts)).reduce((total, count) => total + count, 0)).toBe(1);
     const [{ now: finishedAt }] = await prisma.$queryRaw<{ now: Date }[]>`
       SELECT now()
     `;
@@ -1079,5 +1204,6 @@ describe('AuthService.findSessionUser', () => {
     expect(after.lastSeenAt.getTime()).toBeGreaterThanOrEqual(startedAt.getTime());
     expect(after.lastSeenAt.getTime()).toBeLessThanOrEqual(finishedAt.getTime());
     expect(await prisma.session.findMany()).toEqual([{ ...before, lastSeenAt: after.lastSeenAt }]);
+    expect(await prisma.user.findMany()).toEqual([{ ...userBefore, lastSeenAt: after.lastSeenAt }]);
   });
 });
