@@ -167,7 +167,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
         if (ignore) return
         // 두 프로젝트의 멤버면 다른 프로젝트 버전도 서버가 준다. 게시 전 버전도 개발자에게는 온다.
         // 둘 다 이 검수실의 버전이 아니라서 없는 버전으로 본다.
-        const belongsHere = detail.projectId === id && detail.status !== 'DRAFT'
+        // 주소의 id는 대문자여도 서버가 받지만, 서버가 돌려주는 projectId는 늘 소문자라 맞춰서 비교한다.
+        const belongsHere = detail.projectId === id.toLowerCase() && detail.status !== 'DRAFT'
         setLoaded(belongsHere ? { versionId, detail } : { versionId, missing: true })
       })
       .catch((caught) => {

@@ -334,6 +334,77 @@ describe('ReviewRoomPage 화면과 버전', () => {
   )
 })
 
+describe('ReviewRoomPage 대문자 프로젝트 주소', () => {
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    '%s에게 현재 버전의 사진과 버전 고르기를 보여 주고 초안으로 바꿀 수 있다',
+    async (myRole) => {
+      vi.mocked(getProject).mockResolvedValueOnce({ ...project, myRole })
+      vi.mocked(listVersions).mockResolvedValueOnce(myRole === 'DEVELOPER' ? versions : versions.slice(1))
+      renderReview(`/projects/${project.id.toUpperCase()}`)
+
+      const image = await screen.findByRole('img', { name: '메인 · PC' })
+      expect(image.getAttribute('src')).toBe(`/api/assets/${currentVersion.screens[0].asset.id}`)
+      expect(screen.getByText('검수 중')).toBeDefined()
+      expect(screen.queryByRole('heading', { name: '없는 버전이에요' })).toBeNull()
+      const picker = screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' })
+      expect(picker.value).toBe(currentVersion.id)
+      expect(
+        within(picker)
+          .getAllByRole('option')
+          .map((option) => option.textContent),
+      ).toEqual(['2차', '1차', '초안'])
+
+      fireEvent.change(picker, { target: { value: initialVersion.id } })
+
+      expect(await screen.findByText(initialVersion.summary)).toBeDefined()
+      expect(screen.getByRole('img', { name: '메인 · PC' }).getAttribute('src')).toBe('/api/assets/old-pc-photo')
+      expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(initialVersion.id)
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(
+        `/projects/${project.id.toUpperCase()}?version=${initialVersion.id}`,
+      )
+      expect(screen.queryByRole('heading', { name: '없는 버전이에요' })).toBeNull()
+    },
+  )
+
+  it.each([initialVersion, firstRevision])(
+    '같은 프로젝트의 $number번 버전을 주소로 직접 열어도 사진과 읽기 전용 안내를 보여 준다',
+    async (version) => {
+      renderReview(`/projects/${project.id.toUpperCase()}?version=${version.id}`)
+
+      const image = await screen.findByRole('img')
+      expect(image.getAttribute('src')).toBe(`/api/assets/${version.screens[0].asset.id}`)
+      expect(screen.getByText(version.summary)).toBeDefined()
+      expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(version.id)
+      expect(screen.getByText('지난 버전이에요. 읽기만 할 수 있어요.')).toBeDefined()
+      expect(screen.queryByRole('heading', { name: '없는 버전이에요' })).toBeNull()
+    },
+  )
+
+  it.each([
+    { reason: '다른 프로젝트 버전', detail: { ...firstRevision, projectId: nextProject.id } },
+    { reason: '게시 전 버전', detail: { ...currentVersion, ...draft } },
+  ])('$reason은 없는 버전으로 표시하고 사진과 설명을 숨긴다', async ({ detail }) => {
+    vi.mocked(getVersion).mockResolvedValueOnce(detail)
+    renderReview(`/projects/${project.id.toUpperCase()}?version=${detail.id}`)
+
+    expect(await screen.findByRole('heading', { name: '없는 버전이에요' })).toBeDefined()
+    expect(getVersion).toHaveBeenCalledExactlyOnceWith(detail.id)
+    expect(screen.getByText('주소가 맞는지 확인해 주세요.')).toBeDefined()
+    expect(screen.queryByRole('img')).toBeNull()
+    expect(screen.queryAllByAltText('')).toHaveLength(0)
+    expect(screen.queryByText(detail.summary, { collapseWhitespace: false })).toBeNull()
+    expect(screen.queryByRole('link', { name: '테스트 주소' })).toBeNull()
+    expect(screen.queryByRole('combobox')).toBeNull()
+
+    fireEvent.click(screen.getByRole('link', { name: '최신 버전 보기' }))
+
+    const image = await screen.findByRole('img', { name: '메인 · PC' })
+    expect(image.getAttribute('src')).toBe(`/api/assets/${currentVersion.screens[0].asset.id}`)
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(currentVersion.id)
+    expect(screen.queryByRole('heading', { name: '없는 버전이에요' })).toBeNull()
+  })
+})
+
 describe('ReviewRoomPage 시안 배치', () => {
   it('화면마다 작은 사진은 큰 사진과 같은 주소를 쓰고 빈 alt와 lazy 속성을 가진다', async () => {
     renderReview()
