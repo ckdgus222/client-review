@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { type Prisma, ProjectRole } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
@@ -67,5 +67,17 @@ export class ProjectsService {
     });
     const { approver, ...rest } = project;
     return { ...rest, myRole, approver: approver ? { memberId: approver.id, name: approver.user.name } : null };
+  }
+
+  // 같은 프로젝트의 쓰기 명령은 프로젝트 줄을 잠가서 하나씩 차례로 처리한다.
+  async lockProject(tx: Prisma.TransactionClient, projectId: string) {
+    await tx.$queryRaw`SELECT id FROM projects WHERE id = ${projectId}::uuid FOR UPDATE`;
+  }
+
+  // 개발자만 하는 쓰기 명령은 잠근 뒤 권한을 본다. 잠그기 전에 보면 그사이 바뀐 상태로 판단할 수 있다.
+  async lockForDeveloper(tx: Prisma.TransactionClient, projectId: string, userId: string) {
+    await this.lockProject(tx, projectId);
+    const role = await this.requireMemberRole(projectId, userId, tx);
+    if (role !== ProjectRole.DEVELOPER) throw new ForbiddenException('개발자만 할 수 있어요');
   }
 }

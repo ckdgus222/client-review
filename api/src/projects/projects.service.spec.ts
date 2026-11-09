@@ -38,6 +38,104 @@ describe('ProjectsService', () => {
     await module?.close();
   });
 
+  it('lockForDeveloper는 활성 개발자가 같은 트랜잭션에서 프로젝트를 변경하게 한다', async () => {
+    const project = await service.create(userId, '변경 전');
+
+    await prisma.$transaction(async (tx) => {
+      await expect(service.lockForDeveloper(tx, project.id, userId)).resolves.toBeUndefined();
+      await tx.project.update({ where: { id: project.id }, data: { name: '변경 후' } });
+    });
+
+    expect(await prisma.project.findUniqueOrThrow({ where: { id: project.id } })).toMatchObject({ name: '변경 후' });
+  });
+
+  it.each([
+    { role: 'CLIENT', revoked: false, status: 403 },
+    { role: 'CLIENT', revoked: true, status: 404 },
+    { role: 'DEVELOPER', revoked: true, status: 404 },
+    { role: 'OUTSIDER', revoked: false, status: 404 },
+    { role: 'MISSING_PROJECT', revoked: false, status: 404 },
+  ] as const)(
+    'lockForDeveloper는 $role / 철회=$revoked 요청을 $status로 거절한다',
+    async ({ role, revoked, status }) => {
+      const project = await service.create(userId, '권한 확인');
+      if (role === 'CLIENT') {
+        await prisma.projectMember.create({
+          data: { projectId: project.id, userId: otherUserId, role, revokedAt: revoked ? new Date() : null },
+        });
+      }
+      if (role === 'DEVELOPER') {
+        await prisma.projectMember.update({
+          where: { projectId_userId: { projectId: project.id, userId } },
+          data: { revokedAt: new Date() },
+        });
+      }
+      const projectId = role === 'MISSING_PROJECT' ? missingId : project.id;
+      const actorId = role === 'DEVELOPER' || role === 'MISSING_PROJECT' ? userId : otherUserId;
+
+      await expect(prisma.$transaction((tx) => service.lockForDeveloper(tx, projectId, actorId))).rejects.toMatchObject(
+        { status },
+      );
+    },
+  );
+
+  it('lockForDeveloper는 전달된 트랜잭션 안에서 아직 커밋하지 않은 역할 변경과 철회를 읽는다', async () => {
+    const project = await service.create(userId, '권한 변경');
+
+    await prisma.$transaction(async (tx) => {
+      await tx.projectMember.update({
+        where: { projectId_userId: { projectId: project.id, userId } },
+        data: { role: 'CLIENT' },
+      });
+      await expect(service.lockForDeveloper(tx, project.id, userId)).rejects.toMatchObject({ status: 403 });
+      await tx.projectMember.update({
+        where: { projectId_userId: { projectId: project.id, userId } },
+        data: { role: 'DEVELOPER', revokedAt: new Date() },
+      });
+      await expect(service.lockForDeveloper(tx, project.id, userId)).rejects.toMatchObject({ status: 404 });
+    });
+  });
+
+  it.each([
+    { role: 'CLIENT', revokedAt: null, status: 403 },
+    { role: 'DEVELOPER', revokedAt: new Date('2026-01-01T00:00:00Z'), status: 404 },
+  ] as const)(
+    'lockForDeveloper는 잠금을 기다린 뒤 바뀐 $role / $revokedAt 상태를 확인한다',
+    async ({ role, revokedAt, status }) => {
+      const project = await service.create(userId, '잠금 확인');
+      let request: Promise<unknown> | undefined;
+      let settled = false;
+
+      try {
+        await prisma.$transaction(
+          async (tx) => {
+            await tx.$queryRaw`SELECT id FROM projects WHERE id = ${project.id}::uuid FOR UPDATE`;
+            request = prisma
+              .$transaction((waiting) => service.lockForDeveloper(waiting, project.id, userId))
+              .catch((error: unknown) => error)
+              .finally(() => {
+                settled = true;
+              });
+            await new Promise<void>((resolve) => {
+              setTimeout(resolve, 200);
+            });
+            expect(settled).toBe(false);
+            await tx.projectMember.update({
+              where: { projectId_userId: { projectId: project.id, userId } },
+              data: { role, revokedAt },
+            });
+          },
+          { maxWait: 5_000, timeout: 10_000 },
+        );
+      } finally {
+        await request;
+      }
+
+      expect(await request).toMatchObject({ status });
+    },
+    20_000,
+  );
+
   it('create는 프로젝트와 만든 사람의 DEVELOPER 멤버 줄을 함께 저장하고 정해진 네 칸만 돌려준다', async () => {
     const result = await service.create(userId, '쇼핑몰 리뉴얼');
 
