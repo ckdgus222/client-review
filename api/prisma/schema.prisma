@@ -90,6 +90,8 @@ model ProjectMember {
   createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   @@unique([projectId, userId])
+  // 내 프로젝트 목록은 user_id로만 찾는다. 위 유니크 인덱스는 첫 칸이 project_id라 이 조회에 거의 쓰이지 않는다.
+  @@index([userId])
   @@map("project_members")
 }
 
@@ -150,6 +152,8 @@ model Asset {
   createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz
   versionScreens VersionScreen[]
 
+  // 사진을 올릴 때마다 프로젝트 사진 용량 합계를 계산한다.
+  @@index([projectId])
   @@map("assets")
 }
 
@@ -166,6 +170,8 @@ model VersionScreen {
   createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
 
   @@unique([versionId, screenId])
+  // 사진을 지우기 전에 다른 버전이 쓰는지 센다. 사진 줄을 지울 때 DB의 외래키 검사도 이 칸으로 찾는다.
+  @@index([assetId])
   @@map("version_screens")
 }
 
@@ -188,5 +194,7 @@ model ActivityEvent {
   version   DeliveryVersion? @relation(fields: [versionId], references: [id], onDelete: NoAction)
   createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
+  // 활동 일지는 한 프로젝트의 줄을 최신순으로 읽는다. 찾기와 정렬을 인덱스 하나로 끝낸다.
+  @@index([projectId, createdAt])
   @@map("activity_events")
 }

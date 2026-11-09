@@ -31,6 +31,29 @@ describe('버전과 사진 테이블', () => {
     await prisma.$disconnect();
   });
 
+  it.each([
+    { indexName: 'assets_project_id_idx', tableName: 'assets', columns: ['project_id'] },
+    { indexName: 'version_screens_asset_id_idx', tableName: 'version_screens', columns: ['asset_id'] },
+    { indexName: 'project_members_user_id_idx', tableName: 'project_members', columns: ['user_id'] },
+    {
+      indexName: 'activity_events_project_id_created_at_idx',
+      tableName: 'activity_events',
+      columns: ['project_id', 'created_at'],
+    },
+  ])('$indexName의 테이블·열 순서와 일반 인덱스 여부를 확인한다', async ({ indexName, tableName, columns }) => {
+    const indexes = await prisma.$queryRaw<{ schemaname: string; tablename: string; indexdef: string }[]>`
+      SELECT schemaname, tablename, indexdef
+      FROM pg_indexes
+      WHERE schemaname = current_schema() AND indexname = ${indexName}
+    `;
+
+    expect(indexes).toHaveLength(1);
+    expect(indexes[0].tablename).toBe(tableName);
+    expect(indexes[0].indexdef).toBe(
+      `CREATE INDEX ${indexName} ON ${indexes[0].schemaname}.${tableName} USING btree (${columns.join(', ')})`,
+    );
+  });
+
   it('같은 프로젝트에는 초안을 두 개 만들 수 없다', async () => {
     const project = await prisma.project.create({ data: { name: '프로젝트' } });
     const draft = await prisma.deliveryVersion.create({ data: { projectId: project.id } });
