@@ -2,10 +2,14 @@ import { type FormEvent, type ReactNode, useEffect, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router'
 import { ApiError } from '../api/client.ts'
 import { isUuid } from '../api/ids.ts'
+import { type CreatedInvitation, createInvitation } from '../api/invitations.ts'
+import { listMembers, type Member, type MemberList, revokeMember, setApprover } from '../api/members.ts'
 import {
+  type Approver,
   createScreen,
   getProject,
   hideScreen,
+  MAX_CLIENTS,
   listScreens,
   type ProjectDetail,
   type Screen,
@@ -27,6 +31,203 @@ const toMessage = (error: unknown): ReactNode => {
   if (error.code === 'SCREEN_EXISTS') return '이미 있는 화면이에요'
   if (error.status === 422) return '화면 이름은 1~40자로 써 주세요'
   return '잠시 뒤 다시 시도해 주세요'
+}
+
+// "마지막 접속: 2시간 전"처럼 보여 준다. 하루 넘게 지나면 "어제", "3일 전"이 된다.
+const relativeTime = new Intl.RelativeTimeFormat('ko', { numeric: 'auto' })
+const lastSeenLabel = (lastSeenAt: string | null) => {
+  if (!lastSeenAt) return '접속 기록 없음'
+  const minutes = Math.round((Date.parse(lastSeenAt) - Date.now()) / 60_000)
+  if (minutes > -1) return '지금'
+  if (minutes > -60) return relativeTime.format(minutes, 'minute')
+  if (minutes > -60 * 24) return relativeTime.format(Math.round(minutes / 60), 'hour')
+  return relativeTime.format(Math.round(minutes / (60 * 24)), 'day')
+}
+
+const dateFormat = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' })
+
+// 422는 작업마다 뜻이 달라서(초대는 이메일 모양, 승인자는 고를 수 없는 사람) 문구를 따로 받는다.
+// 목록과 철회는 422가 없어서 넘기지 않는다.
+const memberMessage = (error: unknown, invalidInput?: string): ReactNode => {
+  if (!(error instanceof ApiError)) return '연결을 확인하고 다시 시도해 주세요'
+  if (error.status === 401) return <SessionEnded />
+  if (error.code === 'PROJECT_FULL') return `클라이언트는 ${MAX_CLIENTS}명까지 참여할 수 있어요`
+  if (error.code === 'ALREADY_MEMBER') return '이미 참여한 사람이에요'
+  if (error.status === 422 && invalidInput) return invalidInput
+  return '잠시 뒤 다시 시도해 주세요'
+}
+
+const INVALID_EMAIL = '이메일 주소를 확인해 주세요'
+const INVALID_APPROVER = '승인자는 이 프로젝트에 참여 중인 클라이언트만 될 수 있어요'
+
+type MembersSectionProps = {
+  projectId: string
+  approver: Approver
+  onApproverChange: (approver: Approver) => void
+}
+
+// 개발자에게만 보이는 참여자·초대·승인자 칸이다. 다른 클라이언트의 이메일과 접속 시각이 보이지 않게
+// 서버도 클라이언트에게는 목록을 주지 않는다(403).
+const MembersSection = ({ projectId, approver, onApproverChange }: MembersSectionProps) => {
+  const [list, setList] = useState<MemberList>()
+  const [loadError, setLoadError] = useState<ReactNode>()
+  const [email, setEmail] = useState('')
+  const [created, setCreated] = useState<CreatedInvitation>()
+  // 새 초대를 만들면 링크가 바뀌어 '복사했어요'가 저절로 풀린다.
+  const [copiedLink, setCopiedLink] = useState<string>()
+  const [approverChoice, setApproverChoice] = useState(approver?.memberId ?? '')
+  const [busy, setBusy] = useState(false)
+  const [actionError, setActionError] = useState<ReactNode>()
+
+  useEffect(() => {
+    // 개발 모드(StrictMode)는 두 번 부른다. 정리된 쪽의 늦은 응답은 버린다.
+    let ignore = false
+    listMembers(projectId)
+      .then((loaded) => !ignore && setList(loaded))
+      .catch((caught) => !ignore && setLoadError(memberMessage(caught)))
+    return () => {
+      ignore = true
+    }
+  }, [projectId])
+
+  // 요청이 겹치면 늦게 온 목록이 앞선 결과를 덮을 수 있어서, 하나가 끝날 때까지 버튼을 모두 잠근다.
+  const run = async (work: () => Promise<void>, invalidInput?: string) => {
+    setBusy(true)
+    setActionError(undefined)
+    try {
+      await work()
+    } catch (caught) {
+      setActionError(memberMessage(caught, invalidInput))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleInvite = (event: FormEvent) => {
+    event.preventDefault()
+    run(async () => {
+      const invitation = await createInvitation(projectId, email)
+      setCreated(invitation)
+      setEmail('')
+      setList(await listMembers(projectId))
+    }, INVALID_EMAIL)
+  }
+
+  const handleRevoke = (member: Member) => {
+    const isApprover = approver?.memberId === member.id
+    const message =
+      `${member.name}님의 접근을 철회할까요? 사진과 기록을 더 이상 볼 수 없어요. 쪽지와 댓글은 남아요.` +
+      (isApprover ? ' 승인자가 비게 돼요. 새 승인자를 정해 주세요.' : '')
+    if (!window.confirm(message)) return
+    run(async () => {
+      await revokeMember(member.id)
+      if (isApprover) {
+        // 서버가 철회와 함께 승인자를 비웠다. 화면도 맞춘다.
+        onApproverChange(null)
+        setApproverChoice('')
+      } else if (approverChoice === member.id) {
+        // 저장하지 않고 골라만 둔 사람이 철회되면, 고르기 칸에 남지 않게 지금 승인자로 되돌린다.
+        setApproverChoice(approver?.memberId ?? '')
+      }
+      setList(await listMembers(projectId))
+    })
+  }
+
+  const handleApprover = (event: FormEvent) => {
+    event.preventDefault()
+    run(async () => onApproverChange(await setApprover(projectId, approverChoice || null)), INVALID_APPROVER)
+  }
+
+  // 클립보드를 쓸 수 없는 브라우저(http 주소 등)는 navigator.clipboard가 없다. 실패하면 링크를 직접 골라 복사하게 안내한다.
+  const copyLink = async (link: string) => {
+    try {
+      await navigator.clipboard.writeText(link)
+      setCopiedLink(link)
+    } catch {
+      setActionError('복사하지 못했어요. 링크를 직접 골라 복사해 주세요')
+    }
+  }
+
+  if (loadError) return <ErrorText message={loadError} />
+  if (!list) return <p>참여자를 불러오는 중이에요.</p>
+
+  const clients = list.members.filter((member) => member.role === 'CLIENT')
+  const roleLabel = (member: Member) => {
+    if (member.role === 'DEVELOPER') return '개발자'
+    return approver?.memberId === member.id ? '승인자' : '클라이언트'
+  }
+
+  return (
+    <>
+      <h2>참여자와 승인자</h2>
+      <p className={styles.hint}>
+        클라이언트는 최대 {MAX_CLIENTS}명까지 참여해요.{' '}
+        {approver ? `${approver.name}님이 최종 버전을 승인해요.` : '승인자를 정해 주세요.'}
+      </p>
+      <ul className={styles.list}>
+        {list.members.map((member) => (
+          <li key={member.id}>
+            <span className={styles.name}>
+              <strong>{member.name}</strong> {member.email}
+              <span className={styles.hint}> · 마지막 접속: {lastSeenLabel(member.lastSeenAt)}</span>
+            </span>
+            <span className={styles.role}>{roleLabel(member)}</span>
+            {member.role === 'CLIENT' && (
+              <Button variant="secondary" disabled={busy} onClick={() => handleRevoke(member)}>
+                접근 철회
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+      <p className={styles.hint}>마지막 접속은 서비스에 들어온 시각이에요. 이 프로젝트를 본 시각은 아니에요.</p>
+      {list.invitations.length > 0 && (
+        <>
+          <h3>초대 대기</h3>
+          <ul className={styles.list}>
+            {list.invitations.map((invitation) => (
+              <li key={invitation.email}>
+                <span className={styles.name}>{invitation.email}</span>
+                <span className={styles.hint}>{dateFormat.format(new Date(invitation.expiresAt))}까지</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <form className={styles.create} onSubmit={handleApprover}>
+        <label className={styles.viewport}>
+          승인자
+          <select value={approverChoice} onChange={(event) => setApproverChoice(event.target.value)} disabled={busy}>
+            {clients.map((member) => (
+              <option key={member.id} value={member.id}>
+                {member.name}
+              </option>
+            ))}
+            <option value="">지정하지 않음</option>
+          </select>
+        </label>
+        <Button type="submit" variant="secondary" disabled={busy}>
+          승인자 저장
+        </Button>
+      </form>
+      <form className={styles.create} onSubmit={handleInvite} noValidate>
+        <TextField label="클라이언트 초대 이메일" type="email" value={email} onChange={setEmail} disabled={busy} />
+        <Button type="submit" disabled={busy}>
+          초대 보내기
+        </Button>
+      </form>
+      {actionError && <ErrorText message={actionError} />}
+      {created && (
+        <div className={styles.created}>
+          <p>{created.email}에게 초대 메일을 보냈어요. 링크는 지금 한 번만 확인할 수 있어요.</p>
+          <code className={styles.link}>{created.link}</code>
+          <Button variant="secondary" onClick={() => copyLink(created.link)}>
+            {copiedLink === created.link ? '복사했어요' : '링크 복사'}
+          </Button>
+        </div>
+      )}
+    </>
+  )
 }
 
 const ProjectSettings = ({ id }: { id: string }) => {
@@ -159,6 +360,13 @@ const ProjectSettings = ({ id }: { id: string }) => {
             ))}
           </ul>
         </>
+      )}
+      {isDeveloper && (
+        <MembersSection
+          projectId={id}
+          approver={project.approver}
+          onApproverChange={(approver) => setProject({ ...project, approver })}
+        />
       )}
     </section>
   )

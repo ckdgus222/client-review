@@ -14,7 +14,8 @@
 /* 기본 바깥 여백이 gap에 더해지지 않게 지운다. */
 .panel p,
 .panel h1,
-.panel h2 {
+.panel h2,
+.panel h3 {
   margin: 0;
 }
 
@@ -27,7 +28,8 @@
   align-self: flex-start;
 }
 
-.panel h2 {
+.panel h2,
+.panel h3 {
   font-size: var(--font-size-md);
 }
 
@@ -94,4 +96,32 @@
 .name {
   flex: 1;
   overflow-wrap: anywhere;
+}
+
+.hint {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* 역할 글자 폭이 달라도 버튼 줄이 흔들리지 않게 최소 폭을 둔다. */
+.role {
+  min-width: 4.5rem;
+  font-size: var(--font-size-sm);
+}
+
+/* 초대 링크는 지금 한 번만 보여서, 복사하기 전에 눈에 띄게 따로 묶는다. */
+.created {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-left: 2px solid var(--color-review-selected);
+  background: var(--color-bg);
+}
+
+/* 긴 링크가 판 밖으로 나가지 않게 아무 곳에서나 줄을 바꾼다. */
+.link {
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-sm);
 }
