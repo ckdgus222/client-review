@@ -128,6 +128,25 @@ describe('ProjectsService', () => {
     await expect(service.listMine(userId)).resolves.toEqual([]);
   });
 
+  it('listMine은 철회된 프로젝트만 빼고 같은 멤버 줄을 복구하면 다시 보여 준다', async () => {
+    const owned = await service.create(otherUserId, '직접 만든 프로젝트');
+    const shared = await service.create(userId, '참여한 프로젝트');
+    const member = await prisma.projectMember.create({
+      data: { projectId: shared.id, userId: otherUserId, role: 'CLIENT' },
+    });
+    const before = await service.listMine(otherUserId);
+    expect(before).toHaveLength(2);
+    expect(before).toContainEqual({ ...shared, myRole: 'CLIENT' });
+
+    await prisma.projectMember.update({ where: { id: member.id }, data: { revokedAt: new Date() } });
+
+    await expect(service.listMine(otherUserId)).resolves.toEqual([owned]);
+    await expect(service.listMine(userId)).resolves.toEqual([shared]);
+    await prisma.projectMember.update({ where: { id: member.id }, data: { revokedAt: null } });
+    await expect(service.listMine(otherUserId)).resolves.toEqual(before);
+    expect(await prisma.projectMember.findUniqueOrThrow({ where: { id: member.id } })).toEqual(member);
+  });
+
   it.each(['DEVELOPER', 'CLIENT'] as const)(
     'requireMemberRole은 같은 프로젝트에서 요청한 사람의 %s 역할을 돌려준다',
     async (role) => {
@@ -154,6 +173,66 @@ describe('ProjectsService', () => {
     await expect(service.requireMemberRole(missingId, userId)).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it.each(['requireMemberRole', 'getForMember'] as const)(
+    '%s는 철회된 클라이언트에게 없는 프로젝트와 같은 404를 주고 복구하면 다시 허용한다',
+    async (method) => {
+      const project = await service.create(userId, '함께 보는 프로젝트');
+      const member = await prisma.projectMember.create({
+        data: { projectId: project.id, userId: otherUserId, role: 'CLIENT' },
+      });
+      const before = await service[method](project.id, otherUserId);
+      await prisma.projectMember.update({ where: { id: member.id }, data: { revokedAt: new Date() } });
+
+      await expect(service[method](project.id, otherUserId)).rejects.toMatchObject({
+        status: 404,
+        response: { statusCode: 404, message: '없는 프로젝트예요', error: 'Not Found' },
+      });
+      await expect(service.requireMemberRole(project.id, userId)).resolves.toBe('DEVELOPER');
+
+      await prisma.projectMember.update({ where: { id: member.id }, data: { revokedAt: null } });
+      await expect(service[method](project.id, otherUserId)).resolves.toEqual(before);
+    },
+  );
+
+  it('requireMemberRole은 전달된 트랜잭션 안에서 철회·복구한 상태를 바로 읽는다', async () => {
+    const project = await service.create(userId, '함께 보는 프로젝트');
+    const member = await prisma.projectMember.create({
+      data: { projectId: project.id, userId: otherUserId, role: 'CLIENT' },
+    });
+
+    await prisma.$transaction(async (tx) => {
+      await expect(service.requireMemberRole(project.id, otherUserId, tx)).resolves.toBe('CLIENT');
+      // 아직 커밋하지 않은 철회를 읽어야 한다. 기본 DB 연결을 쓰면 활성 멤버로 잘못 보게 된다.
+      await tx.projectMember.update({ where: { id: member.id }, data: { revokedAt: new Date() } });
+      await expect(service.requireMemberRole(project.id, otherUserId, tx)).rejects.toMatchObject({
+        status: 404,
+        response: { statusCode: 404, message: '없는 프로젝트예요', error: 'Not Found' },
+      });
+      await tx.projectMember.update({ where: { id: member.id }, data: { revokedAt: null } });
+      await expect(service.requireMemberRole(project.id, otherUserId, tx)).resolves.toBe('CLIENT');
+    });
+  });
+
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    'getForMember는 %s에게 승인자의 멤버 id와 이름만 주고 지정을 해제하면 null을 준다',
+    async (role) => {
+      const project = await service.create(userId, '함께 보는 프로젝트');
+      const member = await prisma.projectMember.create({
+        data: { projectId: project.id, userId: otherUserId, role: 'CLIENT' },
+      });
+      await prisma.project.update({ where: { id: project.id }, data: { approverMemberId: member.id } });
+      const memberUserId = role === 'DEVELOPER' ? userId : otherUserId;
+      const detail = { id: project.id, name: project.name, myRole: role, currentVersion: null };
+
+      await expect(service.getForMember(project.id, memberUserId)).resolves.toEqual({
+        ...detail,
+        approver: { memberId: member.id, name: '다른 사용자' },
+      });
+      await prisma.project.update({ where: { id: project.id }, data: { approverMemberId: null } });
+      await expect(service.getForMember(project.id, memberUserId)).resolves.toEqual({ ...detail, approver: null });
+    },
+  );
+
   it.each(['DEVELOPER', 'CLIENT'] as const)(
     'getForMember는 게시 전 %s 멤버에게 id, name, myRole과 currentVersion: null을 돌려준다',
     async (role) => {
@@ -168,6 +247,7 @@ describe('ProjectsService', () => {
         name: '함께 보는 프로젝트',
         myRole: role,
         currentVersion: null,
+        approver: null,
       });
     },
   );
@@ -205,6 +285,7 @@ describe('ProjectsService', () => {
         name: project.name,
         myRole: role,
         currentVersion: { id: currentVersion.id, number: 1 },
+        approver: null,
       });
     },
   );

@@ -162,7 +162,7 @@ describe('프로젝트 API (e2e)', () => {
       .get(`/api/projects/${project.id}`)
       .set('Cookie', cookie)
       .expect(200)
-      .expect({ id: project.id, name: project.name, myRole: 'DEVELOPER', currentVersion: null });
+      .expect({ id: project.id, name: project.name, myRole: 'DEVELOPER', currentVersion: null, approver: null });
   });
 
   it.each(['가', '가'.repeat(60)])('이름 경계값 %s는 앞뒤 공백을 지운 뒤 허용한다', async (name) => {
@@ -306,7 +306,7 @@ describe('프로젝트 API (e2e)', () => {
       .get(`/api/projects/${project.id}`)
       .set('Cookie', cookie)
       .expect(200)
-      .expect({ id: project.id, name: project.name, myRole: 'CLIENT', currentVersion: null });
+      .expect({ id: project.id, name: project.name, myRole: 'CLIENT', currentVersion: null, approver: null });
   });
 
   it.each([
@@ -354,9 +354,39 @@ describe('프로젝트 API (e2e)', () => {
         .get(`/api/projects/${project.id}`)
         .set('Cookie', memberCookie)
         .expect(200)
-        .expect({ id: project.id, name: project.name, myRole: role, currentVersion: null });
+        .expect({ id: project.id, name: project.name, myRole: role, currentVersion: null, approver: null });
     },
   );
+
+  it('상세는 두 역할 모두에게 승인자의 멤버 id와 이름만 주고 지정 해제 뒤에는 null을 준다', async () => {
+    const project = await createProject('승인자가 있는 프로젝트');
+    const member = await prisma.projectMember.create({
+      data: { projectId: project.id, userId: otherUserId, role: 'CLIENT' },
+    });
+    await prisma.project.update({ where: { id: project.id }, data: { approverMemberId: member.id } });
+    const clientCookie = await login(otherUserId);
+
+    for (const role of ['DEVELOPER', 'CLIENT'] as const) {
+      await request(server)
+        .get(`/api/projects/${project.id}`)
+        .set('Cookie', role === 'DEVELOPER' ? cookie : clientCookie)
+        .expect(200)
+        .expect({
+          id: project.id,
+          name: project.name,
+          myRole: role,
+          currentVersion: null,
+          approver: { memberId: member.id, name: '다른 사용자' },
+        });
+    }
+
+    await prisma.project.update({ where: { id: project.id }, data: { approverMemberId: null } });
+    await request(server)
+      .get(`/api/projects/${project.id}`)
+      .set('Cookie', clientCookie)
+      .expect(200)
+      .expect({ id: project.id, name: project.name, myRole: 'CLIENT', currentVersion: null, approver: null });
+  });
 
   it('남의 프로젝트, 없는 UUID, 틀린 모양 id는 모두 같은 404 본문을 돌려준다', async () => {
     await createProject('내 프로젝트');
