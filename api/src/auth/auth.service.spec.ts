@@ -38,6 +38,7 @@ describe('AuthService.requestCode', () => {
   });
 
   beforeEach(async () => {
+    vi.stubEnv('DEVELOPER_EMAIL', email);
     randomIntMock.mockReset().mockReturnValue(123456);
     sendLoginCode.mockReset();
     await resetDatabase(prisma);
@@ -46,6 +47,7 @@ describe('AuthService.requestCode', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   afterAll(async () => {
@@ -305,6 +307,7 @@ describe('AuthService.verifyCode', () => {
   });
 
   beforeEach(async () => {
+    vi.stubEnv('DEVELOPER_EMAIL', email);
     randomIntMock.mockReset().mockReturnValue(42);
     sendLoginCode.mockReset();
     await resetDatabase(prisma);
@@ -313,6 +316,7 @@ describe('AuthService.verifyCode', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   afterAll(async () => {

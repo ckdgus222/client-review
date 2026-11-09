@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Server } from 'node:http';
 import { Controller, type INestApplication, Post } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import bcrypt from 'bcrypt';
 import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import { MailService } from '../src/mail/mail.service.js';
@@ -56,6 +57,8 @@ describe('로그인 API (e2e)', () => {
   const post = (path: string) => request(server).post(path).set('Origin', origin);
 
   const requestCode = async (address = email, allowedOrigin = origin) => {
+    // 기존 코드·입력 검사 테스트는 가입 가능한 이메일로 준비한다.
+    vi.stubEnv('DEVELOPER_EMAIL', address.trim().toLowerCase());
     const response = await request(server)
       .post('/api/auth/email-code')
       .set('Origin', allowedOrigin)
@@ -68,10 +71,16 @@ describe('로그인 API (e2e)', () => {
   };
 
   const login = async (address = email, userName = name) => {
-    const code = await requestCode(address);
-    const response = await post('/api/auth/verify-code').send({ email: address, code, name: userName }).expect(200);
-    const cookie = sessionCookie(response).split(';')[0];
-    return { response, cookie, code };
+    const developerEmail = process.env.DEVELOPER_EMAIL;
+    try {
+      const code = await requestCode(address);
+      const response = await post('/api/auth/verify-code').send({ email: address, code, name: userName }).expect(200);
+      const cookie = sessionCookie(response).split(';')[0];
+      return { response, cookie, code };
+    } finally {
+      // /me의 권한은 각 테스트가 정한 원래 개발자 설정으로 확인한다.
+      vi.stubEnv('DEVELOPER_EMAIL', developerEmail);
+    }
   };
 
   beforeEach(async () => {
@@ -405,6 +414,7 @@ describe('로그인 API (e2e)', () => {
       data: { email, name: '기존 이름' },
     });
     const code = await requestCode();
+    vi.stubEnv('DEVELOPER_EMAIL', 'developer@example.com');
     const response = await post('/api/auth/verify-code').send({ email, code }).expect(200);
     expect(response.body).toEqual({ id: user.id, email, name: '기존 이름' });
     expect(await prisma.user.count()).toBe(1);
@@ -437,6 +447,7 @@ describe('로그인 API (e2e)', () => {
   });
 
   it('동시에 코드를 두 번 요청하면 204와 429이고 메일은 한 번만 보낸다', async () => {
+    vi.stubEnv('DEVELOPER_EMAIL', email);
     const responses = await Promise.all([
       post('/api/auth/email-code').send({ email }),
       post('/api/auth/email-code').send({ email }),
@@ -599,5 +610,134 @@ describe('로그인 API (e2e)', () => {
     await post('/api/auth/logout').set('Cookie', first.cookie).expect(204);
     expect(await prisma.session.findMany({ orderBy: { id: 'asc' } })).toEqual(remaining);
     expect(await prisma.user.count()).toBe(2);
+  });
+
+  it.each(['모르는 이메일', '만료', '무효', '수락'])(
+    '%s도 204·429·CODE_WRONG 본문이 같고 맞는 코드로 가입할 수 없다',
+    async (state) => {
+      const address = 'blocked@example.com';
+      const knownCode = '000042';
+      const existing = await prisma.user.create({ data: { email: 'existing@example.com', name: '기존 사용자' } });
+      if (state !== '모르는 이메일') {
+        const project = await prisma.project.create({ data: { name: '로그인 제한' } });
+        await prisma.$executeRaw`
+        INSERT INTO invitations (project_id, email, token_hash, invited_by_id, expires_at, accepted_at, revoked_at)
+        VALUES (${project.id}::uuid, ${address}, ${createHash('sha256').update(state).digest('hex')}, ${existing.id}::uuid,
+                now() + ${state === '만료' ? 0 : 604800} * interval '1 second',
+                CASE WHEN ${state === '수락'} THEN now() ELSE NULL END,
+                CASE WHEN ${state === '무효'} THEN now() ELSE NULL END)
+      `;
+      }
+
+      const allowed = await post('/api/auth/email-code').send({ email: existing.email }).expect(204);
+      const blocked = await post('/api/auth/email-code').send({ email: address }).expect(204);
+      expect(blocked.text).toBe(allowed.text);
+      expect(blocked.text).toBe('');
+      expect(blocked.headers['set-cookie']).toBeUndefined();
+      expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(existing.email, expect.stringMatching(/^\d{6}$/));
+      const saved = await prisma.loginCode.findUniqueOrThrow({ where: { email: address } });
+      expect(saved).toMatchObject({ attempts: 0, usedAt: null });
+      expect(saved.codeHash).toMatch(/^\$2[aby]\$12\$/);
+      const allowedRetry = await post('/api/auth/email-code').send({ email: existing.email }).expect(429);
+      const blockedRetry = await post('/api/auth/email-code')
+        .send({ email: ` ${address.toUpperCase()} ` })
+        .expect(429);
+      expect(blockedRetry.body).toEqual(allowedRetry.body);
+      expect(blockedRetry.headers['set-cookie']).toBeUndefined();
+      expect(await prisma.loginCode.findUniqueOrThrow({ where: { email: address } })).toEqual(saved);
+      expect(sendLoginCode).toHaveBeenCalledTimes(1);
+
+      // 메일을 받지 못한 사람도 정답을 알아낸 경우를 DB의 테스트 코드로 재현한다.
+      await prisma.loginCode.update({
+        where: { email: address },
+        data: { codeHash: await bcrypt.hash(knownCode, 12) },
+      });
+      const mailedCode = sendLoginCode.mock.calls[0][1];
+      const wrongAllowed = await post('/api/auth/verify-code').send({
+        email: existing.email,
+        code: mailedCode === '999999' ? '999998' : '999999',
+      });
+      const wrongBlocked = await post('/api/auth/verify-code').send({ email: address, code: '999999' });
+      expectCodeError(wrongAllowed, 'CODE_WRONG');
+      expectCodeError(wrongBlocked, 'CODE_WRONG');
+      expect(wrongBlocked.body).toEqual(wrongAllowed.body);
+      const correctWithoutName = await post('/api/auth/verify-code').send({ email: address, code: knownCode });
+      expectCodeError(correctWithoutName, 'CODE_WRONG');
+      expect(correctWithoutName.body).toEqual(wrongAllowed.body);
+      expect(await prisma.loginCode.findUniqueOrThrow({ where: { email: address } })).toMatchObject({
+        attempts: 2,
+        usedAt: null,
+      });
+      const correctWithName = await post('/api/auth/verify-code').send({ email: address, code: knownCode, name });
+      expectCodeError(correctWithName, 'CODE_WRONG');
+      expect(correctWithName.body).toEqual(wrongAllowed.body);
+      expect(await prisma.loginCode.findUniqueOrThrow({ where: { email: address } })).toMatchObject({
+        attempts: 3,
+        usedAt: null,
+      });
+      expect(await prisma.user.findUnique({ where: { email: address } })).toBeNull();
+      expect(await prisma.session.count()).toBe(0);
+    },
+  );
+
+  it('메일이 안 가는 이메일도 다섯 번 시도하면 잠기고 60초 뒤 재발급하면 다시 0회다', async () => {
+    const address = 'unknown@example.com';
+    const knownCode = '000042';
+    await post('/api/auth/email-code').send({ email: address }).expect(204);
+    await prisma.loginCode.update({ where: { email: address }, data: { codeHash: await bcrypt.hash(knownCode, 12) } });
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      expectCodeError(
+        await post('/api/auth/verify-code').send({ email: address, code: knownCode, name }),
+        'CODE_WRONG',
+      );
+    }
+    expectCodeError(
+      await post('/api/auth/verify-code').send({ email: address, code: knownCode, name }),
+      'CODE_EXPIRED',
+    );
+    const before = await prisma.loginCode.findUniqueOrThrow({ where: { email: address } });
+    expect(before).toMatchObject({ attempts: 5, usedAt: null });
+    await prisma.$executeRaw`UPDATE login_codes SET created_at = now() - interval '60 seconds' WHERE email = ${address}`;
+
+    await post('/api/auth/email-code').send({ email: address }).expect(204);
+
+    const after = await prisma.loginCode.findUniqueOrThrow({ where: { email: address } });
+    expect(after).toMatchObject({ id: before.id, attempts: 0, usedAt: null });
+    expect(after.codeHash).not.toBe(before.codeHash);
+    await post('/api/auth/email-code').send({ email: address }).expect(429);
+    expect(sendLoginCode).not.toHaveBeenCalled();
+    expect(await prisma.user.count()).toBe(0);
+    expect(await prisma.session.count()).toBe(0);
+  });
+
+  it('초대 이메일의 대소문자·공백을 정리해 메일을 보내고 NAME_REQUIRED 뒤 가입한다', async () => {
+    const inviter = await prisma.user.create({ data: { email: 'developer@example.com', name: '개발자' } });
+    const project = await prisma.project.create({ data: { name: '초대 가입' } });
+    await prisma.$executeRaw`
+      INSERT INTO invitations (project_id, email, token_hash, invited_by_id, expires_at)
+      VALUES (${project.id}::uuid, ${email}, ${createHash('sha256').update('invitation-test').digest('hex')},
+              ${inviter.id}::uuid, now() + interval '7 days')
+    `;
+    const invitations = await prisma.invitation.findMany();
+    await post('/api/auth/email-code')
+      .send({ email: ` ${email.toUpperCase()} ` })
+      .expect(204);
+    expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(email, expect.stringMatching(/^\d{6}$/));
+    const code = sendLoginCode.mock.calls[0][1];
+
+    expectCodeError(await post('/api/auth/verify-code').send({ email, code }), 'NAME_REQUIRED');
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email } })).toMatchObject({ attempts: 0, usedAt: null });
+    expect(await prisma.user.findUnique({ where: { email } })).toBeNull();
+    const response = await post('/api/auth/verify-code').send({ email, code, name }).expect(200);
+
+    expect(response.body).toEqual({ id: expect.any(String), email, name });
+    await request(server)
+      .get('/api/auth/me')
+      .set('Cookie', sessionCookie(response).split(';')[0])
+      .expect(200)
+      .expect({ ...response.body, canCreateProjects: false });
+    expect(await prisma.invitation.findMany()).toEqual(invitations);
+    expect(await prisma.projectMember.count()).toBe(0);
+    expect(await prisma.session.count()).toBe(1);
   });
 });

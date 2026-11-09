@@ -1,8 +1,10 @@
 import { randomInt } from 'node:crypto';
 import { HttpException, HttpStatus, Injectable, UnprocessableEntityException } from '@nestjs/common';
 import bcrypt from 'bcrypt';
+import type { Prisma } from '../generated/prisma/client.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { isDeveloper } from './developer.js';
 import { createSessionToken, hashSessionToken } from './token.js';
 
 // bcrypt 반복 횟수(2^12번). 높을수록 해시를 훔친 사람이 코드를 맞혀 보는 데 오래 걸린다.
@@ -17,6 +19,18 @@ const LOGIN_CODE_ERROR_MESSAGES = {
   CODE_WRONG: '코드가 맞지 않아요',
   NAME_REQUIRED: '처음 오셨네요. 이름을 알려 주세요',
 } as const;
+
+// 새로 가입할 수 있는 이메일은 서버 설정의 개발자 이메일과, 지금 쓸 수 있는 초대가 있는 이메일뿐이다.
+// 모르는 사람이 가입해 둘 수 없게 하려는 것이다(전체 기획 정할 것 17). 만료는 초대 수락과 같은 DB 시계로 본다.
+const canSignUp = async (db: Prisma.TransactionClient, email: string) => {
+  if (isDeveloper(email)) return true;
+  const invitations = await db.$queryRaw<unknown[]>`
+    SELECT 1 FROM invitations
+    WHERE email = ${email} AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+    LIMIT 1
+  `;
+  return invitations.length > 0;
+};
 
 // 오류 본문은 Nest 기본 모양에 code를 더한다. web은 code를 보고 문구를 고른다.
 const loginCodeError = (code: keyof typeof LOGIN_CODE_ERROR_MESSAGES) =>
@@ -55,7 +69,10 @@ export class AuthService {
       throw new HttpException('코드는 1분에 한 번만 받을 수 있어요', HttpStatus.TOO_MANY_REQUESTS);
     }
 
-    this.mail.sendLoginCode(email, code);
+    // 메일은 가입한 사람과 가입할 수 있는 이메일에만 보낸다. 다른 이메일도 코드 줄은 위에서 똑같이 만들어서,
+    // 204·60초 429·틀린 코드 오류가 누구에게나 같다. 응답만 보고는 가입·초대 여부를 알 수 없다.
+    const user = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (user || (await canSignUp(this.prisma, email))) this.mail.sendLoginCode(email, code);
   }
 
   // 돌려준 token(세션 ID 원본)은 컨트롤러가 쿠키에 담는다.
@@ -78,6 +95,9 @@ export class AuthService {
       where: { email },
       select: AUTH_USER_FIELDS,
     });
+    // 가입할 수 없는 이메일은 코드를 맞혀도 틀린 코드와 같은 오류다. 이름을 묻기 전에 걸러야,
+    // "이름이 필요해요"만으로 코드가 맞았다는 것이 드러나지 않는다.
+    if (!existingUser && !(await canSignUp(this.prisma, email))) throw loginCodeError('CODE_WRONG');
     if (!existingUser && !name) {
       // 코드를 맞힌 뒤의 왕복이라 시도로 치지 않는다. 해시를 조건에 걸어 그사이 새로 받은 코드는 건드리지 않는다.
       await this.prisma.loginCode.updateMany({
@@ -97,6 +117,8 @@ export class AuthService {
       `;
       if (usedCount === 0) throw loginCodeError('CODE_EXPIRED');
 
+      // 위에서 확인한 뒤 그사이 초대가 무효가 됐을 수 있어서, 사용자를 만들기 직전에 한 번 더 본다.
+      if (!existingUser && !(await canSignUp(tx, email))) throw loginCodeError('CODE_WRONG');
       // 이름 없는 새 사용자는 위에서 NAME_REQUIRED로 돌려보냈다.
       const newUser = { email, name: name! };
       const sessionUser = existingUser ?? (await tx.user.create({ data: newUser, select: AUTH_USER_FIELDS }));
