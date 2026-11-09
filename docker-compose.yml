@@ -30,6 +30,8 @@ services:
       DEVELOPER_EMAIL: ${DEVELOPER_EMAIL}
       # 아래 볼륨을 꽂은 자리와 같아야 한다. 다르면 사진이 컨테이너 안에 쌓였다가 다시 만들 때 사라진다.
       ASSET_DIR: /data/assets
+      # 초대 메일 속 링크의 앞부분. Docker에서는 nginx(8080)로 화면을 연다.
+      APP_URL: http://localhost:8080
     volumes:
       - assets-data:/data/assets
     depends_on:
