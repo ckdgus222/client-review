@@ -1,4 +1,4 @@
-import { ApiError, apiGet, apiPost, toApiError } from './client.ts'
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPutForm, toApiError } from './client.ts'
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn())
@@ -180,6 +180,160 @@ describe.each([
 
     await expect(result).rejects.toBe(networkError)
     await expect(result).rejects.not.toBeInstanceOf(ApiError)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('apiPatch', () => {
+  it('경로 앞에 /api를 붙이고 전달받은 본문을 JSON PATCH로 한 번 보낸다', async () => {
+    const body = { summary: '메인 "화면" 수정\n다음 줄', testUrl: 'https://example.com/review' }
+    const response = new Response(JSON.stringify({ id: 'version-id', ...body }), { status: 200 })
+    vi.mocked(fetch).mockResolvedValueOnce(response)
+
+    await expect(apiPatch('/versions/version-id', body)).resolves.toBe(response)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/versions/version-id', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  })
+
+  it.each([{ summary: '' }, { testUrl: '' }, {}])(
+    '빈 값과 생략한 칸을 바꾸지 않고 JSON으로 보낸다: %j',
+    async (body) => {
+      vi.mocked(fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }))
+
+      await apiPatch('/versions/version-id', body)
+
+      expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/versions/version-id', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    },
+  )
+})
+
+describe('apiPutForm', () => {
+  it('경로 앞에 /api를 붙이고 같은 FormData를 Content-Type 지정 없이 PUT으로 한 번 보낸다', async () => {
+    const form = new FormData()
+    const file = new File(['photo bytes'], '메인 화면.png', { type: 'image/png' })
+    form.append('file', file)
+    const response = new Response(JSON.stringify({ id: 'version-id' }), { status: 200 })
+    vi.mocked(fetch).mockResolvedValueOnce(response)
+
+    await expect(apiPutForm('/versions/version-id/screens/screen-id/asset', form)).resolves.toBe(response)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(
+      '/api/versions/version-id/screens/screen-id/asset',
+      expect.objectContaining({ method: 'PUT' }),
+    )
+    const options = vi.mocked(fetch).mock.calls[0][1]
+    expect(options?.body).toBe(form)
+    expect(new Headers(options?.headers).has('Content-Type')).toBe(false)
+    expect(form.getAll('file')).toEqual([file])
+  })
+})
+
+describe('apiDelete', () => {
+  it('경로 앞에 /api를 붙이고 본문 없이 DELETE로 한 번 요청한다', async () => {
+    const response = new Response(JSON.stringify({ id: 'version-id', screens: [] }), { status: 200 })
+    vi.mocked(fetch).mockResolvedValueOnce(response)
+
+    await expect(apiDelete('/versions/version-id/screens/screen-id')).resolves.toBe(response)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(
+      '/api/versions/version-id/screens/screen-id',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+    expect(vi.mocked(fetch).mock.calls[0][1]?.body).toBeUndefined()
+  })
+})
+
+describe.each([
+  { name: 'apiPatch', call: () => apiPatch('/versions/version-id', { summary: '수정한 화면' }) },
+  { name: 'apiPutForm', call: () => apiPutForm('/versions/version-id/screens/screen-id/asset', new FormData()) },
+  { name: 'apiDelete', call: () => apiDelete('/versions/version-id/screens/screen-id') },
+])('$name 응답 처리', ({ call }) => {
+  it.each([200, 201, 299])('%i 응답은 본문을 읽지 않고 같은 Response를 돌려준다', async (status) => {
+    const body = '호출한 쪽에서 읽을 응답 본문'
+    const response = new Response(body, { status })
+    vi.mocked(fetch).mockResolvedValueOnce(response)
+
+    await expect(call()).resolves.toBe(response)
+
+    expect(response.bodyUsed).toBe(false)
+    await expect(response.text()).resolves.toBe(body)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('본문 없는 204 응답도 같은 Response를 돌려준다', async () => {
+    const response = new Response(null, { status: 204 })
+    vi.mocked(fetch).mockResolvedValueOnce(response)
+
+    await expect(call()).resolves.toBe(response)
+
+    expect(response.bodyUsed).toBe(false)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['VERSION_NOT_DRAFT', 'SCREEN_HIDDEN', 'TOO_MANY_SCREENS'])(
+    '409 응답의 %s 코드를 ApiError로 전달한다',
+    async (code) => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(JSON.stringify({ statusCode: 409, message: '요청을 처리할 수 없어요', code }), { status: 409 }),
+      )
+
+      const result = call()
+
+      await expect(result).rejects.toBeInstanceOf(ApiError)
+      await expect(result).rejects.toMatchObject({ status: 409, code })
+      expect(fetch).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('nginx의 413 HTML 응답도 code 없는 ApiError로 전달한다', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response('<html><body><h1>413 Request Entity Too Large</h1><hr>nginx</body></html>', {
+        status: 413,
+        headers: { 'Content-Type': 'text/html' },
+      }),
+    )
+
+    const result = call()
+
+    await expect(result).rejects.toBeInstanceOf(ApiError)
+    await expect(result).rejects.toMatchObject({ status: 413, code: undefined })
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { status: 401, body: JSON.stringify({ statusCode: 401, message: 'Unauthorized' }) },
+    { status: 403, body: JSON.stringify({ statusCode: 403, message: 'Forbidden' }) },
+    { status: 404, body: JSON.stringify({ statusCode: 404, message: 'Not Found' }) },
+    { status: 413, body: JSON.stringify({ statusCode: 413, message: 'Payload Too Large' }) },
+    { status: 415, body: JSON.stringify({ statusCode: 415, message: 'Unsupported Media Type' }) },
+    { status: 422, body: JSON.stringify({ statusCode: 422, message: ['입력 값을 확인해 주세요'] }) },
+    { status: 500, body: JSON.stringify({ statusCode: 400, message: '서버 오류' }) },
+    { status: 503, body: null },
+    { status: 502, body: 'null' },
+  ])('$status 응답의 본문이 $body이면 code 없이 응답 상태를 전달한다', async ({ status, body }) => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(body, { status }))
+
+    const result = call()
+
+    await expect(result).rejects.toBeInstanceOf(ApiError)
+    await expect(result).rejects.toMatchObject({ status, code: undefined })
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('네트워크 오류는 ApiError로 바꾸지 않고 원래 오류 그대로 전달한다', async () => {
+    const networkError = new TypeError('Failed to fetch')
+    vi.mocked(fetch).mockRejectedValueOnce(networkError)
+
+    await expect(call()).rejects.toBe(networkError)
+
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 })

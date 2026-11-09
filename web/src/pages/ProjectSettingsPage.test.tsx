@@ -41,6 +41,7 @@ const project: ProjectDetail = {
   id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
+  currentVersion: null,
 }
 
 // 만든 순서 가운데 숨긴 화면을 넣어, 보이는 번호와 복원할 위치를 확인한다.
@@ -61,6 +62,7 @@ const nextProject: ProjectDetail = {
   id: '6b62c564-585a-4f05-ae57-8d6b3bc5a47f',
   name: '다음 프로젝트',
   myRole: 'DEVELOPER',
+  currentVersion: null,
 }
 
 const nextScreens: Screen[] = [

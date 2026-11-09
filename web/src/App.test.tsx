@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import App from './App.tsx'
+import { getVersion, listVersions } from './api/versions.ts'
 import { getMe } from './api/auth.ts'
 import { getProject, listProjects, listScreens } from './api/projects.ts'
 
@@ -14,6 +15,11 @@ vi.mock('./api/projects.ts', async () => {
   return { ...actual, listProjects: vi.fn(), getProject: vi.fn(), listScreens: vi.fn() }
 })
 
+vi.mock('./api/versions.ts', async () => {
+  const actual = await vi.importActual<typeof import('./api/versions.ts')>('./api/versions.ts')
+  return { ...actual, listVersions: vi.fn(), getVersion: vi.fn() }
+})
+
 const user = {
   canCreateProjects: false,
   id: '5b3a934d-ef8e-4ce8-b26a-a9d1cdd4983f',
@@ -22,6 +28,8 @@ const user = {
 }
 
 beforeEach(() => {
+  vi.mocked(listVersions).mockReset().mockResolvedValue([])
+  vi.mocked(getVersion).mockReset()
   vi.mocked(getMe).mockReset()
   vi.mocked(listProjects).mockReset().mockResolvedValue([])
   vi.mocked(getProject).mockReset()
@@ -37,7 +45,7 @@ describe('App', () => {
     }
     const prefix = basename === '/' ? '' : basename
     vi.mocked(getMe).mockResolvedValueOnce(user)
-    vi.mocked(getProject).mockResolvedValueOnce(project)
+    vi.mocked(getProject).mockResolvedValueOnce({ ...project, currentVersion: null })
     render(
       <MemoryRouter basename={basename} initialEntries={[`${prefix}/projects/${project.id}/settings`]}>
         <App />
@@ -59,7 +67,7 @@ describe('App', () => {
     expect(listProjects).not.toHaveBeenCalled()
   })
 
-  it.each(['/', '/app'])('basename이 %s이면 목록과 설정을 오갈 때마다 로그인을 다시 확인한다', async (basename) => {
+  it.each(['/', '/app'])('basename이 %s이면 목록과 검수실을 오갈 때마다 로그인을 다시 확인한다', async (basename) => {
     const project = {
       id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
       name: '이동할 프로젝트',
@@ -68,27 +76,54 @@ describe('App', () => {
     const prefix = basename === '/' ? '' : basename
     vi.mocked(getMe).mockResolvedValueOnce(user)
     vi.mocked(listProjects).mockResolvedValue([{ ...project, createdAt: '2026-11-05T00:00:00.000Z' }])
-    vi.mocked(getProject).mockResolvedValueOnce(project)
+    const version = {
+      id: 'de167c5a-1eae-44cb-969a-818bb9875044',
+      projectId: project.id,
+      number: 0,
+      status: 'IN_REVIEW' as const,
+      publishedAt: '2026-11-08T00:00:00.000Z',
+      summary: '처음 게시한 화면',
+      testUrl: null,
+      screens: [
+        {
+          screenId: '250a258d-7af0-41b0-8eb8-5cbfa80105ce',
+          name: '메인',
+          viewport: 'PC' as const,
+          hiddenAt: null,
+          asset: { id: 'first-photo', width: 1440, height: 900 },
+        },
+      ],
+    }
+    vi.mocked(getProject).mockResolvedValue({ ...project, currentVersion: { id: version.id, number: 0 } })
+    vi.mocked(listVersions).mockResolvedValue([version])
+    vi.mocked(getVersion).mockResolvedValue(version)
     render(
       <MemoryRouter basename={basename} initialEntries={[`${prefix}/`]}>
         <App />
       </MemoryRouter>,
     )
     const projectLink = await screen.findByRole('link', { name: project.name })
-    let resolveSettingsUser!: (value: typeof user) => void
+    let resolveReviewUser!: (value: typeof user) => void
     vi.mocked(getMe).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          resolveSettingsUser = resolve
+          resolveReviewUser = resolve
         }),
     )
     fireEvent.click(projectLink)
 
     expect(screen.getByText('확인하는 중이에요.')).toBeDefined()
     expect(getMe).toHaveBeenCalledTimes(2)
-    expect(screen.queryByRole('textbox', { name: '화면 이름' })).toBeNull()
-    resolveSettingsUser(user)
+    expect(screen.queryByRole('combobox', { name: '버전' })).toBeNull()
+    resolveReviewUser(user)
     expect(await screen.findByRole('heading', { name: project.name })).toBeDefined()
+    expect(await screen.findByRole('combobox', { name: '버전' })).toBeDefined()
+    expect(screen.getByRole('option', { name: '초안' })).toBeDefined()
+    expect(screen.getByRole('img', { name: '메인 · PC' }).getAttribute('src')).toBe('/api/assets/first-photo')
+    expect(getProject).toHaveBeenCalledExactlyOnceWith(project.id)
+    expect(listVersions).toHaveBeenCalledExactlyOnceWith(project.id)
+    expect(getVersion).toHaveBeenCalledExactlyOnceWith(version.id)
+    expect(listScreens).not.toHaveBeenCalled()
 
     let resolveListUser!: (value: typeof user) => void
     vi.mocked(getMe).mockImplementationOnce(

@@ -5,8 +5,20 @@ export type Viewport = 'PC' | 'MOBILE'
 
 // 시각은 JSON으로 와서 글자(ISO 문자열)다.
 export type MyProject = { id: string; name: string; myRole: ProjectRole; createdAt: string }
-export type ProjectDetail = { id: string; name: string; myRole: ProjectRole }
+// 현재 버전은 게시할 때만 바뀌어서 늘 번호가 있다. 게시 전에는 null이다.
+export type ProjectDetail = {
+  id: string
+  name: string
+  myRole: ProjectRole
+  currentVersion: { id: string; number: number } | null
+}
 export type Screen = { id: string; name: string; viewport: Viewport; hiddenAt: string | null }
+
+// 설정 화면과 검수실이 화면 이름표를 같은 글자로 보여 준다. 예: "메인 · 모바일"
+export const VIEWPORT_LABELS: Record<Viewport, string> = { PC: 'PC', MOBILE: '모바일' }
+
+export const screenLabel = (screen: { name: string; viewport: Viewport }) =>
+  `${screen.name} · ${VIEWPORT_LABELS[screen.viewport]}`
 
 export const listProjects = async (): Promise<MyProject[]> => {
   const response = await apiGet('/projects')

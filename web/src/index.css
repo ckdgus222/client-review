@@ -32,7 +32,8 @@ a {
    링크는 브라우저 기본 표시를 그대로 둔다. */
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+textarea:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }

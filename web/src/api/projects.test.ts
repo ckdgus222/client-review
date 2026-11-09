@@ -7,6 +7,8 @@ import {
   listProjects,
   listScreens,
   showScreen,
+  screenLabel,
+  VIEWPORT_LABELS,
 } from './projects.ts'
 
 const projectId = '43a30b6d-1b77-46ba-8743-061b463c1d37'
@@ -75,7 +77,21 @@ describe('createProject', () => {
 
 describe('getProject', () => {
   it.each(['DEVELOPER', 'CLIENT'])('옵션 없이 GET을 한 번 요청하고 %s 역할의 프로젝트를 돌려준다', async (myRole) => {
-    const detail = { id: projectId, name: project.name, myRole }
+    const detail = { id: projectId, name: project.name, myRole, currentVersion: null }
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(detail), { status: 200 }))
+
+    await expect(getProject(projectId)).resolves.toEqual(detail)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/projects/${projectId}`)
+  })
+
+  it('게시된 현재 버전의 id와 번호를 그대로 돌려준다', async () => {
+    const detail = {
+      id: projectId,
+      name: project.name,
+      myRole: 'DEVELOPER',
+      currentVersion: { id: 'published-version', number: 2 },
+    }
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(detail), { status: 200 }))
 
     await expect(getProject(projectId)).resolves.toEqual(detail)
@@ -169,7 +185,7 @@ describe.each([
 })
 
 describe.each([
-  { name: 'getProject', call: getProject, suffix: '', responseBody: project },
+  { name: 'getProject', call: getProject, suffix: '', responseBody: { ...project, currentVersion: null } },
   { name: 'listScreens', call: listScreens, suffix: '/screens', responseBody: [screen] },
 ])('$name의 프로젝트 ID 인코딩', ({ call, suffix, responseBody }) => {
   it.each(encodedIds)('$id를 $encoded 한 덩어리로 보내고 GET 옵션을 추가하지 않는다', async ({ id, encoded }) => {
@@ -243,5 +259,19 @@ describe.each([
     await expect(call()).rejects.toBe(networkError)
 
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('화면 이름표', () => {
+  it('기기 이름을 PC와 모바일로 표시한다', () => {
+    expect(VIEWPORT_LABELS).toEqual({ PC: 'PC', MOBILE: '모바일' })
+  })
+
+  it.each([
+    { name: '메인', viewport: 'PC' as const, label: '메인 · PC' },
+    { name: '메인', viewport: 'MOBILE' as const, label: '메인 · 모바일' },
+    { name: '상품 상세', viewport: 'PC' as const, label: '상품 상세 · PC' },
+  ])('$label 이름표를 만든다', ({ name, viewport, label }) => {
+    expect(screenLabel({ name, viewport })).toBe(label)
   })
 })

@@ -4,3 +4,4 @@ node_modules/
 dist/
 *.tsbuildinfo
 api/src/generated/
+api/.assets/

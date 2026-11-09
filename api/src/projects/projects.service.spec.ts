@@ -48,7 +48,7 @@ describe('ProjectsService', () => {
       createdAt: expect.any(Date),
     });
     expect(await prisma.project.findMany()).toEqual([
-      { id: result.id, name: result.name, createdAt: result.createdAt },
+      { id: result.id, name: result.name, currentVersionId: null, createdAt: result.createdAt },
     ]);
     expect(await prisma.projectMember.findMany()).toEqual([
       {
@@ -153,19 +153,60 @@ describe('ProjectsService', () => {
     await expect(service.requireMemberRole(missingId, userId)).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it.each(['DEVELOPER', 'CLIENT'] as const)('getForMember는 %s 멤버에게 id, name, myRole만 돌려준다', async (role) => {
-    const project = await service.create(userId, '함께 보는 프로젝트');
-    await prisma.projectMember.create({
-      data: { projectId: project.id, userId: otherUserId, role: 'CLIENT' },
-    });
-    const memberUserId = role === 'DEVELOPER' ? userId : otherUserId;
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    'getForMember는 게시 전 %s 멤버에게 id, name, myRole과 currentVersion: null을 돌려준다',
+    async (role) => {
+      const project = await service.create(userId, '함께 보는 프로젝트');
+      await prisma.projectMember.create({
+        data: { projectId: project.id, userId: otherUserId, role: 'CLIENT' },
+      });
+      const memberUserId = role === 'DEVELOPER' ? userId : otherUserId;
 
-    await expect(service.getForMember(project.id, memberUserId)).resolves.toEqual({
-      id: project.id,
-      name: '함께 보는 프로젝트',
-      myRole: role,
-    });
-  });
+      await expect(service.getForMember(project.id, memberUserId)).resolves.toEqual({
+        id: project.id,
+        name: '함께 보는 프로젝트',
+        myRole: role,
+        currentVersion: null,
+      });
+    },
+  );
+
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    'getForMember는 초안과 다른 프로젝트의 버전이 있어도 %s 멤버에게 현재 버전의 id와 번호만 돌려준다',
+    async (role) => {
+      const project = await service.create(userId, '함께 보는 프로젝트');
+      await prisma.projectMember.create({
+        data: { projectId: project.id, userId: otherUserId, role: 'CLIENT' },
+      });
+      const currentVersion = await prisma.deliveryVersion.create({
+        data: {
+          projectId: project.id,
+          number: 1,
+          status: 'IN_REVIEW',
+          publishedAt: new Date(),
+          summary: '상세 응답에 포함하지 않는 설명',
+          testUrl: 'https://example.com/review',
+        },
+      });
+      await prisma.project.update({
+        where: { id: project.id },
+        data: { currentVersionId: currentVersion.id },
+      });
+      await prisma.deliveryVersion.create({ data: { projectId: project.id } });
+      const otherProject = await service.create(otherUserId, '남의 프로젝트');
+      await prisma.deliveryVersion.create({
+        data: { projectId: otherProject.id, number: 7, status: 'IN_REVIEW', publishedAt: new Date() },
+      });
+      const memberUserId = role === 'DEVELOPER' ? userId : otherUserId;
+
+      await expect(service.getForMember(project.id, memberUserId)).resolves.toEqual({
+        id: project.id,
+        name: project.name,
+        myRole: role,
+        currentVersion: { id: currentVersion.id, number: 1 },
+      });
+    },
+  );
 
   it('getForMember는 다른 프로젝트의 개발자라도 요청한 프로젝트의 멤버가 아니면 404를 던진다', async () => {
     await service.create(userId, '내 프로젝트');

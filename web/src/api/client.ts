@@ -17,7 +17,7 @@ export const toApiError = async (response: Response) => {
 }
 
 // 쿠키와 Origin은 같은 주소라 브라우저가 알아서 붙인다. 그래서 credentials 설정이 없다.
-// 두 함수 모두 Response를 돌려준다. 본문이 없는 응답(204)도 있어서 .json()은 부르는 쪽에서 한다.
+// 아래 함수는 모두 Response를 돌려준다. 본문이 없는 응답(204)도 있어서 .json()은 부르는 쪽에서 한다.
 export const apiGet = async (path: string) => {
   const response = await fetch(`/api${path}`)
   if (!response.ok) throw await toApiError(response)
@@ -30,6 +30,30 @@ export const apiPost = async (path: string, body: object = {}) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+  if (!response.ok) throw await toApiError(response)
+  return response
+}
+
+export const apiPatch = async (path: string, body: object) => {
+  const response = await fetch(`/api${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) throw await toApiError(response)
+  return response
+}
+
+// Content-Type을 적지 않는다. 브라우저가 FormData의 칸 구분선(boundary)을 넣어 직접 붙인다.
+// 손으로 적으면 구분선이 빠져서 서버가 파일을 꺼내지 못하고 400으로 답한다.
+export const apiPutForm = async (path: string, form: FormData) => {
+  const response = await fetch(`/api${path}`, { method: 'PUT', body: form })
+  if (!response.ok) throw await toApiError(response)
+  return response
+}
+
+export const apiDelete = async (path: string) => {
+  const response = await fetch(`/api${path}`, { method: 'DELETE' })
   if (!response.ok) throw await toApiError(response)
   return response
 }

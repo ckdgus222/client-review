@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router'
 import { ApiError } from '../api/client.ts'
+import { isUuid } from '../api/ids.ts'
 import {
   createScreen,
   getProject,
@@ -8,22 +9,17 @@ import {
   listScreens,
   type ProjectDetail,
   type Screen,
+  screenLabel,
   showScreen,
+  VIEWPORT_LABELS,
   type Viewport,
 } from '../api/projects.ts'
 import { Button } from '../components/Button.tsx'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
+import { ProjectNotFound } from '../components/ProjectNotFound.tsx'
 import { TextField } from '../components/TextField.tsx'
 import { useMe } from '../hooks/useMe.ts'
 import styles from './ProjectSettingsPage.module.css'
-
-// 주소에서 온 id라 '.'이나 '..'도 올 수 있다. encodeURIComponent가 이 둘은 감싸지 않아서 다른 API를 부를 수 있으므로,
-// UUID 모양이 아니면 서버를 부르기 전에 없는 프로젝트로 본다.
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
-const VIEWPORT_LABELS: Record<Viewport, string> = { PC: 'PC', MOBILE: '모바일' }
-
-const screenLabel = (screen: Screen) => `${screen.name} · ${VIEWPORT_LABELS[screen.viewport]}`
 
 const toMessage = (error: unknown): ReactNode => {
   if (!(error instanceof ApiError)) return '연결을 확인하고 다시 시도해 주세요'
@@ -33,15 +29,8 @@ const toMessage = (error: unknown): ReactNode => {
   return '잠시 뒤 다시 시도해 주세요'
 }
 
-const NotFound = () => (
-  <>
-    <h1>없는 프로젝트예요</h1>
-    <Link to="/">프로젝트 목록</Link>
-  </>
-)
-
 const ProjectSettings = ({ id }: { id: string }) => {
-  const isValidId = UUID_PATTERN.test(id)
+  const isValidId = isUuid(id)
   const { user, error: meError } = useMe()
   const [project, setProject] = useState<ProjectDetail>()
   const [screens, setScreens] = useState<Screen[]>([])
@@ -104,7 +93,7 @@ const ProjectSettings = ({ id }: { id: string }) => {
   if (user === null) return <Navigate to="/login" replace />
   // 확인 중 오류여도 로그인 화면으로 보내지 않는다. 서버가 잠깐 멈춘 것일 수 있다.
   if (user === undefined) return <p>{meError ?? '확인하는 중이에요.'}</p>
-  if (!isValidId || notFound) return <NotFound />
+  if (!isValidId || notFound) return <ProjectNotFound />
   if (loadError) return <ErrorText message={loadError} />
   if (!project) return <p>불러오는 중이에요.</p>
 

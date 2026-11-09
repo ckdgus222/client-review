@@ -1,0 +1,56 @@
+/* 문장 목록이라 프로젝트 목록 화면과 같은 폭의 흰 판이다. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 40rem;
+  margin: var(--space-4) auto 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+/* 기본 바깥 여백이 gap에 더해지지 않게 지운다. */
+.panel p,
+.panel h1 {
+  margin: 0;
+}
+
+/* 좁은 화면에서 "활동 일/지"처럼 낱말 중간에서 줄이 바뀌지 않게 띄어쓰기에서 나눈다.
+   띄어쓰기 없이 긴 프로젝트 이름은 overflow-wrap이 판 폭에서 자른다. */
+.panel h1 {
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+
+/* 링크 글자만 눌리게 한다. 줄 전체로 늘어나면 빈 곳을 눌러도 검수실로 간다. */
+.panel > a {
+  align-self: flex-start;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--color-border);
+}
+
+/* 줄 전체를 눌러 그 버전으로 갈 수 있게 링크를 줄 폭으로 넓힌다. 문장 아래에 시각을 둔다. */
+.row {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+a.row:hover {
+  text-decoration: underline;
+}
+
+.time {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}

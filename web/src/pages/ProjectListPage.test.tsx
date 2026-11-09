@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
+import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { type Me, getMe, logout } from '../api/auth.ts'
 import { createProject, getProject, listProjects, listScreens, type MyProject } from '../api/projects.ts'
 import App from '../App.tsx'
@@ -59,6 +59,7 @@ const renderProjectList = (basename = '/') => {
       <Routes>
         <Route path="/previous" element={<p>이전 화면</p>} />
         <Route path="/" element={<ProjectListPage />} />
+        <Route path="/projects/:id" element={<h1>검수실</h1>} />
         <Route path="/projects/:id/settings" element={<h1>프로젝트 설정</h1>} />
         <Route path="/login" element={<h1>로그인</h1>} />
       </Routes>
@@ -81,7 +82,18 @@ const renderApp = (basename = '/') =>
     <StrictMode>
       <MemoryRouter basename={basename} initialEntries={[basename]}>
         <CurrentPath />
-        <App />
+        <Routes>
+          <Route
+            path="/projects/:id"
+            element={
+              <>
+                <h1>검수실</h1>
+                <Link to="/">프로젝트 목록</Link>
+              </>
+            }
+          />
+          <Route path="*" element={<App />} />
+        </Routes>
       </MemoryRouter>
     </StrictMode>,
   )
@@ -91,7 +103,9 @@ beforeEach(() => {
   vi.mocked(listProjects).mockReset().mockResolvedValue([])
   vi.mocked(createProject).mockReset().mockResolvedValue(projects[0])
   vi.mocked(logout).mockReset().mockResolvedValue(undefined)
-  vi.mocked(getProject).mockReset().mockResolvedValue(projects[1])
+  vi.mocked(getProject)
+    .mockReset()
+    .mockResolvedValue({ ...projects[1], currentVersion: null })
   vi.mocked(listScreens).mockReset().mockResolvedValue([])
 })
 
@@ -245,7 +259,7 @@ describe('ProjectListPage 목록', () => {
     const prefix = basename === '/' ? '' : basename
     expect(links.map((link) => link.textContent)).toEqual(projects.map((project) => project.name))
     expect(links.map((link) => link.getAttribute('href'))).toEqual(
-      projects.map((project) => `${prefix}/projects/${project.id}/settings`),
+      projects.map((project) => `${prefix}/projects/${project.id}`),
     )
     expect(listProjects).toHaveBeenCalledExactlyOnceWith()
     expect(screen.queryByText('아직 프로젝트가 없어요.')).toBeNull()
@@ -253,8 +267,8 @@ describe('ProjectListPage 목록', () => {
 
     fireEvent.click(links[0])
 
-    expect(await screen.findByRole('heading', { name: '프로젝트 설정' })).toBeDefined()
-    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${projects[0].id}/settings`)
+    expect(await screen.findByRole('heading', { name: '검수실' })).toBeDefined()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${projects[0].id}`)
   })
 
   it('목록 응답을 기다리는 동안 불러오는 중 문구를 보여 주고 빈 목록과 구분한다', async () => {
@@ -339,7 +353,7 @@ describe('ProjectListPage 목록', () => {
 
 describe('ProjectListPage 만들기 응답과 화면 이동', () => {
   it.each(['/', '/app'])(
-    'basename이 %s일 때 다른 설정으로 떠난 뒤 성공 응답이 와도 주소와 입력을 보존하고 다음 목록에서 만든 프로젝트를 보여 준다',
+    'basename이 %s일 때 검수실로 떠난 뒤 성공 응답이 와도 주소와 화면을 보존하고 다음 목록에서 만든 프로젝트를 보여 준다',
     async (basename) => {
       const pendingCreate = deferred<MyProject>()
       const createdProject: MyProject = { ...projects[0], name: '새 의뢰', myRole: 'DEVELOPER' }
@@ -351,20 +365,16 @@ describe('ProjectListPage 만들기 응답과 화면 이동', () => {
       expect(createProject).toHaveBeenCalledExactlyOnceWith('새 의뢰')
 
       fireEvent.click(screen.getByRole('link', { name: projects[1].name }))
-      const input = await screen.findByLabelText<HTMLInputElement>('화면 이름')
-      fireEvent.change(input, { target: { value: '쓰던 화면 이름' } })
-      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'MOBILE' } })
-      expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${projects[1].id}/settings`)
+      const room = await screen.findByRole('heading', { name: '검수실' })
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${projects[1].id}`)
 
       await act(async () => {
         pendingCreate.resolve(createdProject)
         await pendingCreate.promise
       })
 
-      expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${projects[1].id}/settings`)
-      expect(screen.getByRole('heading', { name: projects[1].name })).toBeDefined()
-      expect(screen.getByLabelText<HTMLInputElement>('화면 이름').value).toBe('쓰던 화면 이름')
-      expect(screen.getByRole<HTMLSelectElement>('combobox').value).toBe('MOBILE')
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${projects[1].id}`)
+      expect(screen.getByRole('heading', { name: '검수실' })).toBe(room)
       expect(screen.queryByRole('alert')).toBeNull()
 
       vi.mocked(listProjects).mockResolvedValue([createdProject, projects[1]])
@@ -372,7 +382,7 @@ describe('ProjectListPage 만들기 응답과 화면 이동', () => {
 
       const createdLink = await screen.findByRole('link', { name: '새 의뢰' })
       const prefix = basename === '/' ? '' : basename
-      expect(createdLink.getAttribute('href')).toBe(`${prefix}/projects/${createdProject.id}/settings`)
+      expect(createdLink.getAttribute('href')).toBe(`${prefix}/projects/${createdProject.id}`)
       expect(screen.getByLabelText('현재 주소').textContent).toBe('/')
       expect(createProject).toHaveBeenCalledTimes(1)
     },
@@ -382,7 +392,7 @@ describe('ProjectListPage 만들기 응답과 화면 이동', () => {
     { reason: '세션 만료', error: new ApiError(401) },
     { reason: '서버 오류', error: new ApiError(500) },
     { reason: '네트워크 오류', error: new TypeError('Failed to fetch') },
-  ])('다른 설정으로 떠난 뒤 $reason가 와도 주소와 입력을 보존한다', async ({ error }) => {
+  ])('검수실로 떠난 뒤 $reason가 와도 주소와 화면을 보존한다', async ({ error }) => {
     const pendingCreate = deferred<MyProject>()
     vi.mocked(createProject).mockReturnValueOnce(pendingCreate.promise)
     vi.mocked(listProjects).mockResolvedValue([projects[1]])
@@ -392,17 +402,15 @@ describe('ProjectListPage 만들기 응답과 화면 이동', () => {
     expect(createProject).toHaveBeenCalledExactlyOnceWith('새 의뢰')
 
     fireEvent.click(screen.getByRole('link', { name: projects[1].name }))
-    const input = await screen.findByLabelText<HTMLInputElement>('화면 이름')
-    fireEvent.change(input, { target: { value: '쓰던 화면 이름' } })
+    const room = await screen.findByRole('heading', { name: '검수실' })
 
     await act(async () => {
       pendingCreate.reject(error)
       await pendingCreate.promise.catch(() => undefined)
     })
 
-    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${projects[1].id}/settings`)
-    expect(screen.getByRole('heading', { name: projects[1].name })).toBeDefined()
-    expect(screen.getByLabelText<HTMLInputElement>('화면 이름').value).toBe('쓰던 화면 이름')
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${projects[1].id}`)
+    expect(screen.getByRole('heading', { name: '검수실' })).toBe(room)
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByRole('link', { name: '다시 로그인하기' })).toBeNull()
   })
@@ -416,7 +424,7 @@ describe('ProjectListPage 만들기 응답과 화면 이동', () => {
     fireEvent.click(screen.getByRole('button', { name: '만들기' }))
     expect(createProject).toHaveBeenCalledExactlyOnceWith('첫 의뢰')
     fireEvent.click(screen.getByRole('link', { name: projects[1].name }))
-    expect(await screen.findByLabelText('화면 이름')).toBeDefined()
+    expect(await screen.findByRole('heading', { name: '검수실' })).toBeDefined()
 
     fireEvent.click(screen.getByRole('link', { name: '프로젝트 목록' }))
     const input = await screen.findByLabelText<HTMLInputElement>('프로젝트 이름')
@@ -438,7 +446,7 @@ describe('ProjectListPage 만들기 응답과 화면 이동', () => {
     const pendingCreate = deferred<MyProject>()
     const createdProject: MyProject = { ...projects[0], name: '새 의뢰', myRole: 'DEVELOPER' }
     vi.mocked(createProject).mockReturnValueOnce(pendingCreate.promise)
-    vi.mocked(getProject).mockResolvedValue(createdProject)
+    vi.mocked(getProject).mockResolvedValue({ ...createdProject, currentVersion: null })
     renderApp()
     fireEvent.change(await screen.findByLabelText('프로젝트 이름'), { target: { value: '새 의뢰' } })
     fireEvent.click(screen.getByRole('button', { name: '만들기' }))
