@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import App from '../App.tsx'
@@ -244,6 +245,112 @@ describe('DraftPage 불러오기와 버전 이름', () => {
     )
     expect(await screen.findByRole('heading', { name: `${project.name} · 1차 준비 중` })).toBeDefined()
     expect(screen.getByRole('link', { name: '검수실' }).getAttribute('href')).toBe(`/app/projects/${project.id}`)
+  })
+})
+
+describe('DraftPage StrictMode의 늦은 첫 조회', () => {
+  const renderStrictDraft = () =>
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={[`/projects/${project.id}/draft`]}>
+          <Routes>
+            <Route path="/projects/:id/draft" element={<DraftPage />} />
+          </Routes>
+        </MemoryRouter>
+      </StrictMode>,
+    )
+
+  it.each(['버전 목록', '버전 상세', '게시 전 버전 없는 목록'])(
+    '첫 조회의 %s 응답이 늦어도 두 번째 응답 뒤 쓴 설명·주소와 사진을 유지한다',
+    async (source) => {
+      const firstVersions = deferred<VersionSummary[]>()
+      const firstDetail = deferred<VersionDetail>()
+      const oldDraft: VersionDetail = {
+        ...draft,
+        id: '4c91bf82-6d1b-43b9-b09d-918bd756d345',
+        summary: '이전 조회의 설명',
+        testUrl: 'https://example.com/old',
+        screens: [],
+      }
+      const oldVersions: VersionSummary[] = [{ ...versions[0], id: oldDraft.id }]
+      vi.mocked(listVersions).mockReturnValueOnce(firstVersions.promise)
+      vi.mocked(getVersion).mockImplementation((id) =>
+        id === oldDraft.id ? firstDetail.promise : Promise.resolve(draft),
+      )
+      renderStrictDraft()
+      expect(getProject).toHaveBeenCalledTimes(2)
+      expect(listVersions).toHaveBeenCalledTimes(2)
+      expect(listScreens).toHaveBeenCalledTimes(2)
+
+      // 상세만 늦는 경우에는 첫 목록을 먼저 끝내고 상세 요청을 대기시킨다.
+      if (source === '버전 상세') {
+        await act(async () => firstVersions.resolve(oldVersions))
+        await waitFor(() => expect(getVersion).toHaveBeenCalledWith(oldDraft.id))
+      }
+      const summary = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: '설명' })
+      expect(summary.value).toBe(draft.summary)
+      expect(screen.getByRole<HTMLInputElement>('textbox', { name: '테스트 주소' }).value).toBe(draft.testUrl)
+      fireEvent.change(summary, { target: { value: '사용자가 새로 쓴 설명' } })
+      fireEvent.change(screen.getByRole('textbox', { name: '테스트 주소' }), {
+        target: { value: 'https://example.com/edited' },
+      })
+
+      await act(async () => {
+        firstVersions.resolve(source === '게시 전 버전 없는 목록' ? [] : oldVersions)
+        firstDetail.resolve(oldDraft)
+      })
+
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '설명' }).value).toBe('사용자가 새로 쓴 설명')
+      expect(screen.getByRole<HTMLInputElement>('textbox', { name: '테스트 주소' }).value).toBe(
+        'https://example.com/edited',
+      )
+      expect(screen.getByRole('img', { name: '메인 · PC' }).getAttribute('src')).toBe('/api/assets/pc-photo')
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: '저장' }).disabled).toBe(false)
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: '1차 게시' }).disabled).toBe(true)
+      expect(screen.queryByRole('button', { name: /준비 시작/ })).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+    },
+  )
+
+  describe.each([
+    { source: '프로젝트 조회', delay: (promise: Promise<never>) => vi.mocked(getProject).mockReturnValueOnce(promise) },
+    { source: '버전 상세', delay: (promise: Promise<never>) => vi.mocked(getVersion).mockReturnValueOnce(promise) },
+  ])('$source', ({ delay }) => {
+    it.each([
+      { label: '일반 오류', error: new TypeError('Failed to fetch') },
+      { label: '서버 오류', error: new ApiError(500) },
+      { label: '404', error: new ApiError(404) },
+    ])('정리된 첫 조회의 늦은 $label가 편집 화면을 가리지 않는다', async ({ error }) => {
+      const pending = deferred<never>()
+      delay(pending.promise)
+      renderStrictDraft()
+      expect(getProject).toHaveBeenCalledTimes(2)
+      expect(listVersions).toHaveBeenCalledTimes(2)
+      expect(listScreens).toHaveBeenCalledTimes(2)
+      const summary = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: '설명' })
+      expect(summary.value).toBe(draft.summary)
+      fireEvent.change(summary, { target: { value: '오류가 와도 남아야 하는 설명' } })
+      fireEvent.change(screen.getByRole('textbox', { name: '테스트 주소' }), {
+        target: { value: 'https://example.com/edited' },
+      })
+
+      await act(async () => {
+        pending.reject(error)
+        await pending.promise.catch(() => undefined)
+      })
+
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.queryByRole('heading', { name: '없는 프로젝트예요' })).toBeNull()
+      expect(screen.getByRole('heading', { name: `${project.name} · 1차 준비 중` })).toBeDefined()
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '설명' }).value).toBe(
+        '오류가 와도 남아야 하는 설명',
+      )
+      expect(screen.getByRole<HTMLInputElement>('textbox', { name: '테스트 주소' }).value).toBe(
+        'https://example.com/edited',
+      )
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: '저장' }).disabled).toBe(false)
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: '1차 게시' }).disabled).toBe(true)
+    })
   })
 })
 

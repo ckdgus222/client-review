@@ -89,19 +89,27 @@ const DraftEditor = ({ id }: { id: string }) => {
 
   useEffect(() => {
     if (!isValidId) return
+    // 개발 모드(StrictMode)는 이 조회를 두 번 한다. 늦게 온 첫 응답이 그사이 쓴 설명·주소를 되돌리지 않게,
+    // 정리된 조회의 응답은 버린다. getVersion을 기다린 뒤에도 다시 본다.
+    let ignore = false
     Promise.all([getProject(id), listVersions(id), listScreens(id)])
       .then(async ([loadedProject, versions, loadedScreens]) => {
         // 클라이언트 목록에는 게시 전 버전이 없어서 늘 null이 된다.
         const existing = versions.find((version) => version.status === 'DRAFT')
         const detail = existing ? await getVersion(existing.id) : null
+        if (ignore) return
         setProject(loadedProject)
         setScreens(loadedScreens)
         fillForm(detail)
       })
       .catch((caught) => {
+        if (ignore) return
         if (caught instanceof ApiError && caught.status === 404) return setNotFound(true)
         setLoadError(toMessage(caught))
       })
+    return () => {
+      ignore = true
+    }
   }, [id, isValidId])
 
   // 시작·저장·올리기·빼기·게시가 같이 쓴다. 어떤 일을 시작하든 지난 오류를 지운다.
