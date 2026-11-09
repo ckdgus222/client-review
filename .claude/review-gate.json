@@ -1,4 +1,11 @@
 {
   "testCommand": "npm --prefix api test && npm --prefix web test && npm --prefix e2e test",
-  "securityPaths": ["api/src/"]
+  "securityPaths": ["api/src/"],
+  "e2eGate": {
+    "sourcePaths": ["api/src/", "web/src/"],
+    "testPattern": "^(api/test|e2e/tests)/[^/]+\\.e2e\\.spec\\.ts$",
+    "resultFiles": [".e2e-results/api.json", ".e2e-results/browser.json"],
+    "planDir": "docs/",
+    "mainBranch": "main"
+  }
 }
