@@ -12,6 +12,7 @@ import {
   type VersionSummary,
 } from '../api/versions.ts'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
+import { ProjectNotFound } from '../components/ProjectNotFound.tsx'
 import { useMe } from '../hooks/useMe.ts'
 import styles from './ReviewRoomPage.module.css'
 
@@ -25,13 +26,6 @@ const isNotFound = (error: unknown) => error instanceof ApiError && error.status
 
 // 어떤 버전을 불러왔는지 함께 적어 둔다. 버전을 바꾼 직후에는 id가 달라서 이전 버전 화면을 보여 주지 않는다.
 type LoadedVersion = { versionId: string; detail?: VersionDetail; missing?: boolean; error?: ReactNode }
-
-const ProjectNotFound = () => (
-  <>
-    <h1>없는 프로젝트예요</h1>
-    <Link to="/">프로젝트 목록</Link>
-  </>
-)
 
 type VersionViewProps = {
   version: VersionDetail

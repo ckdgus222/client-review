@@ -18,6 +18,7 @@ import {
 import { Button } from '../components/Button.tsx'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { TextField } from '../components/TextField.tsx'
+import { ProjectNotFound } from '../components/ProjectNotFound.tsx'
 import { useMe } from '../hooks/useMe.ts'
 import styles from './DraftPage.module.css'
 
@@ -42,13 +43,6 @@ const toMessage = (error: unknown): ReactNode => {
 // 게시에서 숨긴 화면 409는 "올릴 수 없다"가 아니라 "빼고 게시하라"는 뜻이다.
 const toPublishMessage = (error: unknown): ReactNode =>
   error instanceof ApiError && error.code === 'SCREEN_HIDDEN' ? '숨긴 화면을 빼고 게시해 주세요' : toMessage(error)
-
-const ProjectNotFound = () => (
-  <>
-    <h1>없는 프로젝트예요</h1>
-    <Link to="/">프로젝트 목록</Link>
-  </>
-)
 
 const DraftEditor = ({ id }: { id: string }) => {
   const navigate = useNavigate()

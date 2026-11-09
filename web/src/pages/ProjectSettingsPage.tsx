@@ -16,6 +16,7 @@ import {
 } from '../api/projects.ts'
 import { Button } from '../components/Button.tsx'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
+import { ProjectNotFound } from '../components/ProjectNotFound.tsx'
 import { TextField } from '../components/TextField.tsx'
 import { useMe } from '../hooks/useMe.ts'
 import styles from './ProjectSettingsPage.module.css'
@@ -27,13 +28,6 @@ const toMessage = (error: unknown): ReactNode => {
   if (error.status === 422) return '화면 이름은 1~40자로 써 주세요'
   return '잠시 뒤 다시 시도해 주세요'
 }
-
-const NotFound = () => (
-  <>
-    <h1>없는 프로젝트예요</h1>
-    <Link to="/">프로젝트 목록</Link>
-  </>
-)
 
 const ProjectSettings = ({ id }: { id: string }) => {
   const isValidId = isUuid(id)
@@ -99,7 +93,7 @@ const ProjectSettings = ({ id }: { id: string }) => {
   if (user === null) return <Navigate to="/login" replace />
   // 확인 중 오류여도 로그인 화면으로 보내지 않는다. 서버가 잠깐 멈춘 것일 수 있다.
   if (user === undefined) return <p>{meError ?? '확인하는 중이에요.'}</p>
-  if (!isValidId || notFound) return <NotFound />
+  if (!isValidId || notFound) return <ProjectNotFound />
   if (loadError) return <ErrorText message={loadError} />
   if (!project) return <p>불러오는 중이에요.</p>
 

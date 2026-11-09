@@ -5,6 +5,7 @@ import { isUuid } from '../api/ids.ts'
 import { getProject, type ProjectDetail } from '../api/projects.ts'
 import { type ActivityItem, listActivity, versionLabel } from '../api/versions.ts'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
+import { ProjectNotFound } from '../components/ProjectNotFound.tsx'
 import { useMe } from '../hooks/useMe.ts'
 import styles from './ActivityPage.module.css'
 
@@ -24,13 +25,6 @@ const describe = ({ actorName, version }: ActivityItem) => {
   const particle = version.number === 0 ? '을' : '를'
   return `${actorName}님이 ${versionLabel(version.number)}${particle} 게시했어요`
 }
-
-const ProjectNotFound = () => (
-  <>
-    <h1>없는 프로젝트예요</h1>
-    <Link to="/">프로젝트 목록</Link>
-  </>
-)
 
 const ActivityRow = ({ projectId, item }: { projectId: string; item: ActivityItem }) => {
   const content = (
