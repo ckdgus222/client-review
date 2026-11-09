@@ -1,0 +1,179 @@
+/* 카드를 여러 줄로 늘어놓으려고 검수실과 같은 넓은 흰 판이다. */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 72rem;
+  margin: var(--space-4) auto 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+/* 기본 바깥 여백이 gap에 더해지지 않게 지운다. */
+.page p,
+.page h1,
+.page h2 {
+  margin: 0;
+}
+
+.page h1 {
+  overflow-wrap: anywhere;
+}
+
+/* 링크 글자만 눌리게 한다. 줄 전체로 늘어나면 빈 곳을 눌러도 검수실로 간다. */
+.page > a {
+  align-self: flex-start;
+}
+
+/* 제목은 왼쪽, 게시 버튼은 오른쪽이다. 좁은 화면에서는 버튼이 다음 줄로 내려간다. */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.hint {
+  color: var(--color-text-muted);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* 라벨과 글 칸 모양을 TextField에 맞춘다. 여러 줄 칸은 이 화면에서만 써서 공통 부품으로 만들지 않는다. */
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-weight: 600;
+}
+
+.summary textarea {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 400;
+  resize: vertical;
+}
+
+.summary textarea:disabled {
+  background: var(--color-disabled-bg);
+  color: var(--color-disabled-text);
+  cursor: not-allowed;
+}
+
+/* 카드는 폭이 남는 만큼 한 줄에 여러 개 놓이고, 좁은 화면에서는 한 줄에 하나다. */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.card h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-md);
+  overflow-wrap: anywhere;
+}
+
+/* 사진을 끌고 카드 위에 왔을 때, 여기에 놓으면 된다는 것을 테두리와 바탕으로 알린다. */
+.dropping {
+  border-color: var(--color-accent);
+  background: var(--color-bg);
+}
+
+.hiddenTag {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+}
+
+/* 긴 전체 페이지 사진도 카드 높이를 넘지 않게 줄여서 보여 준다. */
+.card img {
+  display: block;
+  width: 100%;
+  height: 12rem;
+  object-fit: contain;
+  background: var(--color-bg);
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 12rem;
+  padding: var(--space-2);
+  border: 1px dashed var(--color-border-strong);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.cardActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* 파일 고르기 칸은 브라우저마다 모양이 달라서, 라벨을 보조 버튼 모양으로 보이고 칸은 눈에만 숨긴다.
+   값은 Button.module.css의 .secondary·:disabled와 같다. 옆의 "빼기" 버튼과 함께 바꾼다. */
+.fileButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* 키보드로 칸에 왔을 때 어디에 있는지 보이게 한다. */
+.fileButton:focus-within {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.fileButtonDisabled {
+  background: var(--color-disabled-bg);
+  color: var(--color-disabled-text);
+  border-color: transparent;
+  cursor: not-allowed;
+}
+
+/* display: none이면 키보드로 갈 수 없어서, 크기만 없애고 화면 읽기와 키보드는 그대로 둔다. */
+.fileButton input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
