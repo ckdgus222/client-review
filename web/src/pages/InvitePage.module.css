@@ -1,0 +1,59 @@
+/* 로그인 화면과 같은 좁은 흰 판이다(시안 "모노 인덱스"의 초대 화면). */
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  max-width: 26rem;
+  margin: var(--space-4) auto 0;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+/* 기본 바깥 여백이 gap에 더해지지 않게 지운다. */
+.card :where(h1, p, dl, dd) {
+  margin: 0;
+}
+
+.card h1 {
+  font-size: var(--font-size-lg);
+}
+
+.eyebrow {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* 항목 이름은 왼쪽, 값은 오른쪽이다. 긴 이메일은 줄을 바꿔 판 밖으로 나가지 않게 한다. */
+.details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-2) var(--space-3);
+  width: 100%;
+  font-size: var(--font-size-sm);
+}
+
+.details dt {
+  color: var(--color-text-muted);
+}
+
+.details dd {
+  overflow-wrap: anywhere;
+}
+
+/* 다른 화면으로 가는 링크라 Button 대신 Link를 주 버튼 모양으로 보인다.
+   값은 Button.module.css의 .button·.primary와 같다. 그쪽을 바꾸면 함께 바꾼다. */
+.primaryLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
