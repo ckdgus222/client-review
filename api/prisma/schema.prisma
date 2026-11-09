@@ -1,6 +1,6 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
   // 만드는 방식을 환경에 맡기지 않고 고정한다. Prisma는 tsconfig.json을 보고 추측하는데,
   // Docker의 npm ci 때는 tsconfig.json이 아직 없어서 import에 .ts를 붙였고 빌드 결과가 실행되지 않았다.
   moduleFormat        = "esm"
@@ -15,10 +15,13 @@ model User {
   id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email       String          @unique
   name        String
+  // 마지막 접속 시각. 로그인할 때 적고, 세션을 쓸 때 5분에 한 번 고친다. 로그아웃으로 세션 줄이 지워져도 남는다.
+  lastSeenAt  DateTime?       @map("last_seen_at") @db.Timestamptz
   createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz
   sessions    Session[]
   memberships ProjectMember[]
   activities  ActivityEvent[]
+  invitations Invitation[]
 
   @@map("users")
 }
@@ -68,12 +71,17 @@ model Project {
   // 게시할 때만 바꾼다. 검수실이 처음 보여 줄 버전이다.
   currentVersionId String?           @unique @map("current_version_id") @db.Uuid
   currentVersion   DeliveryVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: NoAction)
+  // 승인자는 이 프로젝트의 멤버만 될 수 있다. (승인자 id, 프로젝트 id) 두 칸을 멤버의 (id, project_id)에 걸어서
+  // 다른 프로젝트의 멤버를 넣으면 DB가 거절한다. 역할이 CLIENT이고 철회되지 않았는지는 코드가 잠근 뒤 본다.
+  approverMemberId String?           @map("approver_member_id") @db.Uuid
+  approver         ProjectMember?    @relation("Approver", fields: [approverMemberId, id], references: [id, projectId], onDelete: NoAction)
   createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
   members          ProjectMember[]
   screens          Screen[]
   versions         DeliveryVersion[]
   assets           Asset[]
   activities       ActivityEvent[]
+  invitations      Invitation[]
 
   @@map("projects")
 }
@@ -81,15 +89,21 @@ model Project {
 // 개발자는 Project에 따로 적지 않고 여기 DEVELOPER 줄로만 적는다. 적는 곳이 하나라 두 값이 어긋나지 않는다.
 // 프로젝트마다 DEVELOPER 줄이 1개인 것은 마이그레이션 SQL의 부분 유니크 인덱스가 지킨다. Prisma 스키마로는 미리보기 기능으로만 적을 수 있어서 SQL로 넣었다.
 model ProjectMember {
-  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  projectId String      @map("project_id") @db.Uuid
-  project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  userId    String      @map("user_id") @db.Uuid
-  user      User        @relation(fields: [userId], references: [id])
-  role      ProjectRole
-  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId  String          @map("project_id") @db.Uuid
+  project    Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId     String          @map("user_id") @db.Uuid
+  user       User            @relation(fields: [userId], references: [id])
+  role       ProjectRole
+  // 접근을 철회하면 줄을 지우지 않고 시각만 적는다. 쓴 쪽지·댓글과 일지가 이 줄을 계속 가리킨다.
+  revokedAt  DateTime?       @map("revoked_at") @db.Timestamptz
+  createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  approverOf Project[]       @relation("Approver")
+  activities ActivityEvent[] @relation("ActivityMember")
 
   @@unique([projectId, userId])
+  // 승인자 외래키(Project.approver)가 가리킬 수 있게 (id, project_id)도 고유로 둔다.
+  @@unique([id, projectId])
   // 내 프로젝트 목록은 user_id로만 찾는다. 위 유니크 인덱스는 첫 칸이 project_id라 이 조회에 거의 쓰이지 않는다.
   @@index([userId])
   @@map("project_members")
@@ -178,6 +192,10 @@ model VersionScreen {
 // 사건 종류는 기능마다 마이그레이션으로 값을 더한다.
 enum ActivityType {
   VERSION_PUBLISHED
+  INVITATION_CREATED
+  INVITATION_ACCEPTED
+  MEMBER_REVOKED
+  APPROVER_CHANGED
 
   @@map("activity_type")
 }
@@ -192,9 +210,30 @@ model ActivityEvent {
   type      ActivityType
   versionId String?          @map("version_id") @db.Uuid
   version   DeliveryVersion? @relation(fields: [versionId], references: [id], onDelete: NoAction)
+  // 초대 수락·접근 철회·승인자 변경의 대상 멤버. 초대 사건은 비워 둔다(초대 줄은 나중에 지워진다).
+  memberId  String?          @map("member_id") @db.Uuid
+  member    ProjectMember?   @relation("ActivityMember", fields: [memberId], references: [id], onDelete: NoAction)
   createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
   // 활동 일지는 한 프로젝트의 줄을 최신순으로 읽는다. 찾기와 정렬을 인덱스 하나로 끝낸다.
   @@index([projectId, createdAt])
   @@map("activity_events")
+}
+
+// 프로젝트 초대. 링크 토큰은 해시만 둔다. 아직 쓰지 않은 초대가 (프로젝트, 이메일)마다 1개인 것과
+// "수락과 무효가 함께 있을 수 없다"는 마이그레이션 SQL의 부분 유니크 인덱스와 CHECK 제약이 지킨다.
+model Invitation {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId   String    @map("project_id") @db.Uuid
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  email       String
+  tokenHash   String    @unique @map("token_hash")
+  invitedById String    @map("invited_by_id") @db.Uuid
+  invitedBy   User      @relation(fields: [invitedById], references: [id])
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz
+  acceptedAt  DateTime? @map("accepted_at") @db.Timestamptz
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("invitations")
 }

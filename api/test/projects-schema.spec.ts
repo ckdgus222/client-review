@@ -318,6 +318,7 @@ describe('프로젝트와 화면 테이블', () => {
       id: row.id,
       name: '프로젝트',
       currentVersionId: null,
+      approverMemberId: null,
       createdAt: expect.any(Date),
     });
   });
@@ -340,6 +341,7 @@ describe('프로젝트와 화면 테이블', () => {
       projectId: project.id,
       userId: user.id,
       role: 'DEVELOPER',
+      revokedAt: null,
       createdAt: expect.any(Date),
     });
   });

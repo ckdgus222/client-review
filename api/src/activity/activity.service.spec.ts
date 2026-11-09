@@ -90,6 +90,7 @@ describe('ActivityService', () => {
         actorId: developerId,
         type: 'VERSION_PUBLISHED',
         versionId: version.id,
+        memberId: null,
         createdAt: expect.any(Date),
       },
     ]);
@@ -135,6 +136,7 @@ describe('ActivityService', () => {
         actorId: developerId,
         type: 'VERSION_PUBLISHED',
         versionId: null,
+        memberId: null,
         createdAt: expect.any(Date),
       },
     ]);
@@ -178,6 +180,7 @@ describe('ActivityService', () => {
         actorId: developerId,
         type: 'VERSION_PUBLISHED',
         versionId: secondVersion.id,
+        memberId: null,
         createdAt: expect.any(Date),
       },
     ]);

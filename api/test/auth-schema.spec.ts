@@ -155,6 +155,7 @@ describe('로그인 표와 테스트 DB', () => {
       id: row.id,
       email: 'user@example.com',
       name: '사용자',
+      lastSeenAt: null,
       createdAt: expect.any(Date),
     });
   });

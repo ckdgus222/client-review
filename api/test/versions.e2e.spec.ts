@@ -228,6 +228,7 @@ describe('버전 API (e2e)', () => {
         actorId: developerId,
         type: 'VERSION_PUBLISHED',
         versionId: draft.body.id,
+        memberId: null,
         createdAt: expect.any(Date),
       },
     ]);

@@ -152,6 +152,7 @@ describe('프로젝트 API (e2e)', () => {
         projectId: project.id,
         userId,
         role: 'DEVELOPER',
+        revokedAt: null,
         createdAt: expect.any(Date),
       },
     ]);
@@ -175,7 +176,7 @@ describe('프로젝트 API (e2e)', () => {
       createdAt: expect.any(String),
     });
     expect(await prisma.project.findMany()).toEqual([
-      { id: response.body.id, name, currentVersionId: null, createdAt: expect.any(Date) },
+      { id: response.body.id, name, currentVersionId: null, approverMemberId: null, createdAt: expect.any(Date) },
     ]);
   });
 
@@ -228,6 +229,7 @@ describe('프로젝트 API (e2e)', () => {
           id: response.body.id,
           name: '개발자 프로젝트',
           currentVersionId: null,
+          approverMemberId: null,
           createdAt: new Date(response.body.createdAt),
         },
       ]);
@@ -237,6 +239,7 @@ describe('프로젝트 API (e2e)', () => {
           projectId: response.body.id,
           userId,
           role: 'DEVELOPER',
+          revokedAt: null,
           createdAt: expect.any(Date),
         },
       ]);
@@ -279,6 +282,7 @@ describe('프로젝트 API (e2e)', () => {
         projectId: response.body.id,
         userId: otherUserId,
         role: 'DEVELOPER',
+        revokedAt: null,
         createdAt: expect.any(Date),
       },
     ]);
