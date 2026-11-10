@@ -130,11 +130,12 @@ export class InvitationsService {
       await this.projects.lockProject(tx, projectId);
 
       // 잠근 뒤의 상태로 판단한다. 같은 링크로 동시에 두 번 수락하면 두 번째는 여기서 수락된 초대를 본다.
+      // 만료는 clock_timestamp()로 본다. now()는 트랜잭션을 시작한 시각이라, 잠금을 기다리는 동안 만료된 초대를 놓친다.
       const [invitation] = await tx.$queryRaw<
         { email: string; accepted: boolean; revoked: boolean; expired: boolean }[]
       >`
         SELECT email, accepted_at IS NOT NULL AS accepted, revoked_at IS NOT NULL AS revoked,
-               expires_at <= now() AS expired
+               expires_at <= clock_timestamp() AS expired
         FROM invitations WHERE id = ${found.id}::uuid
       `;
       if (invitation.accepted || invitation.revoked) throw invitationNotFound();
@@ -157,7 +158,7 @@ export class InvitationsService {
       // 마지막 방어: 쓰지 않은 초대일 때만 수락으로 바꾼다.
       const used = await tx.$executeRaw`
         UPDATE invitations SET accepted_at = now()
-        WHERE id = ${found.id}::uuid AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+        WHERE id = ${found.id}::uuid AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > clock_timestamp()
       `;
       if (used === 0) throw invitationNotFound();
 

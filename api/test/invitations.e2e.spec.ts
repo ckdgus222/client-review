@@ -341,6 +341,82 @@ describe('초대 API (e2e)', () => {
     expect(await readState()).toEqual(before);
   });
 
+  it('잠금을 기다리는 동안 만료된 초대는 410이고 초대·멤버·일지가 바뀌지 않는다', async () => {
+    const invitation = await createInvitation();
+    const hash = tokenHash(invitation.token);
+    await prisma.$executeRaw`
+      UPDATE invitations SET expires_at = clock_timestamp() + interval '2 seconds'
+      WHERE token_hash = ${hash}
+    `;
+    const before = await readState();
+    let response: request.Response | undefined;
+    let requestError: unknown;
+    let requestFinished = false;
+    let acceptRequest: Promise<void> | undefined;
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM projects WHERE id = ${projectId}::uuid FOR UPDATE`;
+        const [connection] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+
+        // .then으로 HTTP 요청을 즉시 보내고, 잠금을 푼 뒤에도 같은 요청의 결과를 확인한다.
+        acceptRequest = accept(invitation.token)
+          .timeout({ deadline: 4_000 })
+          .then(
+            (result) => {
+              response = result;
+              requestFinished = true;
+            },
+            (error: unknown) => {
+              requestError = error;
+              requestFinished = true;
+            },
+          );
+
+        // 단순 지연이 아니라 이 연결의 잠금에서, 만료 전에 시작한 트랜잭션이 기다리는지 본다.
+        await vi.waitFor(
+          async () => {
+            const [waiting] = await prisma.$queryRaw<{ blocked: boolean }[]>`
+            SELECT EXISTS (
+              SELECT 1 FROM pg_stat_activity AS activity
+              JOIN invitations AS invitation ON invitation.token_hash = ${hash}
+              WHERE ${connection.pid}::int = ANY(pg_blocking_pids(activity.pid))
+                AND activity.xact_start < invitation.expires_at
+                AND clock_timestamp() < invitation.expires_at
+            ) AS blocked
+          `;
+            expect(waiting.blocked).toBe(true);
+          },
+          { timeout: 1_000, interval: 25 },
+        );
+        expect(requestFinished).toBe(false);
+
+        await vi.waitFor(
+          async () => {
+            const [expiration] = await prisma.$queryRaw<{ expired: boolean }[]>`
+            SELECT expires_at <= clock_timestamp() AS expired FROM invitations WHERE token_hash = ${hash}
+          `;
+            expect(expiration.expired).toBe(true);
+          },
+          { timeout: 3_000, interval: 50 },
+        );
+        expect(requestFinished).toBe(false);
+      });
+    } finally {
+      // 중간 검증이 실패해도 트랜잭션이 잠금을 풀고 HTTP 요청까지 끝낸 뒤 다음 테스트로 간다.
+      await acceptRequest;
+    }
+
+    expect(requestError).toBeUndefined();
+    expect(response?.status).toBe(410);
+    expect(response?.body).toEqual(invitationExpiredBody);
+    expect(await prisma.invitation.findUniqueOrThrow({ where: { tokenHash: hash } })).toMatchObject({
+      acceptedAt: null,
+      revokedAt: null,
+    });
+    expect(await readState()).toEqual(before);
+  });
+
   it('없는 토큰은 미리보기·수락 모두 같은 404다', async () => {
     const before = await readState();
 
