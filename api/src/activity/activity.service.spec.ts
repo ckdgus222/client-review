@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { NotFoundException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { resetDatabase } from '../../test/reset-database.js';
@@ -101,10 +102,165 @@ describe('ActivityService', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: events[0].createdAt,
         actorName: '개발자',
+        issue: null,
         memberName: null,
         version: { id: version.id, number: 1 },
       },
     ]);
+  });
+
+  it.each(['ISSUE_CREATED', 'ISSUE_STARTED'] as const)(
+    'record는 %s의 issueId를 저장하고 목록에 쪽지 id와 번호만 돌려준다',
+    async (type) => {
+      const version = await prisma.deliveryVersion.create({
+        data: { projectId, number: 1, status: 'IN_REVIEW', publishedAt },
+      });
+      const issue = await prisma.$transaction(async (tx) => {
+        const created = await tx.issue.create({
+          data: {
+            projectId,
+            originVersionId: version.id,
+            authorId: clientId,
+            number: 14,
+            title: '버튼을 고쳐 주세요',
+            body: '본문은 일지 응답에 포함하지 않는다',
+            requestId: randomUUID(),
+            status: type === 'ISSUE_STARTED' ? 'IN_PROGRESS' : 'OPEN',
+          },
+        });
+        await service.record(tx, { projectId, actorId: developerId, type, issueId: created.id });
+        return created;
+      });
+
+      const events = await prisma.activityEvent.findMany();
+      expect(events).toEqual([
+        {
+          id: expect.any(String),
+          projectId,
+          actorId: developerId,
+          type,
+          versionId: null,
+          memberId: null,
+          issueId: issue.id,
+          createdAt: expect.any(Date),
+        },
+      ]);
+      const expected = [
+        {
+          id: events[0].id,
+          type,
+          createdAt: events[0].createdAt,
+          actorName: '개발자',
+          memberName: null,
+          version: null,
+          issue: { id: issue.id, number: 14 },
+        },
+      ];
+      await expect(service.listForMember(projectId, developerId)).resolves.toEqual(expected);
+      await expect(service.listForMember(projectId, clientId)).resolves.toEqual(expected);
+    },
+  );
+
+  it('두 프로젝트의 쪽지 번호가 같아도 다른 프로젝트의 쪽지 사건은 목록에 섞이지 않는다', async () => {
+    const issues = [];
+    for (const targetProjectId of [projectId, otherProjectId]) {
+      const version = await prisma.deliveryVersion.create({
+        data: { projectId: targetProjectId, number: 1, status: 'IN_REVIEW', publishedAt },
+      });
+      const issue = await prisma.issue.create({
+        data: {
+          projectId: targetProjectId,
+          originVersionId: version.id,
+          authorId: developerId,
+          number: 1,
+          title: '각 프로젝트의 첫 쪽지',
+          body: '',
+          requestId: randomUUID(),
+        },
+      });
+      await prisma.$transaction(async (tx) => {
+        await service.record(tx, {
+          projectId: targetProjectId,
+          actorId: developerId,
+          type: 'ISSUE_CREATED',
+          issueId: issue.id,
+        });
+        await service.record(tx, {
+          projectId: targetProjectId,
+          actorId: developerId,
+          type: 'ISSUE_STARTED',
+          issueId: issue.id,
+        });
+      });
+      issues.push(issue);
+    }
+
+    for (const issue of issues) {
+      const events = await service.listForMember(issue.projectId, developerId);
+      expect(events).toHaveLength(2);
+      expect(events.map(({ type }) => type).sort()).toEqual(['ISSUE_CREATED', 'ISSUE_STARTED']);
+      expect(events.map(({ issue: target }) => target)).toEqual([
+        { id: issue.id, number: 1 },
+        { id: issue.id, number: 1 },
+      ]);
+    }
+  });
+
+  it('쪽지 작성 사건을 기록한 뒤 실패하면 같은 트랜잭션의 쪽지와 일지가 모두 되돌려진다', async () => {
+    const version = await prisma.deliveryVersion.create({
+      data: { projectId, number: 1, status: 'IN_REVIEW', publishedAt },
+    });
+    const failure = new Error('쪽지 사건 기록 뒤 작업 실패');
+    const transaction = prisma.$transaction(async (tx) => {
+      const issue = await tx.issue.create({
+        data: {
+          projectId,
+          originVersionId: version.id,
+          authorId: clientId,
+          number: 1,
+          title: '저장되지 않을 쪽지',
+          body: '',
+          requestId: randomUUID(),
+        },
+      });
+      await service.record(tx, { projectId, actorId: clientId, type: 'ISSUE_CREATED', issueId: issue.id });
+      expect(await tx.activityEvent.count({ where: { issueId: issue.id } })).toBe(1);
+      throw failure;
+    });
+
+    await expect(transaction).rejects.toBe(failure);
+    expect(await prisma.issue.count()).toBe(0);
+    expect(await prisma.activityEvent.count()).toBe(0);
+    await expect(service.listForMember(projectId, clientId)).resolves.toEqual([]);
+  });
+
+  it('수정 시작 사건을 기록한 뒤 실패하면 쪽지 상태와 일지가 함께 되돌려진다', async () => {
+    const version = await prisma.deliveryVersion.create({
+      data: { projectId, number: 1, status: 'IN_REVIEW', publishedAt },
+    });
+    const issue = await prisma.issue.create({
+      data: {
+        projectId,
+        originVersionId: version.id,
+        authorId: clientId,
+        number: 1,
+        title: '접수 상태를 유지할 쪽지',
+        body: '',
+        requestId: randomUUID(),
+      },
+    });
+    const failure = new Error('수정 시작 사건 기록 뒤 작업 실패');
+    const transaction = prisma.$transaction(async (tx) => {
+      await tx.issue.update({ where: { id: issue.id }, data: { status: 'IN_PROGRESS' } });
+      await service.record(tx, { projectId, actorId: developerId, type: 'ISSUE_STARTED', issueId: issue.id });
+      expect(await tx.activityEvent.count({ where: { issueId: issue.id } })).toBe(1);
+      throw failure;
+    });
+
+    await expect(transaction).rejects.toBe(failure);
+    expect(await prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).toEqual(issue);
+    expect(await prisma.activityEvent.count()).toBe(0);
+    await expect(service.listForMember(projectId, developerId)).resolves.toEqual([]);
   });
 
   it('record 뒤에 오류가 나면 트랜잭션 안에서 보이던 사건도 되돌려진다', async () => {
@@ -149,6 +305,7 @@ describe('ActivityService', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: events[0].createdAt,
         actorName: '개발자',
+        issue: null,
         memberName: null,
         version: null,
       },
@@ -189,6 +346,7 @@ describe('ActivityService', () => {
         type,
         createdAt: events[0].createdAt,
         actorName: '개발자',
+        issue: null,
         memberName: hasMember ? '클라이언트' : null,
         version: null,
       },
@@ -210,6 +368,7 @@ describe('ActivityService', () => {
         type: 'APPROVER_CHANGED',
         createdAt: event.createdAt,
         actorName: '개발자',
+        issue: null,
         memberName: null,
         version: null,
       },
@@ -244,6 +403,7 @@ describe('ActivityService', () => {
         type: 'MEMBER_REVOKED',
         createdAt: event.createdAt,
         actorName: '개발자',
+        issue: null,
         memberName: '클라이언트',
         version: null,
       },
@@ -395,6 +555,7 @@ describe('ActivityService', () => {
           type: 'VERSION_PUBLISHED',
           createdAt: latest.createdAt,
           actorName: '개발자',
+          issue: null,
           memberName: null,
           version: { id: secondVersion.id, number: 2 },
         },
@@ -403,6 +564,7 @@ describe('ActivityService', () => {
           type: 'VERSION_PUBLISHED',
           createdAt: middle.createdAt,
           actorName: '개발자',
+          issue: null,
           memberName: null,
           version: { id: firstVersion.id, number: 1 },
         },
@@ -411,6 +573,7 @@ describe('ActivityService', () => {
           type: 'VERSION_PUBLISHED',
           createdAt: oldest.createdAt,
           actorName: '개발자',
+          issue: null,
           memberName: null,
           version: null,
         },
@@ -429,6 +592,7 @@ describe('ActivityService', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: event.createdAt,
         actorName: '다른 개발자',
+        issue: null,
         memberName: null,
         version: null,
       },

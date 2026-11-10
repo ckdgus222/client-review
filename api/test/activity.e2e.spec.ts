@@ -162,6 +162,7 @@ describe('활동 일지 API (e2e)', () => {
           type: 'VERSION_PUBLISHED',
           createdAt: secondEvent.createdAt.toISOString(),
           actorName: '개발자',
+          issue: null,
           memberName: null,
           version: { id: second.body.id, number: 1 },
         },
@@ -170,6 +171,7 @@ describe('활동 일지 API (e2e)', () => {
           type: 'VERSION_PUBLISHED',
           createdAt: firstEvent.createdAt.toISOString(),
           actorName: '개발자',
+          issue: null,
           memberName: null,
           version: { id: first.versionId, number: 0 },
         },
@@ -193,12 +195,67 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: expect.any(String),
         actorName: '다른 개발자',
+        issue: null,
         memberName: null,
         version: { id: other.versionId, number: 0 },
       },
     ]);
     await getActivity(otherProjectId, clientCookie).expect(404).expect(projectNotFoundBody);
   });
+
+  it.each(['ISSUE_CREATED', 'ISSUE_STARTED'] as const)(
+    '%s는 해당 프로젝트 쪽지의 id·번호를 돌려주고 비멤버·철회된 멤버에게는 404다',
+    async (type) => {
+      const expectedByProject = [];
+      // 쪽지 쓰기 API가 생기기 전이므로 조회할 쪽지와 사건을 DB에 준비한다.
+      for (const targetProjectId of [projectId, otherProjectId]) {
+        const version = await prisma.deliveryVersion.create({
+          data: { projectId: targetProjectId, number: 0, status: 'IN_REVIEW', publishedAt: new Date() },
+        });
+        const issue = await prisma.issue.create({
+          data: {
+            projectId: targetProjectId,
+            originVersionId: version.id,
+            authorId: developerId,
+            number: 14,
+            title: '각 프로젝트의 쪽지',
+            body: '일지에는 본문이 나오지 않는다',
+            requestId: randomUUID(),
+            status: type === 'ISSUE_STARTED' ? 'IN_PROGRESS' : 'OPEN',
+          },
+        });
+        const event = await prisma.activityEvent.create({
+          data: { projectId: targetProjectId, actorId: developerId, type, issueId: issue.id },
+        });
+        expectedByProject.push({
+          projectId: targetProjectId,
+          events: [
+            {
+              id: event.id,
+              type,
+              createdAt: event.createdAt.toISOString(),
+              actorName: '개발자',
+              memberName: null,
+              version: null,
+              issue: { id: issue.id, number: 14 },
+            },
+          ],
+        });
+      }
+
+      for (const expected of expectedByProject) {
+        await getActivity(expected.projectId, cookie).expect(200).expect(expected.events);
+      }
+      await getActivity(projectId, clientCookie).expect(200).expect(expectedByProject[0].events);
+      await getActivity(projectId, outsiderCookie).expect(404).expect(projectNotFoundBody);
+      await prisma.projectMember.update({
+        where: { projectId_userId: { projectId, userId: clientId } },
+        data: { revokedAt: new Date() },
+      });
+      await getActivity(projectId, clientCookie).expect(404).expect(projectNotFoundBody);
+      await getActivity(projectId, cookie).expect(200).expect(expectedByProject[0].events);
+    },
+  );
 
   it('연결된 버전이 없는 사건도 version: null로 보이고 저장 순서 대신 사건 시각으로 정렬한다', async () => {
     // versionId는 선택 칸이다. 현재 게시 API로는 만들지 않는 null 사례를 DB에 준비한다.
@@ -227,6 +284,7 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: '2026-01-02T00:00:00.000Z',
         actorName: '개발자',
+        issue: null,
         memberName: null,
         version: null,
       },
@@ -235,6 +293,7 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: '2026-01-01T00:00:00.000Z',
         actorName: '개발자',
+        issue: null,
         memberName: null,
         version: null,
       },
@@ -321,6 +380,7 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: expect.any(String),
         actorName: '개발자',
+        issue: null,
         memberName: null,
         version: { id: draft.versionId, number: 0 },
       },
@@ -368,6 +428,7 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: expect.any(String),
         actorName: '개발자',
+        issue: null,
         memberName: null,
         version: { id: draft.versionId, number: 0 },
       },
