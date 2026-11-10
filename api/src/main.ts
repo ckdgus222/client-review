@@ -7,5 +7,5 @@ const app = await NestFactory.create(AppModule);
 // 없으면 node가 정리 없이 바로 꺼져서 DB 연결을 닫지 못하고 처리 중인 요청도 끊긴다.
 app.enableShutdownHooks();
 setupApp(app);
-// nginx 설정과 Vite 프록시가 4100을 바라본다.
-await app.listen(4100);
+// nginx 설정과 Vite 프록시가 4100을 바라본다. 브라우저 e2e는 개발 서버와 부딪치지 않게 PORT로 다른 포트를 준다.
+await app.listen(Number(process.env.PORT ?? 4100));

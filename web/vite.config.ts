@@ -9,7 +9,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     // 개발 중 /api 요청을 맥에서 켠 api로 넘긴다. 같은 주소처럼 보여서 CORS 설정이 필요 없다.
-    proxy: { '/api': 'http://localhost:4100' },
+    // 브라우저 e2e는 개발 서버와 부딪치지 않게 다른 포트의 api를 API_PROXY_TARGET으로 준다.
+    proxy: { '/api': process.env.API_PROXY_TARGET ?? 'http://localhost:4100' },
   },
   test: {
     // 진짜 브라우저 없이 document를 흉내 내서 화면 부품을 그려 본다.
