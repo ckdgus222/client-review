@@ -727,25 +727,62 @@ describe('쪽지 API (e2e)', () => {
     }
   });
 
-  it.each(['쪽지 쓰기', '수정 시작'] as const)(
+  it.each(['쪽지 쓰기', '수정 시작', '댓글'] as const)(
     '현재 버전이 승인된 뒤 %s는 409 VERSION_NOT_IN_REVIEW이고 아무것도 바뀌지 않는다',
     async (operation) => {
       const created = await createIssue(issueInput()).expect(201);
       await prisma.deliveryVersion.update({ where: { id: versionId }, data: { status: 'APPROVED' } });
       const before = await readIssueState();
-      const pending =
-        operation === '쪽지 쓰기'
-          ? createIssue(issueInput())
-          : post(`/api/issues/${created.body.id}/start`).send({ versionId });
+      const commentsBefore = await prisma.comment.findMany({ orderBy: { id: 'asc' } });
+      const requests = {
+        '쪽지 쓰기': () => createIssue(issueInput()),
+        '수정 시작': () => post(`/api/issues/${created.body.id}/start`).send({ versionId }),
+        댓글: () => post(`/api/issues/${created.body.id}/comments`).send({ versionId, requestId: randomUUID(), body: '댓글' }),
+      };
+      const pending = requests[operation]();
       await pending.expect(409).expect({
         statusCode: 409,
         code: 'VERSION_NOT_IN_REVIEW',
         message: '검수 중인 버전이 아니에요',
       });
       expect(await readIssueState()).toEqual(before);
+      expect(await prisma.comment.findMany({ orderBy: { id: 'asc' } })).toEqual(commentsBefore);
       expect((await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: versionId } })).status).toBe('APPROVED');
     },
   );
+
+  it('쪽지 작성과 수정 시작은 일지에 쪽지 번호와 함께 남고 댓글은 남지 않는다', async () => {
+    const created = await createIssue(issueInput(), clientCookie).expect(201);
+    await post(`/api/issues/${created.body.id}/start`).send({ versionId }).expect(200);
+    const before = await get(`/api/projects/${projectId}/activity`).expect(200);
+    expect(before.body.filter((event: { issue: unknown }) => event.issue !== null)).toEqual([
+      {
+        id: expect.any(String),
+        type: 'ISSUE_STARTED',
+        createdAt: expect.any(String),
+        actorName: '개발자',
+        version: null,
+        memberName: null,
+        issue: { id: created.body.id, number: created.body.number },
+      },
+      {
+        id: expect.any(String),
+        type: 'ISSUE_CREATED',
+        createdAt: expect.any(String),
+        actorName: '클라이언트',
+        version: null,
+        memberName: null,
+        issue: { id: created.body.id, number: created.body.number },
+      },
+    ]);
+    const events = await prisma.activityEvent.findMany({ orderBy: { id: 'asc' } });
+    await post(`/api/issues/${created.body.id}/comments`, approverCookie)
+      .send({ versionId, requestId: randomUUID(), body: '확인했어요' })
+      .expect(201);
+    expect(await prisma.comment.count()).toBe(1);
+    await get(`/api/projects/${projectId}/activity`).expect(200).expect(before.body);
+    expect(await prisma.activityEvent.findMany({ orderBy: { id: 'asc' } })).toEqual(events);
+  });
 
   it.each<[string, Record<string, unknown>]>([
     ['versionId가 UUID 아님', { versionId: 'not-a-uuid' }],

@@ -298,8 +298,9 @@ model Issue {
   @@map("issues")
 }
 
-// createdAt은 코드가 프로젝트 줄을 잠근 뒤의 실제 시각(clock_timestamp())으로 적는다.
-// 기본값 now()는 트랜잭션을 시작한 시각이라 잠금을 기다린 만큼 이르다.
+// createdAt의 기본값은 now()가 아니라 clock_timestamp()다. now()는 트랜잭션을 시작한 시각이라 프로젝트 줄 잠금을
+// 기다린 만큼 이르게 적힌다. 댓글은 잠근 뒤에 넣으므로, 넣는 순간의 실제 시각이 "잠근 뒤의 시각"이 된다.
+// 승인의 "승인 창을 연 뒤에 달린 댓글" 검사(7번)가 이 시각에 기댄다. 코드는 이 칸을 직접 적지 않는다.
 model Comment {
   id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   issueId   String          @map("issue_id") @db.Uuid
@@ -312,7 +313,7 @@ model Comment {
   body      String
   // 사람이 쓴 댓글에는 늘 있다. 6번의 사유 댓글과 5-1번의 자동 댓글은 비워 둔다(유니크는 빈 값끼리 겹쳐도 막지 않는다).
   requestId String?         @map("request_id") @db.Uuid
-  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  createdAt DateTime        @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz
 
   @@unique([authorId, requestId])
   // 쪽지의 댓글을 오래된 순으로 읽는다.

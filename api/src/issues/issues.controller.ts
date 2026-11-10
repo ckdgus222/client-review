@@ -1,6 +1,8 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/guards/session.guard.js';
 import { projectNotFound } from '../projects/projects.service.js';
+import { CommentsService } from './comments.service.js';
+import { CreateCommentDto } from './dto/create-comment.dto.js';
 import { CreateIssueDto } from './dto/create-issue.dto.js';
 import { StartIssueDto } from './dto/start-issue.dto.js';
 import { issueNotFound, IssuesService } from './issues.service.js';
@@ -12,7 +14,10 @@ const issueIdPipe = new ParseUUIDPipe({ exceptionFactory: issueNotFound });
 // 주소가 /projects/:id/issues와 /issues/:id 두 갈래라 공통 앞머리를 두지 않는다.
 @Controller()
 export class IssuesController {
-  constructor(private readonly issues: IssuesService) {}
+  constructor(
+    private readonly issues: IssuesService,
+    private readonly comments: CommentsService,
+  ) {}
 
   @Get('projects/:id/issues')
   list(@Req() request: AuthenticatedRequest, @Param('id', projectIdPipe) projectId: string) {
@@ -36,6 +41,15 @@ export class IssuesController {
   @Get('issues/:id')
   get(@Req() request: AuthenticatedRequest, @Param('id', issueIdPipe) issueId: string) {
     return this.issues.getDetail(issueId, request.user.id);
+  }
+
+  @Post('issues/:id/comments')
+  createComment(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', issueIdPipe) issueId: string,
+    @Body() body: CreateCommentDto,
+  ) {
+    return this.comments.create(issueId, request.user.id, body);
   }
 
   // 새로 만드는 것이 아니라 쪽지의 상태를 바꾸는 것이라 201 대신 200이다.

@@ -74,6 +74,25 @@ const SUMMARY_FIELDS = {
   _count: { select: { comments: true } },
 } satisfies Prisma.IssueSelect;
 
+// 쪽지 상세의 댓글 목록과 댓글 쓰기의 응답이 같은 모양이다.
+export const COMMENT_FIELDS = {
+  id: true,
+  body: true,
+  createdAt: true,
+  author: { select: { name: true } },
+  version: { select: { number: true } },
+} satisfies Prisma.CommentSelect;
+
+export const toCommentView = ({
+  author,
+  version,
+  ...comment
+}: Prisma.CommentGetPayload<{ select: typeof COMMENT_FIELDS }>): IssueDetail['comments'][number] => ({
+  ...comment,
+  authorName: author.name,
+  versionNumber: version.number,
+});
+
 const DETAIL_FIELDS = {
   ...SUMMARY_FIELDS,
   body: true,
@@ -82,16 +101,7 @@ const DETAIL_FIELDS = {
     select: { id: true, asset: { select: { id: true, width: true, height: true } } },
     orderBy: { createdAt: 'asc' },
   },
-  comments: {
-    select: {
-      id: true,
-      body: true,
-      createdAt: true,
-      author: { select: { name: true } },
-      version: { select: { number: true } },
-    },
-    orderBy: { createdAt: 'asc' },
-  },
+  comments: { select: COMMENT_FIELDS, orderBy: { createdAt: 'asc' } },
 } satisfies Prisma.IssueSelect;
 
 const toSummary = ({
@@ -253,11 +263,7 @@ export class IssuesService {
       body,
       isMine: authorId === userId,
       attachments: attachments.map(({ id, asset: { id: assetId, ...size } }) => ({ id, assetId, ...size })),
-      comments: comments.map(({ author, version, ...comment }) => ({
-        ...comment,
-        authorName: author.name,
-        versionNumber: version.number,
-      })),
+      comments: comments.map(toCommentView),
     };
   }
 

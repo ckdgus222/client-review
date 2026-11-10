@@ -249,6 +249,21 @@ describe('쪽지와 댓글 테이블', () => {
     expect(await prisma.comment.findMany({ orderBy: { createdAt: 'asc' } })).toEqual([first, second]);
   });
 
+  it('댓글 created_at 기본값은 now()가 아니라 clock_timestamp()라 트랜잭션 안에서 기다린 뒤의 시각이다', async () => {
+    const issue = await prisma.issue.create({ data: issueData });
+    const { authorId, originVersionId } = issueData;
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_sleep(0.05)`;
+      // created_at을 생략하여 서비스가 아니라 DB 기본값 자체를 검사한다.
+      const [row] = await tx.$queryRaw<{ after_start: boolean }[]>`
+        INSERT INTO comments (issue_id, author_id, version_id, body)
+        VALUES (${issue.id}::uuid, ${authorId}::uuid, ${originVersionId}::uuid, '기다린 뒤 댓글')
+        RETURNING created_at > now() AS after_start
+      `;
+      expect(row.after_start).toBe(true);
+    });
+  });
+
   it('같은 작성자의 request_id가 비어 있는 댓글은 같은 쪽지에도 여러 개 저장된다', async () => {
     const issue = await prisma.issue.create({ data: issueData });
     const data = {

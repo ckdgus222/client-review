@@ -42,7 +42,7 @@ CREATE TABLE "comments" (
     "version_id" UUID NOT NULL,
     "body" TEXT NOT NULL,
     "request_id" UUID,
-    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
 
     CONSTRAINT "comments_pkey" PRIMARY KEY ("id")
 );
