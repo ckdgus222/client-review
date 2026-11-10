@@ -107,7 +107,8 @@ export class MembersService {
         select: { approverMemberId: true },
       });
       // 설정 화면에서 바꾸지 않고 다시 저장해도 일지가 쌓이지 않게 한다.
-      if (approverMemberId === memberId) return view;
+      // 받은 id는 대문자일 수 있어서, DB에서 읽은 id끼리 비교한다.
+      if (approverMemberId === (view?.memberId ?? null)) return view;
 
       await tx.project.update({ where: { id: projectId }, data: { approverMemberId: memberId } });
       await this.activity.record(tx, {

@@ -560,6 +560,21 @@ describe('참여자 API (e2e)', () => {
     ]);
   });
 
+  it('같은 승인자를 대문자 id로 다시 저장해도 일지를 더 만들지 않는다', async () => {
+    const approver = { memberId: client.memberId, name: client.name };
+    const uppercaseMemberId = client.memberId.toUpperCase();
+    expect(uppercaseMemberId).not.toBe(client.memberId);
+    await setApprover(client.memberId).expect(200).expect({ approver });
+    const before = await prisma.activityEvent.findMany({ where: { projectId, type: 'APPROVER_CHANGED' } });
+    expect(before).toHaveLength(1);
+
+    await setApprover(uppercaseMemberId).expect(200).expect({ approver });
+
+    expect(await prisma.activityEvent.findMany({ where: { projectId, type: 'APPROVER_CHANGED' } })).toEqual(before);
+    const detail = await get(`/api/projects/${projectId}`).expect(200);
+    expect(detail.body.approver).toEqual(approver);
+  });
+
   it.each([false, true])(
     '같은 승인자 값(지정됨=%s)을 다시 저장하면 200이고 일지를 더 만들지 않는다',
     async (assigned) => {
