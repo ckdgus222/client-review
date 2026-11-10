@@ -33,7 +33,7 @@ export const versionNotFound = () => new NotFoundException('없는 버전이에�
 export const conflict = (code: string, message: string) =>
   new ConflictException({ statusCode: HttpStatus.CONFLICT, message, code });
 
-const isUniqueViolation = (error: unknown) =>
+export const isUniqueViolation = (error: unknown) =>
   error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 
 @Injectable()
