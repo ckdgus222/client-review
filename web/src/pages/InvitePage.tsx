@@ -17,7 +17,8 @@ const END_MESSAGES: Record<EndState, { title: string; body: string }> = {
     body: '사용할 수 없는 초대예요. 초대받은 링크가 맞는지 확인해 주세요.',
   },
   expired: { title: '초대가 만료됐어요', body: '개발자에게 새 초대 링크를 요청해 주세요.' },
-  accepted: { title: '이미 수락한 초대예요', body: '로그인하면 프로젝트 목록에서 이 프로젝트를 볼 수 있어요.' },
+  // 수락한 뒤 접근이 철회된 사람도 이 화면을 본다. 그래서 프로젝트가 보인다고 약속하지 않는다.
+  accepted: { title: '이미 수락한 초대예요', body: '프로젝트 목록에서 확인해 주세요.' },
   full: {
     title: '참여할 수 있는 인원이 찼어요',
     body: `클라이언트는 ${MAX_CLIENTS}명까지 참여할 수 있어요. 개발자에게 알려 주세요.`,
