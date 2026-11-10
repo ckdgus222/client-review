@@ -22,6 +22,8 @@ model User {
   memberships ProjectMember[]
   activities  ActivityEvent[]
   invitations Invitation[]
+  issues      Issue[]
+  comments    Comment[]
 
   @@map("users")
 }
@@ -82,6 +84,7 @@ model Project {
   assets           Asset[]
   activities       ActivityEvent[]
   invitations      Invitation[]
+  issues           Issue[]
 
   @@map("projects")
 }
@@ -148,8 +151,12 @@ model DeliveryVersion {
   currentOf   Project?        @relation("CurrentVersion")
   screens     VersionScreen[]
   activities  ActivityEvent[]
+  issues      Issue[]
+  comments    Comment[]
 
   @@unique([projectId, number])
+  // 쪽지의 외래키(Issue.originVersion)가 가리킬 수 있게 (id, project_id)도 고유로 둔다.
+  @@unique([id, projectId])
   @@map("delivery_versions")
 }
 
@@ -165,6 +172,8 @@ model Asset {
   height         Int
   createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz
   versionScreens VersionScreen[]
+  // 쪽지에 붙인 참고 사진이면 여기에 줄이 있다. 버전 화면의 사진과 달리 한 쪽지에만 붙는다.
+  attachment     IssueAttachment?
 
   // 사진을 올릴 때마다 프로젝트 사진 용량 합계를 계산한다.
   @@index([projectId])
@@ -182,8 +191,11 @@ model VersionScreen {
   assetId   String          @map("asset_id") @db.Uuid
   asset     Asset           @relation(fields: [assetId], references: [id], onDelete: NoAction)
   createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
+  issues    Issue[]
 
   @@unique([versionId, screenId])
+  // 쪽지의 외래키(Issue.originVersionScreen)가 가리킬 수 있게 (id, version_id)도 고유로 둔다.
+  @@unique([id, versionId])
   // 사진을 지우기 전에 다른 버전이 쓰는지 센다. 사진 줄을 지울 때 DB의 외래키 검사도 이 칸으로 찾는다.
   @@index([assetId])
   @@map("version_screens")
@@ -196,6 +208,8 @@ enum ActivityType {
   INVITATION_ACCEPTED
   MEMBER_REVOKED
   APPROVER_CHANGED
+  ISSUE_CREATED
+  ISSUE_STARTED
 
   @@map("activity_type")
 }
@@ -213,6 +227,9 @@ model ActivityEvent {
   // 초대 수락·접근 철회·승인자 변경의 대상 멤버. 초대 사건은 비워 둔다(초대 줄은 나중에 지워진다).
   memberId  String?          @map("member_id") @db.Uuid
   member    ProjectMember?   @relation("ActivityMember", fields: [memberId], references: [id], onDelete: NoAction)
+  // 쪽지 작성·수정 시작의 대상 쪽지.
+  issueId   String?          @map("issue_id") @db.Uuid
+  issue     Issue?           @relation(fields: [issueId], references: [id], onDelete: NoAction)
   createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
   // 활동 일지는 한 프로젝트의 줄을 최신순으로 읽는다. 찾기와 정렬을 인덱스 하나로 끝낸다.
@@ -236,4 +253,83 @@ model Invitation {
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
   @@map("invitations")
+}
+
+// 상태 값은 기능마다 마이그레이션으로 더한다. 확인 요청·확인 완료·철회는 6번 기능에서 생긴다.
+enum IssueStatus {
+  OPEN
+  IN_PROGRESS
+
+  @@map("issue_status")
+}
+
+// 수정 요청 쪽지. 시작 버전·화면·핀 위치는 만든 뒤 바꾸지 않는다.
+// 시작 버전은 이 프로젝트의 버전이고 시작 화면은 그 버전의 화면이라는 것을 두 칸짜리 외래키가 지킨다.
+// "핀은 화면·x·y가 셋 다 있거나 셋 다 없다"와 "x·y는 0~1"은 마이그레이션 SQL의 CHECK 제약이 지킨다.
+model Issue {
+  id                    String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId             String            @map("project_id") @db.Uuid
+  project               Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // 프로젝트마다 1부터 붙인다. 프로젝트 줄을 잠근 뒤 "가장 큰 번호 + 1"로 정한다.
+  number                Int
+  // 쓸 때의 현재 버전. 위치 없는 쪽지에도 늘 있다.
+  originVersionId       String            @map("origin_version_id") @db.Uuid
+  originVersion         DeliveryVersion   @relation(fields: [originVersionId, projectId], references: [id, projectId], onDelete: NoAction)
+  originVersionScreenId String?           @map("origin_version_screen_id") @db.Uuid
+  originVersionScreen   VersionScreen?    @relation(fields: [originVersionScreenId, originVersionId], references: [id, versionId], onDelete: NoAction)
+  // 사진 가로·세로에 대한 비율(0~1). 사진이 줄거나 커져도 같은 자리다.
+  xRatio                Float?            @map("x_ratio")
+  yRatio                Float?            @map("y_ratio")
+  // 멤버 줄이 아니라 사용자를 가리킨다. 접근을 철회했다가 다시 들어와도 쓴 사람이 그대로다.
+  authorId              String            @map("author_id") @db.Uuid
+  author                User              @relation(fields: [authorId], references: [id])
+  title                 String
+  body                  String
+  status                IssueStatus       @default(OPEN)
+  // 브라우저가 쓰기 칸을 열 때 만든 번호. 인터넷이 끊겨 다시 보내도 쪽지가 하나만 생긴다.
+  requestId             String            @map("request_id") @db.Uuid
+  createdAt             DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  comments              Comment[]
+  attachments           IssueAttachment[]
+  activities            ActivityEvent[]
+
+  @@unique([projectId, number])
+  @@unique([authorId, requestId])
+  @@map("issues")
+}
+
+// createdAt은 코드가 프로젝트 줄을 잠근 뒤의 실제 시각(clock_timestamp())으로 적는다.
+// 기본값 now()는 트랜잭션을 시작한 시각이라 잠금을 기다린 만큼 이르다.
+model Comment {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  issueId   String          @map("issue_id") @db.Uuid
+  issue     Issue           @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  authorId  String          @map("author_id") @db.Uuid
+  author    User            @relation(fields: [authorId], references: [id])
+  // 쓸 때의 현재 버전. "2차 때 쓴 댓글"을 보여 준다.
+  versionId String          @map("version_id") @db.Uuid
+  version   DeliveryVersion @relation(fields: [versionId], references: [id], onDelete: NoAction)
+  body      String
+  // 사람이 쓴 댓글에는 늘 있다. 6번의 사유 댓글과 5-1번의 자동 댓글은 비워 둔다(유니크는 빈 값끼리 겹쳐도 막지 않는다).
+  requestId String?         @map("request_id") @db.Uuid
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([authorId, requestId])
+  // 쪽지의 댓글을 오래된 순으로 읽는다.
+  @@index([issueId, createdAt])
+  @@map("comments")
+}
+
+// 쪽지에 붙인 참고 사진. 사진 한 장은 쪽지 하나에만 붙는다.
+model IssueAttachment {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  issueId   String   @map("issue_id") @db.Uuid
+  issue     Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  assetId   String   @unique @map("asset_id") @db.Uuid
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: NoAction)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // 쪽지의 사진을 읽고, 3장인지 센다.
+  @@index([issueId])
+  @@map("issue_attachments")
 }

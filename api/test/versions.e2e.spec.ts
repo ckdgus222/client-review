@@ -229,6 +229,7 @@ describe('버전 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         versionId: draft.body.id,
         memberId: null,
+        issueId: null,
         createdAt: expect.any(Date),
       },
     ]);

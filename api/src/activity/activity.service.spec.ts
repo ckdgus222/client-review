@@ -91,6 +91,7 @@ describe('ActivityService', () => {
         type: 'VERSION_PUBLISHED',
         versionId: version.id,
         memberId: null,
+        issueId: null,
         createdAt: expect.any(Date),
       },
     ]);
@@ -138,6 +139,7 @@ describe('ActivityService', () => {
         type: 'VERSION_PUBLISHED',
         versionId: null,
         memberId: null,
+        issueId: null,
         createdAt: expect.any(Date),
       },
     ]);
@@ -177,6 +179,7 @@ describe('ActivityService', () => {
         type,
         versionId: null,
         memberId: memberId ?? null,
+        issueId: null,
         createdAt: expect.any(Date),
       },
     ]);
@@ -320,6 +323,7 @@ describe('ActivityService', () => {
         type: 'VERSION_PUBLISHED',
         versionId: secondVersion.id,
         memberId: null,
+        issueId: null,
         createdAt: expect.any(Date),
       },
     ]);

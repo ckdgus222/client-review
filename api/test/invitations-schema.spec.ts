@@ -289,6 +289,7 @@ describe('초대와 참여자 테이블', () => {
           type,
           versionId: null,
           memberId: null,
+          issueId: null,
           createdAt: expect.any(Date),
         },
       ]);
