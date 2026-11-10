@@ -1,6 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ActivityService } from '../activity/activity.service.js';
-import { ActivityType, type IssueStatus, Prisma, VersionStatus, type Viewport } from '../generated/prisma/client.js';
+import {
+  ActivityType,
+  IssueStatus,
+  Prisma,
+  ProjectRole,
+  VersionStatus,
+  type Viewport,
+} from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { screenNotFound } from '../screens/screens.service.js';
@@ -183,6 +190,39 @@ export class IssuesService {
       });
       return this.loadDetail(issue.id, userId, tx);
     });
+  }
+
+  async start(issueId: string, userId: string, viewedVersionId: string): Promise<IssueDetail> {
+    return this.prisma.$transaction(async (tx) => {
+      const issue = await this.lockIssue(tx, issueId, userId);
+      if (issue.role !== ProjectRole.DEVELOPER) throw new ForbiddenException('개발자만 할 수 있어요');
+      await this.requireVersionInReview(tx, issue.projectId, viewedVersionId);
+      // 두 번 눌러도 두 번째는 여기서 멈춘다. 그래서 다시 보낸 요청을 따로 가려내지 않는다.
+      if (issue.status !== IssueStatus.OPEN) throw conflict('ISSUE_NOT_OPEN', '접수 상태의 쪽지만 시작할 수 있어요');
+
+      await tx.issue.update({ where: { id: issueId }, data: { status: IssueStatus.IN_PROGRESS } });
+      await this.activity.record(tx, {
+        projectId: issue.projectId,
+        actorId: userId,
+        type: ActivityType.ISSUE_STARTED,
+        issueId,
+      });
+      return this.loadDetail(issueId, userId, tx);
+    });
+  }
+
+  // 쪽지 id로 오는 쓰기는 모두 여기서 시작한다. 쪽지로 프로젝트를 알아내 그 줄을 잠그고, 잠근 뒤의 쪽지와 내 역할을 읽는다.
+  // 잠그기 전에 읽은 상태는 그사이 바뀌었을 수 있어서 쪽지를 다시 읽는다.
+  async lockIssue(tx: Prisma.TransactionClient, issueId: string, userId: string) {
+    const found = await tx.issue.findUnique({ where: { id: issueId }, select: { projectId: true } });
+    if (!found) throw issueNotFound();
+    await this.projects.lockProject(tx, found.projectId);
+    const role = await this.requireMember(found.projectId, userId, tx);
+    const issue = await tx.issue.findUniqueOrThrow({
+      where: { id: issueId },
+      select: { projectId: true, authorId: true, status: true },
+    });
+    return { ...issue, role };
   }
 
   // 쪽지·댓글 쓰기와 상태 변경은 현재 버전이 검수 중일 때만 받는다. 프로젝트 줄을 잠근 뒤에 부른다.

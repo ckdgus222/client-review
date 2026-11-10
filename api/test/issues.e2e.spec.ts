@@ -524,4 +524,264 @@ describe('쪽지 API (e2e)', () => {
     await get(`/api/issues/${id}`).expect(404).expect(issueNotFoundBody);
     expect(await readIssueState()).toEqual(before);
   });
+
+  it.each(['클라이언트', '개발자'] as const)(
+    '개발자는 %s가 쓴 접수 쪽지를 시작하면 200이고 상세·목록·일지에 수정 중과 쪽지 번호가 남는다',
+    async (author) => {
+      const created = await createIssue(
+        issueInput({ screenId, xRatio: 0.25, yRatio: 0.75 }),
+        author === '개발자' ? cookie : clientCookie,
+      ).expect(201);
+      const before = await readIssueState();
+      const expected = { ...created.body, status: 'IN_PROGRESS', isMine: author === '개발자' };
+      await post(`/api/issues/${created.body.id}/start`).send({ versionId }).expect(200).expect(expected);
+      await get(`/api/issues/${created.body.id}`).expect(200).expect(expected);
+      const list = await get(`/api/projects/${projectId}/issues`).expect(200);
+      expect(list.body).toEqual([expect.objectContaining({ id: created.body.id, status: 'IN_PROGRESS' })]);
+      const after = await readIssueState();
+      expect(after.issues).toEqual(before.issues.map((issue) => ({ ...issue, status: 'IN_PROGRESS' })));
+      expect(after.events).toEqual(expect.arrayContaining(before.events));
+      expect(after.events).toHaveLength(before.events.length + 1);
+      expect(after.events.filter(({ type }) => type === 'ISSUE_STARTED')).toEqual([
+        expect.objectContaining({ projectId, actorId: developerId, issueId: created.body.id }),
+      ]);
+      const activity = await get(`/api/projects/${projectId}/activity`, clientCookie).expect(200);
+      expect(activity.body.filter((event: { type: string }) => event.type === 'ISSUE_STARTED')).toEqual([
+        {
+          id: expect.any(String),
+          type: 'ISSUE_STARTED',
+          createdAt: expect.any(String),
+          actorName: '개발자',
+          version: null,
+          memberName: null,
+          issue: { id: created.body.id, number: created.body.number },
+        },
+      ]);
+    },
+  );
+
+  it('보던 버전 뒤에 새 버전이 게시되면 수정 시작은 409 VERSION_CHANGED이고 상태가 그대로다', async () => {
+    const created = await createIssue(issueInput(), clientCookie).expect(201);
+    const draft = await createDraft();
+    await publish(draft.body.id);
+    const before = await readIssueState();
+    await post(`/api/issues/${created.body.id}/start`).send({ versionId }).expect(409).expect(versionChangedBody);
+    expect(await readIssueState()).toEqual(before);
+    await get(`/api/issues/${created.body.id}`, clientCookie).expect(200).expect(created.body);
+  });
+
+  it('지난 버전에서 시작한 쪽지도 현재 버전 id로 수정 시작하고 처음 위치는 그대로다', async () => {
+    const created = await createIssue(issueInput({ screenId, xRatio: 0.2, yRatio: 0.8 }), clientCookie).expect(201);
+    const draft = await createDraft();
+    await publish(draft.body.id);
+    const expected = { ...created.body, status: 'IN_PROGRESS', isMine: false };
+    await post(`/api/issues/${created.body.id}/start`).send({ versionId: draft.body.id }).expect(200).expect(expected);
+    await get(`/api/issues/${created.body.id}`).expect(200).expect(expected);
+    expect(await prisma.activityEvent.count({ where: { issueId: created.body.id, type: 'ISSUE_STARTED' } })).toBe(1);
+  });
+
+  it('클라이언트와 승인자의 수정 시작은 403이고 상태·일지가 그대로다', async () => {
+    const created = await createIssue(issueInput(), clientCookie).expect(201);
+    const draft = await createDraft();
+    await publish(draft.body.id);
+    const before = await readIssueState();
+    // 지난 버전을 보내도 역할 검사가 먼저라 409가 아닌 403이다.
+    for (const memberCookie of [clientCookie, approverCookie]) {
+      for (const viewedVersionId of [versionId, draft.body.id]) {
+        await post(`/api/issues/${created.body.id}/start`, memberCookie)
+          .send({ versionId: viewedVersionId })
+          .expect(403)
+          .expect({ statusCode: 403, message: '개발자만 할 수 있어요', error: 'Forbidden' });
+      }
+    }
+    expect(await readIssueState()).toEqual(before);
+  });
+
+  it('수정 시작을 동시에 두 번 보내면 200과 409 ISSUE_NOT_OPEN이고 일지는 하나다', async () => {
+    const created = await createIssue(issueInput(), clientCookie).expect(201);
+    const responses = await Promise.all([
+      post(`/api/issues/${created.body.id}/start`).send({ versionId }),
+      post(`/api/issues/${created.body.id}/start`).send({ versionId }),
+    ]);
+    expect(responses.map(({ status }) => status).sort((a, b) => a - b)).toEqual([200, 409]);
+    expect(responses.find(({ status }) => status === 200)?.body).toEqual({
+      ...created.body,
+      status: 'IN_PROGRESS',
+      isMine: false,
+    });
+    expect(responses.find(({ status }) => status === 409)?.body).toEqual({
+      statusCode: 409,
+      code: 'ISSUE_NOT_OPEN',
+      message: '접수 상태의 쪽지만 시작할 수 있어요',
+    });
+    expect(await prisma.activityEvent.findMany({ where: { type: 'ISSUE_STARTED' } })).toEqual([
+      expect.objectContaining({ projectId, actorId: developerId, issueId: created.body.id }),
+    ]);
+    const before = await readIssueState();
+    // 동시에 보낸 경우뿐 아니라 이미 수정 중인 쪽지를 다시 눌러도 거절한다.
+    await post(`/api/issues/${created.body.id}/start`).send({ versionId }).expect(409).expect({
+      statusCode: 409,
+      code: 'ISSUE_NOT_OPEN',
+      message: '접수 상태의 쪽지만 시작할 수 있어요',
+    });
+    expect(await readIssueState()).toEqual(before);
+    await get(`/api/issues/${created.body.id}`, clientCookie)
+      .expect(200)
+      .expect({ ...created.body, status: 'IN_PROGRESS' });
+  });
+
+  it('수정 시작이 일지 저장에서 실패하면 상태가 접수 그대로다', async () => {
+    const created = await createIssue(issueInput(), clientCookie).expect(201);
+    const before = await readIssueState();
+    try {
+      await prisma.$executeRaw`
+        CREATE FUNCTION issues_e2e_fail_start_event() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW.type = 'ISSUE_STARTED' THEN
+            RAISE EXCEPTION 'issues e2e start event failure';
+          END IF;
+          RETURN NEW;
+        END;
+        $$
+      `;
+      await prisma.$executeRaw`
+        CREATE TRIGGER issues_e2e_fail_start_event
+        BEFORE INSERT ON activity_events FOR EACH ROW
+        EXECUTE FUNCTION issues_e2e_fail_start_event()
+      `;
+      await post(`/api/issues/${created.body.id}/start`).send({ versionId }).expect(500);
+      expect(await readIssueState()).toEqual(before);
+      await get(`/api/issues/${created.body.id}`, clientCookie).expect(200).expect(created.body);
+    } finally {
+      try {
+        await prisma.$executeRaw`DROP TRIGGER IF EXISTS issues_e2e_fail_start_event ON activity_events`;
+      } finally {
+        await prisma.$executeRaw`DROP FUNCTION IF EXISTS issues_e2e_fail_start_event()`;
+      }
+    }
+    await post(`/api/issues/${created.body.id}/start`).send({ versionId }).expect(200);
+    expect(await prisma.activityEvent.count({ where: { issueId: created.body.id, type: 'ISSUE_STARTED' } })).toBe(1);
+  });
+
+  it.each(['멤버가 아닌 사람', '접근이 철회된 사람', '없는 프로젝트·쪽지', '틀린 모양의 id'] as const)(
+    '%s는 목록·상세·쓰기·수정 시작이 모두 같은 404다',
+    async (scenario) => {
+      const input = issueInput();
+      const created = await createIssue(input, clientCookie).expect(201);
+      let memberCookie = clientCookie;
+      let targetProjectId = projectId;
+      let targetIssueId = created.body.id as string;
+      if (scenario === '멤버가 아닌 사람') {
+        const outsider = await prisma.user.create({ data: { email: 'outsider@example.com', name: '외부인' } });
+        memberCookie = await login(outsider.id);
+      }
+      if (scenario === '접근이 철회된 사람') {
+        const issue = await prisma.issue.findUniqueOrThrow({ where: { id: targetIssueId } });
+        await prisma.projectMember.update({
+          where: { projectId_userId: { projectId, userId: issue.authorId } },
+          data: { revokedAt: new Date() },
+        });
+      }
+      if (scenario === '없는 프로젝트·쪽지') targetProjectId = targetIssueId = missingId;
+      if (scenario === '틀린 모양의 id') targetProjectId = targetIssueId = 'not-a-uuid';
+      const before = await readIssueState();
+      await get(`/api/projects/${targetProjectId}/issues`, memberCookie).expect(404).expect(projectNotFoundBody);
+      await get(`/api/issues/${targetIssueId}`, memberCookie).expect(404).expect(issueNotFoundBody);
+      // 철회된 작성자도 같은 requestId로 처음 쪽지를 다시 받을 수 없다.
+      await createIssue(input, memberCookie, targetProjectId).expect(404).expect(projectNotFoundBody);
+      await createIssue(issueInput(), memberCookie, targetProjectId).expect(404).expect(projectNotFoundBody);
+      // 버전과 개발자 검사가 멤버 확인보다 먼저 실행되면 이 기대값을 만족하지 못한다.
+      await post(`/api/issues/${targetIssueId}/start`, memberCookie)
+        .send({ versionId: missingId })
+        .expect(404)
+        .expect(issueNotFoundBody);
+      expect(await readIssueState()).toEqual(before);
+    },
+  );
+
+  it.each(['목록', '상세', '쓰기', '수정 시작'] as const)('%s는 로그인하지 않으면 401이다', async (operation) => {
+    const created = await createIssue(issueInput()).expect(201);
+    const before = await readIssueState();
+    const requests = {
+      목록: () => request(server).get(`/api/projects/${projectId}/issues`),
+      상세: () => request(server).get(`/api/issues/${created.body.id}`),
+      쓰기: () => request(server).post(`/api/projects/${projectId}/issues`).send(issueInput()),
+      '수정 시작': () => request(server).post(`/api/issues/${created.body.id}/start`).send({ versionId }),
+    };
+    await requests[operation]().set('Origin', origin).expect(401);
+    expect(await readIssueState()).toEqual(before);
+  });
+
+  it.each(['쓰기', '수정 시작'] as const)('%s는 다른 Origin이면 403이고 아무것도 바뀌지 않는다', async (operation) => {
+    const created = await createIssue(issueInput()).expect(201);
+    const before = await readIssueState();
+    for (const requestOrigin of [undefined, 'https://other.example.com']) {
+      const pending =
+        operation === '쓰기'
+          ? request(server).post(`/api/projects/${projectId}/issues`).send(issueInput())
+          : request(server).post(`/api/issues/${created.body.id}/start`).send({ versionId });
+      pending.set('Cookie', cookie);
+      if (requestOrigin) pending.set('Origin', requestOrigin);
+      await pending.expect(403);
+      expect(await readIssueState()).toEqual(before);
+    }
+  });
+
+  it.each(['쪽지 쓰기', '수정 시작'] as const)(
+    '현재 버전이 승인된 뒤 %s는 409 VERSION_NOT_IN_REVIEW이고 아무것도 바뀌지 않는다',
+    async (operation) => {
+      const created = await createIssue(issueInput()).expect(201);
+      await prisma.deliveryVersion.update({ where: { id: versionId }, data: { status: 'APPROVED' } });
+      const before = await readIssueState();
+      const pending =
+        operation === '쪽지 쓰기'
+          ? createIssue(issueInput())
+          : post(`/api/issues/${created.body.id}/start`).send({ versionId });
+      await pending.expect(409).expect({
+        statusCode: 409,
+        code: 'VERSION_NOT_IN_REVIEW',
+        message: '검수 중인 버전이 아니에요',
+      });
+      expect(await readIssueState()).toEqual(before);
+      expect((await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: versionId } })).status).toBe('APPROVED');
+    },
+  );
+
+  it.each<[string, Record<string, unknown>]>([
+    ['versionId가 UUID 아님', { versionId: 'not-a-uuid' }],
+    ['versionId 없음', { versionId: undefined }],
+    ['versionId가 null', { versionId: null }],
+    ['versionId가 수', { versionId: 123 }],
+    ['versionId가 배열', { versionId: [missingId] }],
+    ['모르는 칸 status', { status: 'IN_PROGRESS' }],
+    ['모르는 칸 requestId', { requestId: missingId }],
+    ['모르는 칸 authorId', { authorId: missingId }],
+  ])('수정 시작 입력 %s는 422이고 상태·일지가 그대로다', async (_name, changes) => {
+    const created = await createIssue(issueInput()).expect(201);
+    const before = await readIssueState();
+    await post(`/api/issues/${created.body.id}/start`)
+      .send({ versionId, ...changes })
+      .expect(422);
+    expect(await readIssueState()).toEqual(before);
+  });
+
+  it.each(['게시 전 버전', '남의 프로젝트 버전', '없는 id', '현재 버전 없음'] as const)(
+    '수정 시작의 versionId가 %s이면 409 VERSION_CHANGED이고 상태·일지가 그대로다',
+    async (scenario) => {
+      const created = await createIssue(issueInput()).expect(201);
+      let viewedVersionId = missingId;
+      if (scenario === '게시 전 버전') viewedVersionId = (await createDraft()).body.id;
+      if (scenario === '남의 프로젝트 버전') viewedVersionId = (await publishOtherProject()).versionId;
+      if (scenario === '현재 버전 없음') {
+        viewedVersionId = versionId;
+        await prisma.project.update({ where: { id: projectId }, data: { currentVersionId: null } });
+      }
+      const before = await readIssueState();
+      await post(`/api/issues/${created.body.id}/start`)
+        .send({ versionId: viewedVersionId })
+        .expect(409)
+        .expect(versionChangedBody);
+      expect(await readIssueState()).toEqual(before);
+    },
+  );
 });

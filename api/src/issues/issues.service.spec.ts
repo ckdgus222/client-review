@@ -806,4 +806,307 @@ describe('IssuesService', () => {
     expect(await prisma.issue.count()).toBe(2);
     expect(await prisma.activityEvent.count({ where: { type: 'ISSUE_CREATED' } })).toBe(2);
   });
+
+  describe('start와 lockIssue', () => {
+    const issueNotOpen = {
+      status: 409,
+      response: { statusCode: 409, code: 'ISSUE_NOT_OPEN', message: '접수 상태의 쪽지만 시작할 수 있어요' },
+    };
+    const developerOnly = {
+      status: 403,
+      response: { statusCode: 403, message: '개발자만 할 수 있어요', error: 'Forbidden' },
+    };
+
+    it.each(['클라이언트', '개발자'] as const)(
+      'start는 %s의 OPEN 쪽지를 IN_PROGRESS로 바꾸고 상세와 쪽지 번호가 있는 일지를 준다',
+      async (author) => {
+        const authorId = author === '개발자' ? developer.id : client.id;
+        const issue = await service.create(
+          projectId,
+          authorId,
+          input({ pin: { screenId: screen.id, xRatio: 0.25, yRatio: 0.75 } }),
+        );
+        const untouched = await service.create(projectId, client.id, input());
+        const before = await readState();
+        const expected = { ...issue, status: 'IN_PROGRESS', isMine: authorId === developer.id };
+        expect(await service.start(issue.id, developer.id, current.id)).toEqual(expected);
+        expect(await service.getDetail(issue.id, developer.id)).toEqual(expected);
+        const after = await readState();
+        expect(after.issues).toEqual(
+          before.issues.map((row) => (row.id === issue.id ? { ...row, status: 'IN_PROGRESS' } : row)),
+        );
+        expect(await service.getDetail(untouched.id, client.id)).toEqual(untouched);
+        expect(after.events).toEqual(expect.arrayContaining(before.events));
+        expect(after.events).toHaveLength(before.events.length + 1);
+        expect(after.events.filter(({ type }) => type === 'ISSUE_STARTED')).toEqual([
+          {
+            id: expect.any(String),
+            projectId,
+            actorId: developer.id,
+            type: 'ISSUE_STARTED',
+            issueId: issue.id,
+            versionId: null,
+            memberId: null,
+            createdAt: expect.any(Date),
+          },
+        ]);
+        const activity = await module!.get(ActivityService).listForMember(projectId, client.id);
+        expect(activity.filter(({ type }) => type === 'ISSUE_STARTED')).toEqual([
+          expect.objectContaining({ actorName: developer.name, issue: { id: issue.id, number: issue.number } }),
+        ]);
+      },
+    );
+
+    it.each(['개발자', '클라이언트', '승인자'] as const)(
+      'lockIssue는 활성 %s에게 쪽지의 프로젝트·작성자·상태와 역할을 주고 아무것도 바꾸지 않는다',
+      async (role) => {
+        const issue = await service.create(projectId, client.id, input());
+        await prisma.issue.update({ where: { id: issue.id }, data: { status: 'IN_PROGRESS' } });
+        const user = { 개발자: developer, 클라이언트: client, 승인자: approver }[role];
+        const before = await readState();
+        expect(await prisma.$transaction((tx) => service.lockIssue(tx, issue.id, user.id))).toEqual({
+          projectId,
+          authorId: client.id,
+          status: 'IN_PROGRESS',
+          role: role === '개발자' ? 'DEVELOPER' : 'CLIENT',
+        });
+        expect(await readState()).toEqual(before);
+      },
+    );
+
+    it.each(['멤버 아님', '철회된 작성자', '철회된 개발자', '없는 쪽지'] as const)(
+      'lockIssue와 start는 %s에게 버전·개발자 검사보다 먼저 없는 쪽지 404를 준다',
+      async (scenario) => {
+        const issue = await service.create(projectId, client.id, input());
+        const userId = scenario === '멤버 아님' ? outsider.id : scenario === '철회된 개발자' ? developer.id : client.id;
+        if (scenario === '철회된 작성자' || scenario === '철회된 개발자') {
+          await prisma.projectMember.update({
+            where: { projectId_userId: { projectId, userId } },
+            data: { revokedAt: new Date() },
+          });
+        }
+        const targetId = scenario === '없는 쪽지' ? missingId : issue.id;
+        const before = await readState();
+        await expect(prisma.$transaction((tx) => service.lockIssue(tx, targetId, userId))).rejects.toMatchObject(
+          notFound('없는 쪽지예요'),
+        );
+        await expect(service.start(targetId, userId, missingId)).rejects.toMatchObject(notFound('없는 쪽지예요'));
+        expect(await readState()).toEqual(before);
+      },
+    );
+
+    it.each(['클라이언트', '승인자', '다른 프로젝트의 개발자'] as const)(
+      'start는 %s에게 현재·지난 버전 모두 403을 주고 상태·일지를 바꾸지 않는다',
+      async (role) => {
+        const targetProjectId = role === '다른 프로젝트의 개발자' ? otherProjectId : projectId;
+        const targetVersion = role === '다른 프로젝트의 개발자' ? otherCurrent : current;
+        const user = { 클라이언트: client, 승인자: approver, '다른 프로젝트의 개발자': developer }[role];
+        const issue = await service.create(targetProjectId, user.id, input({ versionId: targetVersion.id }));
+        const next = await publishVersion(targetProjectId);
+        const before = await readState();
+        await expect(service.start(issue.id, user.id, targetVersion.id)).rejects.toMatchObject(developerOnly);
+        await expect(service.start(issue.id, user.id, next.id)).rejects.toMatchObject(developerOnly);
+        expect(await readState()).toEqual(before);
+      },
+    );
+
+    it.each(['지난 버전', '게시 전 버전', '남의 프로젝트 버전', '없는 id', '현재 버전 없음'] as const)(
+      'start는 %s이면 VERSION_CHANGED이고 상태·일지가 그대로다',
+      async (scenario) => {
+        const issue = await service.create(projectId, client.id, input());
+        let viewedVersionId = missingId;
+        if (scenario === '지난 버전') {
+          viewedVersionId = current.id;
+          await publishVersion();
+        }
+        if (scenario === '게시 전 버전') {
+          viewedVersionId = (await prisma.deliveryVersion.create({ data: { projectId } })).id;
+        }
+        if (scenario === '남의 프로젝트 버전') viewedVersionId = otherCurrent.id;
+        if (scenario === '현재 버전 없음') {
+          viewedVersionId = current.id;
+          await prisma.project.update({ where: { id: projectId }, data: { currentVersionId: null } });
+        }
+        const before = await readState();
+        await expect(service.start(issue.id, developer.id, viewedVersionId)).rejects.toMatchObject(versionChanged);
+        expect(await readState()).toEqual(before);
+      },
+    );
+
+    it('start는 지난 버전의 쪽지도 현재 버전 id로 시작하고 처음 위치는 바꾸지 않는다', async () => {
+      const issue = await service.create(
+        projectId,
+        client.id,
+        input({ pin: { screenId: screen.id, xRatio: 0.2, yRatio: 0.8 } }),
+      );
+      const next = await publishVersion();
+      expect(await service.start(issue.id, developer.id, next.id)).toEqual({
+        ...issue,
+        status: 'IN_PROGRESS',
+        isMine: false,
+      });
+    });
+
+    it('start는 현재 버전이 승인되면 VERSION_NOT_IN_REVIEW이고 상태·일지가 그대로다', async () => {
+      const issue = await service.create(projectId, client.id, input());
+      await prisma.deliveryVersion.update({ where: { id: current.id }, data: { status: 'APPROVED' } });
+      const before = await readState();
+      await expect(service.start(issue.id, developer.id, current.id)).rejects.toMatchObject(versionNotInReview);
+      expect(await readState()).toEqual(before);
+    });
+
+    it('start는 버전 검사를 OPEN 검사보다 먼저 하고 이미 수정 중인 쪽지의 일지를 더 쓰지 않는다', async () => {
+      const issue = await service.create(projectId, client.id, input());
+      await service.start(issue.id, developer.id, current.id);
+      const before = await readState();
+      await expect(service.start(issue.id, developer.id, current.id)).rejects.toMatchObject(issueNotOpen);
+      await expect(service.start(issue.id, developer.id, missingId)).rejects.toMatchObject(versionChanged);
+      await prisma.deliveryVersion.update({ where: { id: current.id }, data: { status: 'APPROVED' } });
+      await expect(service.start(issue.id, developer.id, missingId)).rejects.toMatchObject(versionChanged);
+      await expect(service.start(issue.id, developer.id, current.id)).rejects.toMatchObject(versionNotInReview);
+      expect(await readState()).toEqual(before);
+      expect(before.events.filter(({ type }) => type === 'ISSUE_STARTED')).toHaveLength(1);
+    });
+
+    it('start를 동시에 두 번 보내면 하나만 성공하고 나머지는 ISSUE_NOT_OPEN이며 일지는 하나다', async () => {
+      const issue = await service.create(projectId, client.id, input());
+      const results = await Promise.allSettled([
+        service.start(issue.id, developer.id, current.id),
+        service.start(issue.id, developer.id, current.id),
+      ]);
+      expect(results.filter(({ status }) => status === 'fulfilled')).toEqual([
+        { status: 'fulfilled', value: { ...issue, status: 'IN_PROGRESS', isMine: false } },
+      ]);
+      expect(results.filter(({ status }) => status === 'rejected')).toEqual([
+        { status: 'rejected', reason: expect.objectContaining(issueNotOpen) },
+      ]);
+      expect(await prisma.activityEvent.findMany({ where: { type: 'ISSUE_STARTED' } })).toEqual([
+        expect.objectContaining({ issueId: issue.id, actorId: developer.id, projectId }),
+      ]);
+      expect(await service.getDetail(issue.id, client.id)).toEqual({ ...issue, status: 'IN_PROGRESS' });
+    });
+
+    it.each(['쪽지 상태 변경', '멤버 철회', '개발자 역할 변경', '새 버전 게시', '현재 버전 승인'] as const)(
+      'start는 Project 잠금을 기다린 뒤 %s를 다시 읽고 거절한다',
+      async (change) => {
+        const issue = await service.create(projectId, client.id, input());
+        const before = await readState();
+        let pending: Promise<unknown> | undefined;
+        let settled = false;
+        try {
+          await prisma.$transaction(
+            async (tx) => {
+              await tx.$queryRaw`SELECT id FROM projects WHERE id = ${projectId}::uuid FOR UPDATE`;
+              const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+              pending = service
+                .start(issue.id, developer.id, current.id)
+                .catch((error: unknown) => error)
+                .finally(() => {
+                  settled = true;
+                });
+              // start가 실제로 Project 행 잠금을 기다린 뒤에만 다른 연결의 변경을 커밋한다.
+              await vi.waitFor(
+                async () => {
+                  const [{ waiting }] = await prisma.$queryRaw<{ waiting: boolean }[]>`
+                SELECT EXISTS (
+                  SELECT 1 FROM pg_stat_activity
+                  WHERE datname = current_database() AND ${pid}::int = ANY(pg_blocking_pids(pid))
+                    AND query ILIKE '%projects%' AND query ILIKE '%FOR UPDATE%'
+                ) AS waiting
+              `;
+                  expect(settled).toBe(false);
+                  expect(waiting).toBe(true);
+                },
+                { timeout: 2_000, interval: 20 },
+              );
+              if (change === '쪽지 상태 변경') {
+                await tx.issue.update({ where: { id: issue.id }, data: { status: 'IN_PROGRESS' } });
+                return;
+              }
+              if (change === '멤버 철회') {
+                await tx.projectMember.update({
+                  where: { projectId_userId: { projectId, userId: developer.id } },
+                  data: { revokedAt: new Date() },
+                });
+                return;
+              }
+              if (change === '개발자 역할 변경') {
+                await tx.projectMember.update({
+                  where: { projectId_userId: { projectId, userId: developer.id } },
+                  data: { role: 'CLIENT' },
+                });
+                return;
+              }
+              if (change === '현재 버전 승인') {
+                await tx.deliveryVersion.update({ where: { id: current.id }, data: { status: 'APPROVED' } });
+                return;
+              }
+              const next = await tx.deliveryVersion.create({
+                data: { projectId, number: 1, status: 'IN_REVIEW', publishedAt: new Date() },
+              });
+              await tx.project.update({ where: { id: projectId }, data: { currentVersionId: next.id } });
+            },
+            { maxWait: 5_000, timeout: 10_000 },
+          );
+        } finally {
+          await pending;
+        }
+        const expected = {
+          '쪽지 상태 변경': issueNotOpen,
+          '멤버 철회': notFound('없는 쪽지예요'),
+          '개발자 역할 변경': developerOnly,
+          '새 버전 게시': versionChanged,
+          '현재 버전 승인': versionNotInReview,
+        };
+        expect(await pending).toMatchObject(expected[change]);
+        expect(await readState()).toEqual({
+          ...before,
+          issues: before.issues.map((row) => ({
+            ...row,
+            status: change === '쪽지 상태 변경' ? 'IN_PROGRESS' : 'OPEN',
+          })),
+        });
+      },
+      20_000,
+    );
+
+    it('start가 일지 저장에서 실패하면 상태가 접수로 되돌아가고 다시 시작할 수 있다', async () => {
+      const issue = await service.create(projectId, client.id, input());
+      const before = await readState();
+      try {
+        await prisma.$executeRaw`
+          CREATE FUNCTION issues_service_fail_start_event() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN
+            IF NEW.type = 'ISSUE_STARTED' THEN
+              RAISE EXCEPTION 'issues service start event failure';
+            END IF;
+            RETURN NEW;
+          END;
+          $$
+        `;
+        await prisma.$executeRaw`
+          CREATE TRIGGER issues_service_fail_start_event
+          BEFORE INSERT ON activity_events FOR EACH ROW
+          EXECUTE FUNCTION issues_service_fail_start_event()
+        `;
+        await expect(service.start(issue.id, developer.id, current.id)).rejects.toThrow(
+          'issues service start event failure',
+        );
+        expect(await readState()).toEqual(before);
+        expect(await service.getDetail(issue.id, client.id)).toEqual(issue);
+      } finally {
+        try {
+          await prisma.$executeRaw`DROP TRIGGER IF EXISTS issues_service_fail_start_event ON activity_events`;
+        } finally {
+          await prisma.$executeRaw`DROP FUNCTION IF EXISTS issues_service_fail_start_event()`;
+        }
+      }
+      expect(await service.start(issue.id, developer.id, current.id)).toEqual({
+        ...issue,
+        status: 'IN_PROGRESS',
+        isMine: false,
+      });
+      expect(await prisma.activityEvent.count({ where: { issueId: issue.id, type: 'ISSUE_STARTED' } })).toBe(1);
+    });
+  });
 });

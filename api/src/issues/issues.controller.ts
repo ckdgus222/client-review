@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/guards/session.guard.js';
 import { projectNotFound } from '../projects/projects.service.js';
 import { CreateIssueDto } from './dto/create-issue.dto.js';
+import { StartIssueDto } from './dto/start-issue.dto.js';
 import { issueNotFound, IssuesService } from './issues.service.js';
 
 // 틀린 모양의 id는 DB에 묻기 전에, 없는 프로젝트·쪽지와 같은 404로 끝낸다.
@@ -35,5 +36,12 @@ export class IssuesController {
   @Get('issues/:id')
   get(@Req() request: AuthenticatedRequest, @Param('id', issueIdPipe) issueId: string) {
     return this.issues.getDetail(issueId, request.user.id);
+  }
+
+  // 새로 만드는 것이 아니라 쪽지의 상태를 바꾸는 것이라 201 대신 200이다.
+  @Post('issues/:id/start')
+  @HttpCode(HttpStatus.OK)
+  start(@Req() request: AuthenticatedRequest, @Param('id', issueIdPipe) issueId: string, @Body() body: StartIssueDto) {
+    return this.issues.start(issueId, request.user.id, body.versionId);
   }
 }
