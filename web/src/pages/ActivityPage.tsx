@@ -15,8 +15,20 @@ const toMessage = (error: unknown): ReactNode => {
   return '잠시 뒤 다시 시도해 주세요'
 }
 
-// 서버는 사건 종류(type)만 보내고 문장은 화면이 만든다. 지금 사건은 게시 하나다.
-const describe = ({ actorName, version }: ActivityItem) => {
+// 서버는 사건 종류(type)만 보내고 문장은 화면이 만든다.
+const describe = ({ type, actorName, version, memberName }: ActivityItem) => {
+  // 초대받은 사람은 아직 멤버가 아니라서 서버가 대상 이름을 보내지 않는다.
+  if (type === 'INVITATION_CREATED') return `${actorName}님이 클라이언트를 초대했어요`
+  // 수락한 사람이 곧 참여한 사람이라 이름은 한 번만 쓴다.
+  if (type === 'INVITATION_ACCEPTED') return `${actorName}님이 프로젝트에 참여했어요`
+  if (type === 'MEMBER_REVOKED') {
+    return `${actorName}님이 ${memberName ? `${memberName}님` : '참여자'}의 접근을 철회했어요`
+  }
+  if (type === 'APPROVER_CHANGED') {
+    // 대상이 없으면 승인자를 "지정하지 않음"으로 바꾼 것이다.
+    if (!memberName) return `${actorName}님이 승인자를 비웠어요`
+    return `${actorName}님이 ${memberName}님을 승인자로 정했어요`
+  }
   if (!version) return `${actorName}님이 버전을 게시했어요`
   // "초안을", "1차를"처럼 받침에 따라 조사가 다르다. 번호 0이 초안이다.
   const particle = version.number === 0 ? '을' : '를'

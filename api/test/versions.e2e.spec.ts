@@ -228,6 +228,7 @@ describe('버전 API (e2e)', () => {
         actorId: developerId,
         type: 'VERSION_PUBLISHED',
         versionId: draft.body.id,
+        memberId: null,
         createdAt: expect.any(Date),
       },
     ]);
@@ -264,7 +265,7 @@ describe('버전 API (e2e)', () => {
     '프로젝트 상세는 %s에게 게시 전 null, 1차 게시 뒤 1차, 2차 게시 뒤 2차를 돌려준다',
     async (role) => {
       const memberCookie = role === 'DEVELOPER' ? cookie : clientCookie;
-      const projectDetail = { id: projectId, name: '버전 검수 프로젝트', myRole: role };
+      const projectDetail = { id: projectId, name: '버전 검수 프로젝트', myRole: role, approver: null };
       await request(server)
         .get(`/api/projects/${projectId}`)
         .set('Cookie', memberCookie)
@@ -342,6 +343,7 @@ describe('버전 API (e2e)', () => {
             name: '버전 검수 프로젝트',
             myRole: role,
             currentVersion: { id: first.body.id, number: 0 },
+            approver: null,
           });
       }
 
@@ -793,7 +795,7 @@ describe('버전 API (e2e)', () => {
         .get(`/api/projects/${projectId}`)
         .set('Cookie', role === 'DEVELOPER' ? cookie : clientCookie)
         .expect(200)
-        .expect({ id: projectId, name: '버전 검수 프로젝트', myRole: role, currentVersion: null });
+        .expect({ id: projectId, name: '버전 검수 프로젝트', myRole: role, currentVersion: null, approver: null });
     }
 
     const screen = await createScreen();
@@ -878,6 +880,7 @@ describe('버전 API (e2e)', () => {
           name: '버전 검수 프로젝트',
           myRole: role,
           currentVersion: { id: draft.body.id, number: 0 },
+          approver: null,
         });
     }
 
@@ -1051,6 +1054,74 @@ describe('버전 API (e2e)', () => {
     await request(server).get(`/api/projects/${projectId}/versions`).set('Cookie', clientCookie).expect(200).expect([]);
     await getDetail(draft.body.id, clientCookie).expect(404).expect(versionNotFoundBody);
     expect(await prisma.deliveryVersion.count()).toBe(1);
+  });
+
+  it('철회 뒤 같은 세션의 프로젝트·버전·사진·일지·화면 접근을 막고 멤버 복구 뒤 다시 허용한다', async () => {
+    const draft = await createDraft();
+    const screen = await createScreen();
+    const uploaded = await putPhoto(draft.body.id, screen.id).attach('file', photo, 'screen.png').expect(200);
+    await post(`/api/versions/${draft.body.id}/publish`).expect(200);
+    const assetPath = `/api/assets/${uploaded.body.screens[0].asset.id}`;
+    const assetNotFoundBody = { statusCode: 404, message: '없는 사진이에요', error: 'Not Found' };
+    const paths = [
+      { path: `/api/projects/${projectId}`, missing: projectNotFoundBody },
+      { path: `/api/projects/${projectId}/versions`, missing: projectNotFoundBody },
+      { path: `/api/versions/${draft.body.id}`, missing: versionNotFoundBody },
+      { path: assetPath, missing: assetNotFoundBody },
+      { path: `/api/projects/${projectId}/activity`, missing: projectNotFoundBody },
+      { path: `/api/projects/${projectId}/screens`, missing: projectNotFoundBody },
+    ];
+    const before = [];
+    for (const { path } of paths) {
+      before.push((await request(server).get(path).set('Cookie', clientCookie).expect(200)).body);
+    }
+    const projectsBefore = await request(server).get('/api/projects').set('Cookie', clientCookie).expect(200);
+    expect(projectsBefore.body).toHaveLength(2);
+    expect(projectsBefore.body).toContainEqual(expect.objectContaining({ id: projectId, myRole: 'CLIENT' }));
+    const photoResponse = await request(server).get(assetPath).set('Cookie', clientCookie).expect(200);
+    expect(photoResponse.headers.etag).toEqual(expect.any(String));
+    await request(server)
+      .get(assetPath)
+      .set('Cookie', clientCookie)
+      .set('If-None-Match', photoResponse.headers.etag)
+      .expect(304);
+
+    // 새 초안의 사진은 게시한 사진과 다른 파일로 둔다.
+    const next = await createDraft();
+    const nextPhoto = await putPhoto(next.body.id, screen.id).attach('file', photo, 'next.png').expect(200);
+    const draftAssetPath = `/api/assets/${nextPhoto.body.screens[0].asset.id}`;
+    await getDetail(next.body.id, clientCookie).expect(404).expect(versionNotFoundBody);
+    await request(server).get(draftAssetPath).set('Cookie', clientCookie).expect(404).expect(assetNotFoundBody);
+    const member = await prisma.projectMember.findFirstOrThrow({ where: { projectId, role: 'CLIENT' } });
+    await prisma.projectMember.update({ where: { id: member.id }, data: { revokedAt: new Date() } });
+
+    for (const { path, missing } of paths) {
+      await request(server).get(path).set('Cookie', clientCookie).expect(404).expect(missing);
+      await request(server).get(path).set('Cookie', cookie).expect(200);
+    }
+    await request(server)
+      .get(assetPath)
+      .set('Cookie', clientCookie)
+      .set('If-None-Match', photoResponse.headers.etag)
+      .expect(404)
+      .expect(assetNotFoundBody);
+    await request(server)
+      .get('/api/projects')
+      .set('Cookie', clientCookie)
+      .expect(200)
+      .expect(projectsBefore.body.filter((project: { id: string }) => project.id !== projectId));
+    await request(server).get(`/api/projects/${otherProjectId}`).set('Cookie', clientCookie).expect(200);
+
+    await prisma.projectMember.update({ where: { id: member.id }, data: { revokedAt: null } });
+
+    for (const [index, { path }] of paths.entries()) {
+      const restored = await request(server).get(path).set('Cookie', clientCookie).expect(200);
+      expect(restored.body).toEqual(before[index]);
+    }
+    await request(server).get('/api/projects').set('Cookie', clientCookie).expect(200).expect(projectsBefore.body);
+    await getDetail(next.body.id, clientCookie).expect(404).expect(versionNotFoundBody);
+    await request(server).get(draftAssetPath).set('Cookie', clientCookie).expect(404).expect(assetNotFoundBody);
+    expect(await prisma.projectMember.findUniqueOrThrow({ where: { id: member.id } })).toEqual(member);
   });
 
   it.each(['get', 'post'] as const)(

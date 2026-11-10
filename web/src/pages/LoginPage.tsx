@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import { requestCode, verifyCode } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
 import { Button } from '../components/Button.tsx'
@@ -26,8 +26,14 @@ const toMessage = (error: unknown, step: Step) => {
   return '잠시 뒤 다시 시도해 주세요'
 }
 
+// 로그인한 뒤 돌아갈 주소(예: 초대 화면). 다른 사이트로 보내는 열린 리디렉션(open redirect)을 막으려고
+// 우리 앱 안쪽 주소만 따른다. "//다른사이트"와 "/\다른사이트"는 브라우저가 다른 사이트로 읽어서 거른다.
+const safeNext = (next: string | null) =>
+  next?.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\') ? next : '/'
+
 export const LoginPage = () => {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [step, setStep] = useState<Step>('email')
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
@@ -49,7 +55,7 @@ export const LoginPage = () => {
       }
       await verifyCode(email, code, step === 'name' ? name : undefined)
       // 로그인 화면을 방문 기록에서 바꿔치기해서, 뒤로 가기로 다시 오지 않게 한다.
-      navigate('/', { replace: true })
+      navigate(safeNext(searchParams.get('next')), { replace: true })
     } catch (caught) {
       // 처음 온 사람은 코드를 맞힌 뒤 이름을 받는다. 오류가 아니라 다음 단계다.
       if (caught instanceof ApiError && caught.code === 'NAME_REQUIRED') {

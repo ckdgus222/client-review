@@ -586,6 +586,7 @@ describe('버전과 사진 테이블', () => {
       actorId: actor.id,
       type: 'VERSION_PUBLISHED',
       versionId: null,
+      memberId: null,
       createdAt: expect.any(Date),
     });
   });

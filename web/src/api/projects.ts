@@ -5,12 +5,17 @@ export type Viewport = 'PC' | 'MOBILE'
 
 // 시각은 JSON으로 와서 글자(ISO 문자열)다.
 export type MyProject = { id: string; name: string; myRole: ProjectRole; createdAt: string }
+// 서버의 클라이언트 정원과 같다(전체 기획 5장). 바꾸면 서버도 함께 바꾼다.
+export const MAX_CLIENTS = 5
+// 승인자는 이 프로젝트의 클라이언트 한 명이다. 정하지 않았으면 null이다.
+export type Approver = { memberId: string; name: string } | null
 // 현재 버전은 게시할 때만 바뀌어서 늘 번호가 있다. 게시 전에는 null이다.
 export type ProjectDetail = {
   id: string
   name: string
   myRole: ProjectRole
   currentVersion: { id: string; number: number } | null
+  approver: Approver
 }
 export type Screen = { id: string; name: string; viewport: Viewport; hiddenAt: string | null }
 

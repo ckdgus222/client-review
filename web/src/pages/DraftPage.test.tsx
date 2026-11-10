@@ -54,6 +54,7 @@ const project: ProjectDetail = {
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
   currentVersion: { id: 'd565474f-17a5-4a8e-9b61-bde406fefdf3', number: 0 },
+  approver: null,
 }
 const screens: Screen[] = [
   { id: 'fdba89f1-38f6-4910-a5c7-6774a8e2f9ef', name: '메인', viewport: 'PC', hiddenAt: null },

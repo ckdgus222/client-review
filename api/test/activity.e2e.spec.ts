@@ -145,7 +145,7 @@ describe('활동 일지 API (e2e)', () => {
   );
 
   it.each(['DEVELOPER', 'CLIENT'] as const)(
-    '1차·2차를 게시하면 %s에게 정해진 다섯 칸만 2차부터 돌려준다',
+    '1차·2차를 게시하면 %s에게 정해진 여섯 칸만 2차부터 돌려준다',
     async (role) => {
       const first = await createDraftWithPhoto();
       await post(`/api/versions/${first.versionId}/publish`).expect(200);
@@ -162,6 +162,7 @@ describe('활동 일지 API (e2e)', () => {
           type: 'VERSION_PUBLISHED',
           createdAt: secondEvent.createdAt.toISOString(),
           actorName: '개발자',
+          memberName: null,
           version: { id: second.body.id, number: 1 },
         },
         {
@@ -169,6 +170,7 @@ describe('활동 일지 API (e2e)', () => {
           type: 'VERSION_PUBLISHED',
           createdAt: firstEvent.createdAt.toISOString(),
           actorName: '개발자',
+          memberName: null,
           version: { id: first.versionId, number: 0 },
         },
       ]);
@@ -191,6 +193,7 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: expect.any(String),
         actorName: '다른 개발자',
+        memberName: null,
         version: { id: other.versionId, number: 0 },
       },
     ]);
@@ -224,6 +227,7 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: '2026-01-02T00:00:00.000Z',
         actorName: '개발자',
+        memberName: null,
         version: null,
       },
       {
@@ -231,6 +235,7 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: '2026-01-01T00:00:00.000Z',
         actorName: '개발자',
+        memberName: null,
         version: null,
       },
     ]);
@@ -316,6 +321,7 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: expect.any(String),
         actorName: '개발자',
+        memberName: null,
         version: { id: draft.versionId, number: 0 },
       },
     ]);
@@ -362,6 +368,7 @@ describe('활동 일지 API (e2e)', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: expect.any(String),
         actorName: '개발자',
+        memberName: null,
         version: { id: draft.versionId, number: 0 },
       },
     ]);

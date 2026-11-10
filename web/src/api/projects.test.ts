@@ -77,7 +77,7 @@ describe('createProject', () => {
 
 describe('getProject', () => {
   it.each(['DEVELOPER', 'CLIENT'])('옵션 없이 GET을 한 번 요청하고 %s 역할의 프로젝트를 돌려준다', async (myRole) => {
-    const detail = { id: projectId, name: project.name, myRole, currentVersion: null }
+    const detail = { id: projectId, name: project.name, myRole, currentVersion: null, approver: null }
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(detail), { status: 200 }))
 
     await expect(getProject(projectId)).resolves.toEqual(detail)
@@ -91,6 +91,7 @@ describe('getProject', () => {
       name: project.name,
       myRole: 'DEVELOPER',
       currentVersion: { id: 'published-version', number: 2 },
+      approver: null,
     }
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(detail), { status: 200 }))
 
@@ -185,7 +186,12 @@ describe.each([
 })
 
 describe.each([
-  { name: 'getProject', call: getProject, suffix: '', responseBody: { ...project, currentVersion: null } },
+  {
+    name: 'getProject',
+    call: getProject,
+    suffix: '',
+    responseBody: { ...project, currentVersion: null, approver: null },
+  },
   { name: 'listScreens', call: listScreens, suffix: '/screens', responseBody: [screen] },
 ])('$name의 프로젝트 ID 인코딩', ({ call, suffix, responseBody }) => {
   it.each(encodedIds)('$id를 $encoded 한 덩어리로 보내고 GET 옵션을 추가하지 않는다', async ({ id, encoded }) => {

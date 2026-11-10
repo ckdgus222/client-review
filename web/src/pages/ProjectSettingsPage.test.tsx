@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { getMe, type Me } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
+import { createInvitation } from '../api/invitations.ts'
+import { listMembers, revokeMember, setApprover } from '../api/members.ts'
 import {
   createScreen,
   getProject,
@@ -30,6 +32,14 @@ vi.mock('../api/projects.ts', async () => {
   }
 })
 
+vi.mock('../api/members.ts', () => ({
+  listMembers: vi.fn(),
+  revokeMember: vi.fn(),
+  setApprover: vi.fn(),
+}))
+
+vi.mock('../api/invitations.ts', () => ({ createInvitation: vi.fn() }))
+
 const user: Me = {
   id: '5b3a934d-ef8e-4ce8-b26a-a9d1cdd4983f',
   email: 'reader@example.com',
@@ -42,6 +52,7 @@ const project: ProjectDetail = {
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
   currentVersion: null,
+  approver: null,
 }
 
 // 만든 순서 가운데 숨긴 화면을 넣어, 보이는 번호와 복원할 위치를 확인한다.
@@ -63,6 +74,7 @@ const nextProject: ProjectDetail = {
   name: '다음 프로젝트',
   myRole: 'DEVELOPER',
   currentVersion: null,
+  approver: null,
 }
 
 const nextScreens: Screen[] = [
@@ -132,6 +144,10 @@ const renderSettingsHistory = (basename = '/', id = project.id) => {
 }
 
 beforeEach(() => {
+  vi.mocked(listMembers).mockReset().mockResolvedValue({ members: [], invitations: [] })
+  vi.mocked(revokeMember).mockReset()
+  vi.mocked(setApprover).mockReset()
+  vi.mocked(createInvitation).mockReset()
   vi.mocked(getMe).mockReset().mockResolvedValue(user)
   vi.mocked(getProject).mockReset().mockResolvedValue(project)
   vi.mocked(listScreens).mockReset().mockResolvedValue(screens)
@@ -578,7 +594,11 @@ describe('ProjectSettingsPage 목록과 역할', () => {
     expect(screen.getByRole('heading', { level: 2, name: '숨긴 화면' })).toBeDefined()
     expect(screen.queryByText('아직 화면이 없어요.')).toBeNull()
     expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '기기' }).value).toBe('PC')
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['PC', '모바일'])
+    expect(
+      within(screen.getByRole('combobox', { name: '기기' }))
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['PC', '모바일'])
     // 프로젝트 생성 가능 여부가 아니라 이 프로젝트의 역할로 화면 관리 권한을 판단한다.
     expect(screen.getByRole('textbox', { name: '화면 이름' })).toBeDefined()
     expect(screen.getByRole('button', { name: '만들기' })).toBeDefined()
@@ -612,7 +632,15 @@ describe('ProjectSettingsPage 목록과 역할', () => {
     renderSettings()
 
     expect(await screen.findByText('아직 화면이 없어요.')).toBeDefined()
-    expect(screen.queryByRole('list')).toBeNull()
+    const membersHeading = screen.queryByRole('heading', { name: '참여자와 승인자' })
+    // 참여자 칸보다 앞에 있는 화면 이름표 목록만 확인한다.
+    const screenLists = screen
+      .queryAllByRole('list')
+      .filter(
+        (list) =>
+          !membersHeading || Boolean(list.compareDocumentPosition(membersHeading) & Node.DOCUMENT_POSITION_FOLLOWING),
+      )
+    expect(screenLists).toHaveLength(0)
     expect(screen.queryByRole('heading', { name: '숨긴 화면' })).toBeNull()
   })
 

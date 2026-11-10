@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import App from '../App.tsx'
 import { requestCode, verifyCode } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
@@ -41,6 +41,106 @@ const enterNameStep = async () => {
 beforeEach(() => {
   vi.mocked(requestCode).mockReset().mockResolvedValue(undefined)
   vi.mocked(verifyCode).mockReset().mockResolvedValue(user)
+})
+
+const LoginHistory = () => {
+  const location = useLocation()
+  const navigate = useNavigate()
+  return (
+    <>
+      <output aria-label="현재 주소">{location.pathname + location.search + location.hash}</output>
+      <button onClick={() => navigate(-1)}>뒤로 가기</button>
+    </>
+  )
+}
+
+const renderLoginWithNext = (search: string) =>
+  render(
+    <MemoryRouter initialEntries={['/before', `/login${search}`]} initialIndex={1}>
+      <LoginHistory />
+      <Routes>
+        <Route path="/before" element={<p>이전 화면</p>} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="*" element={<p>이동한 화면</p>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+describe.each(['code', 'name'] as const)('LoginPage next 주소로 돌아가기 (%s 단계)', (step) => {
+  it.each([
+    { search: '?next=/invite/test-invitation', destination: '/invite/test-invitation' },
+    { search: '?next=%2Finvite%2Ftest-invitation', destination: '/invite/test-invitation' },
+    { search: '', destination: '/' },
+    { search: '?next=', destination: '/' },
+    { search: '?next=/', destination: '/' },
+    { search: '?next=%2F%2Fevil.example', destination: '/' },
+    { search: '?next=%2F%5Cevil.example', destination: '/' },
+    { search: '?next=https%3A%2F%2Fevil.example', destination: '/' },
+    { search: '?next=evil', destination: '/' },
+    { search: '?next=javascript%3Aalert(1)', destination: '/' },
+    { search: '?next=%2Fprojects%2Fx%3Fversion%3Dy', destination: '/projects/x?version=y' },
+    {
+      search: '?next=%2Fprojects%2Fx%3Fversion%3Dy%26screen%3Dz%23comments',
+      destination: '/projects/x?version=y&screen=z#comments',
+    },
+  ])('$search이면 성공 뒤 $destination으로 방문 기록을 바꾼다', async ({ search, destination }) => {
+    renderLoginWithNext(search)
+    const input = step === 'code' ? await enterCodeStep() : await enterNameStep()
+
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/login${search}`)
+    expect(screen.queryByText('이동한 화면')).toBeNull()
+    fireEvent.change(input, { target: { value: step === 'code' ? code : user.name } })
+    fireEvent.click(screen.getByRole('button', { name: step === 'code' ? '로그인' : '시작하기' }))
+
+    await screen.findByText('이동한 화면')
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(destination)
+    expect(verifyCode).toHaveBeenCalledTimes(step === 'code' ? 1 : 2)
+    expect(verifyCode).toHaveBeenLastCalledWith(email, code, step === 'code' ? undefined : user.name)
+    expect(screen.queryByRole('heading', { name: '로그인' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '뒤로 가기' }))
+
+    expect(await screen.findByText('이전 화면')).toBeDefined()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe('/before')
+    expect(screen.queryByRole('heading', { name: '로그인' })).toBeNull()
+  })
+
+  it.each([
+    { error: new ApiError(422, 'CODE_WRONG'), message: '코드가 맞지 않아요' },
+    { error: new ApiError(422, 'CODE_EXPIRED'), message: '코드를 쓸 수 없어요. 새 코드를 받아 주세요' },
+    { error: new TypeError('Failed to fetch'), message: '연결을 확인하고 다시 시도해 주세요' },
+  ])('$message이면 이동하지 않고 재시도 성공 뒤 초대 주소로 돌아간다', async ({ error, message }) => {
+    const search = '?next=/invite/test-invitation'
+    renderLoginWithNext(search)
+    const input = step === 'code' ? await enterCodeStep() : await enterNameStep()
+    vi.mocked(verifyCode).mockRejectedValueOnce(error)
+    fireEvent.change(input, { target: { value: step === 'code' ? code : user.name } })
+    fireEvent.click(screen.getByRole('button', { name: step === 'code' ? '로그인' : '시작하기' }))
+
+    expect(await screen.findByText(message)).toBeDefined()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/login${search}`)
+    expect(screen.queryByText('이동한 화면')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: step === 'code' ? '로그인' : '시작하기' }))
+
+    await screen.findByText('이동한 화면')
+    expect(screen.getByLabelText('현재 주소').textContent).toBe('/invite/test-invitation')
+  })
+
+  it('이메일을 다시 입력하고 코드를 재발급해도 초대 주소를 유지한다', async () => {
+    renderLoginWithNext('?next=/invite/test-invitation')
+    if (step === 'code') await enterCodeStep()
+    if (step === 'name') await enterNameStep()
+    fireEvent.click(screen.getByRole('button', { name: '이메일 다시 입력' }))
+    const input = await enterCodeStep()
+    fireEvent.change(input, { target: { value: code } })
+    fireEvent.click(screen.getByRole('button', { name: '로그인' }))
+
+    await screen.findByText('이동한 화면')
+    expect(screen.getByLabelText('현재 주소').textContent).toBe('/invite/test-invitation')
+    expect(requestCode).toHaveBeenCalledTimes(2)
+    expect(verifyCode).toHaveBeenLastCalledWith(email, code, undefined)
+  })
 })
 
 describe('LoginPage 요청 중 입력 잠금', () => {

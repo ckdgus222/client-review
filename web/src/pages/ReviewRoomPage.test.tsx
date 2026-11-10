@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { getMe, type Me } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
+import { listMembers, type Member, type MemberList } from '../api/members.ts'
 import { getProject, type ProjectDetail } from '../api/projects.ts'
 import { getVersion, listVersions, type VersionDetail, type VersionSummary } from '../api/versions.ts'
 import { ReviewRoomPage } from './ReviewRoomPage.tsx'
@@ -18,6 +19,8 @@ vi.mock('../api/projects.ts', async () => {
   const actual = await vi.importActual<typeof import('../api/projects.ts')>('../api/projects.ts')
   return { ...actual, getProject: vi.fn() }
 })
+
+vi.mock('../api/members.ts', () => ({ listMembers: vi.fn() }))
 
 vi.mock('../api/versions.ts', async () => {
   const actual = await vi.importActual<typeof import('../api/versions.ts')>('../api/versions.ts')
@@ -35,6 +38,7 @@ const project: ProjectDetail = {
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
   currentVersion: { id: 'd565474f-17a5-4a8e-9b61-bde406fefdf3', number: 2 },
+  approver: null,
 }
 const currentVersion: VersionDetail = {
   id: project.currentVersion!.id,
@@ -102,6 +106,7 @@ const nextProject: ProjectDetail = {
   name: '다음 프로젝트',
   myRole: 'CLIENT',
   currentVersion: null,
+  approver: null,
 }
 
 const deferred = <T,>() => {
@@ -147,6 +152,7 @@ const renderReview = (path = `/projects/${project.id}`, basename = '/') => {
 beforeEach(() => {
   vi.mocked(getMe).mockReset().mockResolvedValue(user)
   vi.mocked(getProject).mockReset().mockResolvedValue(project)
+  vi.mocked(listMembers).mockReset().mockResolvedValue({ members: [], invitations: [] })
   vi.mocked(listVersions).mockReset().mockResolvedValue(versions)
   vi.mocked(getVersion)
     .mockReset()
@@ -155,6 +161,123 @@ beforeEach(() => {
       if (!detail) throw new ApiError(404)
       return detail
     })
+})
+
+describe('ReviewRoomPage 승인자 알림', () => {
+  const developer: Member = {
+    id: 'f684e31f-9df6-4879-b155-ef585259255f',
+    name: '개발자',
+    email: 'developer@example.com',
+    role: 'DEVELOPER',
+    lastSeenAt: null,
+  }
+  const client: Member = {
+    id: '8b070074-712e-46f4-a791-b4a6d0eaa3f2',
+    name: '클라이언트',
+    email: 'client@example.com',
+    role: 'CLIENT',
+    lastSeenAt: null,
+  }
+
+  it.each([
+    { state: '게시한 버전이 있을 때', currentVersion: project.currentVersion, listedVersions: versions },
+    { state: '게시한 버전이 없을 때', currentVersion: null, listedVersions: [draft] },
+  ])(
+    '$state 승인자가 없고 활성 클라이언트가 한 명이면 개발자에게 알림과 설정 링크를 보여 준다',
+    async ({ currentVersion, listedVersions }) => {
+      vi.mocked(getProject).mockResolvedValueOnce({ ...project, currentVersion })
+      vi.mocked(listVersions).mockResolvedValueOnce(listedVersions)
+      const pending = deferred<MemberList>()
+      vi.mocked(listMembers).mockReturnValueOnce(pending.promise)
+      renderReview()
+      await screen.findByRole('heading', { name: project.name })
+
+      expect(listMembers).toHaveBeenCalledExactlyOnceWith(project.id)
+      expect(screen.queryByText('승인자를 정해 주세요.')).toBeNull()
+      expect(screen.queryByRole('link', { name: '설정으로 가기' })).toBeNull()
+      await act(async () => pending.resolve({ members: [developer, client], invitations: [] }))
+
+      expect(screen.getByText('승인자를 정해 주세요.')).toBeDefined()
+      expect(screen.getByRole('link', { name: '설정으로 가기' }).getAttribute('href')).toBe(
+        `/projects/${project.id}/settings`,
+      )
+      if (currentVersion) {
+        expect(await screen.findByRole('img', { name: '메인 · PC' })).toBeDefined()
+        return
+      }
+      expect(screen.getByRole('heading', { name: '아직 게시한 버전이 없어요.' })).toBeDefined()
+      expect(getVersion).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each([
+    { state: '참여자 목록이 비어 있으면', members: [] },
+    { state: '개발자와 초대 대기만 있으면', members: [developer] },
+  ])('$state 승인자 알림과 설정으로 가기 링크가 없다', async ({ members }) => {
+    const pending = deferred<MemberList>()
+    vi.mocked(listMembers).mockReturnValueOnce(pending.promise)
+    renderReview()
+    await screen.findByRole('img', { name: '메인 · PC' })
+    await act(async () =>
+      pending.resolve({
+        members,
+        invitations: [{ email: client.email, expiresAt: '2026-11-17T09:00:00.000Z' }],
+      }),
+    )
+
+    expect(listMembers).toHaveBeenCalledExactlyOnceWith(project.id)
+    expect(screen.queryByText('승인자를 정해 주세요.')).toBeNull()
+    expect(screen.queryByRole('link', { name: '설정으로 가기' })).toBeNull()
+  })
+
+  it('개발자에게 이미 승인자가 있으면 참여자 목록을 부르지 않고 알림도 없다', async () => {
+    vi.mocked(getProject).mockResolvedValueOnce({
+      ...project,
+      approver: { memberId: client.id, name: client.name },
+    })
+    vi.mocked(listMembers).mockResolvedValueOnce({ members: [developer, client], invitations: [] })
+    renderReview()
+    await screen.findByRole('img', { name: '메인 · PC' })
+    await act(async () => {})
+
+    expect(listMembers).not.toHaveBeenCalled()
+    expect(screen.queryByText('승인자를 정해 주세요.')).toBeNull()
+    expect(screen.queryByRole('link', { name: '설정으로 가기' })).toBeNull()
+  })
+
+  it('CLIENT에게 승인자가 없어도 참여자 목록을 부르지 않고 알림도 없다', async () => {
+    vi.mocked(getProject).mockResolvedValueOnce({ ...project, myRole: 'CLIENT' })
+    vi.mocked(listMembers).mockResolvedValueOnce({ members: [developer, client], invitations: [] })
+    renderReview()
+    await screen.findByRole('img', { name: '메인 · PC' })
+    await act(async () => {})
+
+    expect(listMembers).not.toHaveBeenCalled()
+    expect(screen.queryByText('승인자를 정해 주세요.')).toBeNull()
+    expect(screen.queryByRole('link', { name: '설정으로 가기' })).toBeNull()
+  })
+
+  it.each([
+    { reason: '서버 오류', error: new ApiError(500) },
+    { reason: '연결 오류', error: new TypeError('Failed to fetch') },
+  ])('참여자 목록의 $reason는 알림만 숨기고 검수실 제목·버전·사진을 유지한다', async ({ error }) => {
+    const pending = deferred<MemberList>()
+    vi.mocked(listMembers).mockReturnValueOnce(pending.promise)
+    renderReview()
+    await screen.findByRole('img', { name: '메인 · PC' })
+    await act(async () => pending.reject(error))
+
+    expect(listMembers).toHaveBeenCalledExactlyOnceWith(project.id)
+    expect(screen.queryByText('승인자를 정해 주세요.')).toBeNull()
+    expect(screen.queryByRole('link', { name: '설정으로 가기' })).toBeNull()
+    expect(screen.getByRole('heading', { name: project.name })).toBeDefined()
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(currentVersion.id)
+    expect(screen.getByText(currentVersion.summary, { collapseWhitespace: false })).toBeDefined()
+    expect(screen.getByRole('img', { name: '메인 · PC' }).getAttribute('src')).toBe(
+      `/api/assets/${currentVersion.screens[0].asset.id}`,
+    )
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
 })
 
 describe('ReviewRoomPage 화면과 버전', () => {

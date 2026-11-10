@@ -16,6 +16,7 @@ const project: ProjectDetail = {
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
   currentVersion: { id: 'd565474f-17a5-4a8e-9b61-bde406fefdf3', number: 2 },
+  approver: null,
 }
 const items: ActivityItem[] = [
   {
@@ -23,6 +24,7 @@ const items: ActivityItem[] = [
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-09T09:04:00.000Z',
     actorName: '최개발',
+    memberName: null,
     version: project.currentVersion,
   },
   {
@@ -30,6 +32,7 @@ const items: ActivityItem[] = [
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-08T23:59:00.000Z',
     actorName: '김개발',
+    memberName: null,
     version: { id: '7b13b773-8835-45f0-b46f-c555b5033dc7', number: 1 },
   },
   {
@@ -37,6 +40,7 @@ const items: ActivityItem[] = [
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-07T00:01:00.000Z',
     actorName: '이개발',
+    memberName: null,
     version: { id: '24f86b45-afd2-4c27-a774-90586f6e8473', number: 0 },
   },
 ]
@@ -139,6 +143,71 @@ describe('ActivityPage 기록 표시', () => {
     expect(within(row).queryByRole('link')).toBeNull()
     expect(row.querySelector('time')?.getAttribute('datetime')).toBe(items[0].createdAt)
   })
+
+  it.each([
+    {
+      type: 'INVITATION_CREATED',
+      actorName: '개발 담당',
+      memberName: null,
+      message: '개발 담당님이 클라이언트를 초대했어요',
+    },
+    {
+      type: 'INVITATION_ACCEPTED',
+      actorName: '검수 담당',
+      memberName: '검수 담당',
+      message: '검수 담당님이 프로젝트에 참여했어요',
+    },
+    {
+      type: 'MEMBER_REVOKED',
+      actorName: '개발 담당',
+      memberName: '검수 담당',
+      message: '개발 담당님이 검수 담당님의 접근을 철회했어요',
+    },
+    {
+      type: 'MEMBER_REVOKED',
+      actorName: '개발 담당',
+      memberName: null,
+      message: '개발 담당님이 참여자의 접근을 철회했어요',
+    },
+    {
+      type: 'APPROVER_CHANGED',
+      actorName: '개발 담당',
+      memberName: '검수 담당',
+      message: '개발 담당님이 검수 담당님을 승인자로 정했어요',
+    },
+    {
+      type: 'APPROVER_CHANGED',
+      actorName: '개발 담당',
+      memberName: null,
+      message: '개발 담당님이 승인자를 비웠어요',
+    },
+  ] satisfies (Pick<ActivityItem, 'type' | 'actorName' | 'memberName'> & { message: string })[])(
+    '$type 대상 $memberName: "$message"를 링크 없이 표시하고 게시 기록의 문장과 링크는 유지한다',
+    async ({ type, actorName, memberName, message }) => {
+      const event: ActivityItem = {
+        id: 'd375d33f-813b-4651-8316-727f094c14b2',
+        type,
+        createdAt: '2026-11-10T09:04:00.000Z',
+        actorName,
+        memberName,
+        version: null,
+      }
+      responses.set(activityUrl, () => Response.json([event, items[0]]))
+      renderActivity()
+
+      const list = await screen.findByRole('list')
+      const rows = within(list).getAllByRole('listitem')
+      expect(rows).toHaveLength(2)
+      expect(rows[0].querySelector('span')?.textContent).toBe(message)
+      expect(within(rows[0]).queryByRole('link')).toBeNull()
+      expect(rows[0].querySelector('time')?.getAttribute('datetime')).toBe(event.createdAt)
+      expect(rows[1].querySelector('span')?.textContent).toBe('최개발님이 2차를 게시했어요')
+      expect(within(list).getAllByRole('link')).toHaveLength(1)
+      expect(within(rows[1]).getByRole('link').getAttribute('href')).toBe(
+        `/projects/${project.id}?version=${items[0].version!.id}`,
+      )
+    },
+  )
 
   it('기록이 없으면 빈 목록 안내를 표시한다', async () => {
     responses.set(activityUrl, () => Response.json([]))

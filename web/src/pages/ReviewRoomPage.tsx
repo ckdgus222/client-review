@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useState } from 'react'
 import { Link, Navigate, useParams, useSearchParams } from 'react-router'
 import { ApiError } from '../api/client.ts'
 import { isUuid } from '../api/ids.ts'
+import { listMembers } from '../api/members.ts'
 import { getProject, type ProjectDetail, screenLabel } from '../api/projects.ts'
 import {
   assetUrl,
@@ -139,6 +140,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const [loadError, setLoadError] = useState<ReactNode>()
   const [loaded, setLoaded] = useState<LoadedVersion>()
   const [selectedScreenId, setSelectedScreenId] = useState<string>()
+  const [needsApprover, setNeedsApprover] = useState(false)
 
   // 로그인 확인을 기다리지 않고 같이 부른다. 둘 중 하나라도 실패하면 오류 하나로 보여 준다.
   useEffect(() => {
@@ -154,6 +156,16 @@ const ReviewRoom = ({ id }: { id: string }) => {
         setLoadError(toMessage(caught))
       })
   }, [id, isValidId])
+
+  // 승인자가 없어도 고를 클라이언트가 없으면 알리지 않는다. 그래서 참여자 목록에서 클라이언트가 있는지 본다.
+  // 참여자 목록은 개발자만 부를 수 있어서(클라이언트는 403) 개발자이고 승인자가 없을 때만 부른다.
+  useEffect(() => {
+    if (project?.myRole !== 'DEVELOPER' || project.approver) return
+    listMembers(id)
+      .then(({ members }) => setNeedsApprover(members.some((member) => member.role === 'CLIENT')))
+      // 알림은 도움말이라, 목록을 못 불러와도 검수실은 그대로 보여 준다.
+      .catch(() => {})
+  }, [id, project])
 
   // 주소에 고른 버전이 없으면 현재 버전을 본다. 빈 값(?version=)은 고른 것으로 보고 아래에서 틀린 id로 거른다.
   const versionId = requestedVersionId ?? project?.currentVersion?.id
@@ -264,6 +276,11 @@ const ReviewRoom = ({ id }: { id: string }) => {
           {isDeveloper && <Link to={`/projects/${id}/settings`}>설정</Link>}
         </nav>
       </div>
+      {needsApprover && (
+        <p className={styles.notice}>
+          승인자를 정해 주세요. <Link to={`/projects/${id}/settings`}>설정으로 가기</Link>
+        </p>
+      )}
       {renderBody()}
     </section>
   )

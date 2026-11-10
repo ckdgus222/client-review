@@ -9,4 +9,9 @@ export class MailService {
   sendLoginCode(email: string, code: string) {
     this.logger.log(`로그인 코드 ${code} → ${email}`);
   }
+
+  // 링크에 초대 토큰이 들어 있다. 로그인 코드와 같은 이유로, 실제 메일을 붙이기 전까지만 로그에 찍는다.
+  sendInvitation(email: string, link: string, projectName: string, inviterName: string) {
+    this.logger.log(`초대 ${inviterName} → ${email} (${projectName}): ${link}`);
+  }
 }
