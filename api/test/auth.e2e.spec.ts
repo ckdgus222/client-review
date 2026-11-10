@@ -680,6 +680,50 @@ describe('로그인 API (e2e)', () => {
     },
   );
 
+  it('코드를 받은 뒤 초대가 무효가 되면 맞는 코드로도 가입할 수 없고 이름도 묻지 않는다', async () => {
+    const inviter = await prisma.user.create({ data: { email: 'developer@example.com', name: '개발자' } });
+    const project = await prisma.project.create({ data: { name: '코드 발급 뒤 초대 변경' } });
+
+    for (const state of ['revoked', 'expired']) {
+      const address = `${state}-after-code@example.com`;
+      await prisma.$executeRaw`
+        INSERT INTO invitations (project_id, email, token_hash, invited_by_id, expires_at)
+        VALUES (${project.id}::uuid, ${address}, ${createHash('sha256').update(address).digest('hex')},
+                ${inviter.id}::uuid, now() + interval '7 days')
+      `;
+      sendLoginCode.mockClear();
+      await post('/api/auth/email-code').send({ email: address }).expect(204);
+      expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(address, expect.stringMatching(/^\d{6}$/));
+      const code = sendLoginCode.mock.calls[0][1];
+
+      await prisma.$executeRaw`
+        UPDATE invitations
+        SET revoked_at = CASE WHEN ${state === 'revoked'} THEN now() ELSE NULL END,
+            expires_at = CASE WHEN ${state === 'expired'} THEN now() - interval '1 second' ELSE expires_at END
+        WHERE project_id = ${project.id}::uuid AND email = ${address}
+      `;
+      const invitations = await prisma.invitation.findMany({ orderBy: { id: 'asc' } });
+      const wrong = await post('/api/auth/verify-code').send({
+        email: address,
+        code: code === '999999' ? '999998' : '999999',
+      });
+      expectCodeError(wrong, 'CODE_WRONG');
+      const withoutName = await post('/api/auth/verify-code').send({ email: address, code });
+      expectCodeError(withoutName, 'CODE_WRONG');
+      expect(withoutName.body).toEqual(wrong.body);
+      expect(await prisma.user.findUnique({ where: { email: address } })).toBeNull();
+
+      const withName = await post('/api/auth/verify-code').send({ email: address, code, name });
+      expectCodeError(withName, 'CODE_WRONG');
+      expect(withName.body).toEqual(wrong.body);
+      expect(await prisma.user.findUnique({ where: { email: address } })).toBeNull();
+      expect(await prisma.session.count()).toBe(0);
+      expect(await prisma.projectMember.count()).toBe(0);
+      expect(await prisma.loginCode.findUniqueOrThrow({ where: { email: address } })).toMatchObject({ usedAt: null });
+      expect(await prisma.invitation.findMany({ orderBy: { id: 'asc' } })).toEqual(invitations);
+    }
+  });
+
   it('메일이 안 가는 이메일도 다섯 번 시도하면 잠기고 60초 뒤 재발급하면 다시 0회다', async () => {
     const address = 'unknown@example.com';
     const knownCode = '000042';

@@ -254,6 +254,85 @@ describe('초대 API (e2e)', () => {
     expect(sendInvitation).not.toHaveBeenCalled();
   });
 
+  it('초대 만들기가 일지 저장에서 실패하면 새 초대가 없고 예전 초대는 그대로 쓸 수 있다', async () => {
+    const invitation = await createInvitation();
+    const before = await readState();
+    sendInvitation.mockClear();
+
+    try {
+      await prisma.$executeRaw`
+        CREATE FUNCTION invitations_e2e_fail_create_event() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'invitations e2e create event failure';
+        END;
+        $$
+      `;
+      await prisma.$executeRaw`
+        CREATE TRIGGER invitations_e2e_fail_create_event
+        BEFORE INSERT ON activity_events FOR EACH ROW
+        EXECUTE FUNCTION invitations_e2e_fail_create_event()
+      `;
+
+      await post(`/api/projects/${projectId}/invitations`).send({ email: invited.email }).expect(500);
+
+      expect(await readState()).toEqual(before);
+      expect(sendInvitation).not.toHaveBeenCalled();
+      await preview(invitation.token).expect(200).expect({
+        projectName: '초대 검수 프로젝트',
+        inviterName: '개발자',
+        email: invited.email,
+        status: 'PENDING',
+      });
+    } finally {
+      try {
+        await prisma.$executeRaw`DROP TRIGGER IF EXISTS invitations_e2e_fail_create_event ON activity_events`;
+      } finally {
+        await prisma.$executeRaw`DROP FUNCTION IF EXISTS invitations_e2e_fail_create_event()`;
+      }
+    }
+  });
+
+  it('수락이 일지 저장에서 실패하면 초대는 미수락으로 남고 멤버가 생기지 않는다', async () => {
+    const invitation = await createInvitation();
+    const before = await readState();
+
+    try {
+      await prisma.$executeRaw`
+        CREATE FUNCTION invitations_e2e_fail_accept_event() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'invitations e2e accept event failure';
+        END;
+        $$
+      `;
+      await prisma.$executeRaw`
+        CREATE TRIGGER invitations_e2e_fail_accept_event
+        BEFORE INSERT ON activity_events FOR EACH ROW
+        EXECUTE FUNCTION invitations_e2e_fail_accept_event()
+      `;
+
+      await accept(invitation.token).expect(500);
+
+      expect(await readState()).toEqual(before);
+      expect(
+        await prisma.projectMember.findUnique({
+          where: { projectId_userId: { projectId, userId: invited.id } },
+        }),
+      ).toBeNull();
+      await preview(invitation.token).expect(200).expect({
+        projectName: '초대 검수 프로젝트',
+        inviterName: '개발자',
+        email: invited.email,
+        status: 'PENDING',
+      });
+    } finally {
+      try {
+        await prisma.$executeRaw`DROP TRIGGER IF EXISTS invitations_e2e_fail_accept_event ON activity_events`;
+      } finally {
+        await prisma.$executeRaw`DROP FUNCTION IF EXISTS invitations_e2e_fail_accept_event()`;
+      }
+    }
+  });
+
   it.each(['create', 'accept'] as const)('%s는 로그인하지 않으면 401이고 상태를 바꾸지 않는다', async (action) => {
     const invitation = await createInvitation();
     const path = action === 'create' ? `/api/projects/${projectId}/invitations` : '/api/invitations/accept';

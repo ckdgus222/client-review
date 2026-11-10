@@ -162,6 +162,73 @@ describe('참여자 API (e2e)', () => {
       });
   });
 
+  it('마지막 접속은 로그인하면 바로 적히고 5분이 지난 요청에서만 고쳐지며 로그아웃해도 남는다', async () => {
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: client.id } })).lastSeenAt).toBeNull();
+    await post('/api/auth/email-code').send({ email: client.email }).expect(204);
+    expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(client.email, expect.stringMatching(/^\d{6}$/));
+    const code = sendLoginCode.mock.calls[0][1];
+    const [loginStart] = await prisma.$queryRaw<{ now: Date }[]>`SELECT clock_timestamp() AS now`;
+    const response = await post('/api/auth/verify-code').send({ email: client.email, code }).expect(200);
+    const [loginEnd] = await prisma.$queryRaw<{ now: Date }[]>`SELECT clock_timestamp() AS now`;
+    const cookies: unknown = response.headers['set-cookie'];
+    expect(cookies).toEqual([expect.stringMatching(/^sid=/)]);
+    const loggedInCookie = (cookies as string[])[0].split(';')[0];
+    const tokenHash = hashSessionToken(loggedInCookie.slice('sid='.length));
+    const loggedInUser = await prisma.user.findUniqueOrThrow({ where: { id: client.id } });
+    const session = await prisma.session.findUniqueOrThrow({ where: { tokenHash } });
+
+    expect(loggedInUser.lastSeenAt).toBeInstanceOf(Date);
+    expect(loggedInUser.lastSeenAt!.getTime()).toBeGreaterThanOrEqual(loginStart.now.getTime());
+    expect(loggedInUser.lastSeenAt!.getTime()).toBeLessThanOrEqual(loginEnd.now.getTime());
+    expect(session.lastSeenAt.getTime()).toBeGreaterThanOrEqual(loginStart.now.getTime());
+    expect(session.lastSeenAt.getTime()).toBeLessThanOrEqual(loginEnd.now.getTime());
+    const afterLogin = await list().expect(200);
+    expect(afterLogin.body.members).toContainEqual(
+      expect.objectContaining({
+        id: client.memberId,
+        lastSeenAt: loggedInUser.lastSeenAt!.toISOString(),
+      }),
+    );
+
+    for (const minutes of [6, 4]) {
+      const [past] = await prisma.$queryRaw<{ at: Date }[]>`
+        SELECT clock_timestamp() - ${minutes} * interval '1 minute' AS at
+      `;
+      await prisma.$transaction([
+        prisma.session.update({ where: { id: session.id }, data: { lastSeenAt: past.at } }),
+        prisma.user.update({ where: { id: client.id }, data: { lastSeenAt: past.at } }),
+      ]);
+      const [requestStart] = await prisma.$queryRaw<{ now: Date }[]>`SELECT clock_timestamp() AS now`;
+      await get('/api/auth/me', loggedInCookie).expect(200);
+      const [requestEnd] = await prisma.$queryRaw<{ now: Date }[]>`SELECT clock_timestamp() AS now`;
+      const touchedSession = await prisma.session.findUniqueOrThrow({ where: { id: session.id } });
+      const touchedUser = await prisma.user.findUniqueOrThrow({ where: { id: client.id } });
+
+      if (minutes === 6) {
+        expect(touchedSession.lastSeenAt.getTime()).toBeGreaterThanOrEqual(requestStart.now.getTime());
+        expect(touchedSession.lastSeenAt.getTime()).toBeLessThanOrEqual(requestEnd.now.getTime());
+        expect(touchedUser.lastSeenAt).toEqual(touchedSession.lastSeenAt);
+        continue;
+      }
+      expect(touchedSession.lastSeenAt).toEqual(past.at);
+      expect(touchedUser.lastSeenAt).toEqual(past.at);
+    }
+
+    const beforeLogout = await prisma.user.findUniqueOrThrow({ where: { id: client.id } });
+    await post('/api/auth/logout', loggedInCookie).expect(204);
+    expect(await prisma.session.findUnique({ where: { id: session.id } })).toBeNull();
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: client.id } })).lastSeenAt).toEqual(
+      beforeLogout.lastSeenAt,
+    );
+    const afterLogout = await list().expect(200);
+    expect(afterLogout.body.members).toContainEqual(
+      expect.objectContaining({
+        id: client.memberId,
+        lastSeenAt: beforeLogout.lastSeenAt!.toISOString(),
+      }),
+    );
+  });
+
   it('대기 목록은 만료·무효·수락·다른 프로젝트 초대를 빼고 쓸 수 있는 초대만 만든 순서대로 준다', async () => {
     const first = await createInvitation('z-first@example.com');
     const expired = await createInvitation('expired@example.com');
@@ -335,6 +402,86 @@ describe('참여자 API (e2e)', () => {
       });
     },
   );
+
+  it('철회가 일지 저장에서 실패하면 멤버·초대·승인자가 그대로다', async () => {
+    await setApprover(client.memberId).expect(200);
+    // 활성 멤버에게 초대하는 API는 409이므로, 철회가 정리할 잔존 초대를 DB에 준비한다.
+    const token = createSessionToken();
+    await prisma.invitation.create({
+      data: {
+        projectId,
+        email: client.email,
+        invitedById: developer.id,
+        tokenHash: hashSessionToken(token),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+    });
+    const before = await readState();
+
+    try {
+      await prisma.$executeRaw`
+        CREATE FUNCTION members_e2e_fail_revoke_event() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'members e2e revoke event failure';
+        END;
+        $$
+      `;
+      await prisma.$executeRaw`
+        CREATE TRIGGER members_e2e_fail_revoke_event
+        BEFORE INSERT ON activity_events FOR EACH ROW
+        EXECUTE FUNCTION members_e2e_fail_revoke_event()
+      `;
+
+      await revoke(client.memberId).expect(500);
+
+      expect(await readState()).toEqual(before);
+      await request(server).get(`/api/invitations/${token}`).expect(200).expect({
+        projectName: '참여자 검수 프로젝트',
+        inviterName: developer.name,
+        email: client.email,
+        status: 'PENDING',
+      });
+    } finally {
+      try {
+        await prisma.$executeRaw`DROP TRIGGER IF EXISTS members_e2e_fail_revoke_event ON activity_events`;
+      } finally {
+        await prisma.$executeRaw`DROP FUNCTION IF EXISTS members_e2e_fail_revoke_event()`;
+      }
+    }
+  });
+
+  it('승인자 지정이 일지 저장에서 실패하면 승인자가 그대로다', async () => {
+    const second = await joinClient('second@example.com', '후속 참여자');
+    await setApprover(client.memberId).expect(200);
+    const before = await readState();
+
+    try {
+      await prisma.$executeRaw`
+        CREATE FUNCTION members_e2e_fail_approver_event() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'members e2e approver event failure';
+        END;
+        $$
+      `;
+      await prisma.$executeRaw`
+        CREATE TRIGGER members_e2e_fail_approver_event
+        BEFORE INSERT ON activity_events FOR EACH ROW
+        EXECUTE FUNCTION members_e2e_fail_approver_event()
+      `;
+
+      await setApprover(second.memberId).expect(500);
+
+      expect(await readState()).toEqual(before);
+      const project = await get(`/api/projects/${projectId}`).expect(200);
+      expect(project.body.approver).toEqual({ memberId: client.memberId, name: client.name });
+    } finally {
+      try {
+        await prisma.$executeRaw`DROP TRIGGER IF EXISTS members_e2e_fail_approver_event ON activity_events`;
+      } finally {
+        await prisma.$executeRaw`DROP FUNCTION IF EXISTS members_e2e_fail_approver_event()`;
+      }
+    }
+  });
 
   it('철회 뒤 새 초대를 수락하면 같은 멤버 id로 돌아오고 승인자는 비어 있다', async () => {
     const original = await prisma.projectMember.findUniqueOrThrow({ where: { id: client.memberId } });
