@@ -724,6 +724,112 @@ describe('로그인 API (e2e)', () => {
     }
   });
 
+  it('가입 트랜잭션이 기다리는 동안 초대가 만료되면 가입할 수 없고 코드는 안 쓴 것으로 남는다', async () => {
+    const address = 'expires-during-signup@example.com';
+    const inviter = await prisma.user.create({ data: { email: 'developer@example.com', name: '개발자' } });
+    const project = await prisma.project.create({ data: { name: '가입 잠금 중 초대 만료' } });
+    await prisma.$executeRaw`
+      INSERT INTO invitations (project_id, email, token_hash, invited_by_id, expires_at)
+      VALUES (${project.id}::uuid, ${address}, ${createHash('sha256').update(address).digest('hex')},
+              ${inviter.id}::uuid, clock_timestamp() + interval '7 days')
+    `;
+    await post('/api/auth/email-code').send({ email: address }).expect(204);
+    expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(address, expect.stringMatching(/^\d{6}$/));
+    const code = sendLoginCode.mock.calls[0][1];
+    const wrong = await post('/api/auth/verify-code').send({
+      email: address,
+      code: code === '999999' ? '999998' : '999999',
+      name,
+    });
+    expectCodeError(wrong, 'CODE_WRONG');
+    const savedCode = await prisma.loginCode.findUniqueOrThrow({ where: { email: address } });
+    await prisma.$executeRaw`
+      UPDATE invitations SET expires_at = clock_timestamp() + interval '2 seconds'
+      WHERE project_id = ${project.id}::uuid AND email = ${address}
+    `;
+    let response: Response | undefined;
+    let requestError: unknown;
+    let requestFinished = false;
+    let verifyRequest: Promise<void> | undefined;
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        const [connection] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+        verifyRequest = post('/api/auth/verify-code')
+          .send({ email: address, code, name })
+          .timeout({ deadline: 4_000 })
+          .then(
+            (result) => {
+              response = result;
+              requestFinished = true;
+            },
+            (error: unknown) => {
+              requestError = error;
+              requestFinished = true;
+            },
+          );
+
+        // 첫 UPDATE(시도 횟수)는 통과시키고, 실제 bcrypt 비교 중에 줄을 잡아 가입 UPDATE를 기다리게 한다.
+        await vi.waitFor(
+          async () => {
+            const locked = await tx.$queryRaw<{ id: string }[]>`
+              SELECT id FROM login_codes
+              WHERE email = ${address} AND attempts = ${savedCode.attempts + 1} AND used_at IS NULL
+              FOR UPDATE
+            `;
+            expect(locked).toHaveLength(1);
+          },
+          { timeout: 1_000, interval: 10 },
+        );
+        await vi.waitFor(
+          async () => {
+            const [waiting] = await prisma.$queryRaw<{ blocked: boolean }[]>`
+              SELECT EXISTS (
+                SELECT 1 FROM pg_stat_activity AS activity
+                JOIN invitations AS invitation ON invitation.project_id = ${project.id}::uuid
+                  AND invitation.email = ${address}
+                WHERE ${connection.pid}::int = ANY(pg_blocking_pids(activity.pid))
+                  AND activity.query LIKE '%UPDATE login_codes SET used_at%'
+                  AND activity.xact_start < invitation.expires_at
+                  AND clock_timestamp() < invitation.expires_at
+              ) AS blocked
+            `;
+            expect(waiting.blocked).toBe(true);
+          },
+          { timeout: 1_000, interval: 25 },
+        );
+        expect(requestFinished).toBe(false);
+
+        await vi.waitFor(
+          async () => {
+            const [expiration] = await prisma.$queryRaw<{ expired: boolean }[]>`
+              SELECT expires_at <= clock_timestamp() AS expired FROM invitations
+              WHERE project_id = ${project.id}::uuid AND email = ${address}
+            `;
+            expect(expiration.expired).toBe(true);
+          },
+          { timeout: 3_000, interval: 50 },
+        );
+        expect(requestFinished).toBe(false);
+      });
+    } finally {
+      // 중간 검증이 실패해도 잠금을 풀고 HTTP 요청까지 끝낸 뒤 다음 테스트로 간다.
+      await verifyRequest;
+    }
+
+    expect(requestError).toBeUndefined();
+    expect(response).toBeDefined();
+    expectCodeError(response!, 'CODE_WRONG');
+    expect(response!.body).toEqual(wrong.body);
+    expect(await prisma.user.findUnique({ where: { email: address } })).toBeNull();
+    expect(await prisma.session.count()).toBe(0);
+    expect(await prisma.loginCode.findUniqueOrThrow({ where: { email: address } })).toEqual({
+      ...savedCode,
+      attempts: savedCode.attempts + 1,
+      usedAt: null,
+    });
+  });
+
   it('메일이 안 가는 이메일도 다섯 번 시도하면 잠기고 60초 뒤 재발급하면 다시 0회다', async () => {
     const address = 'unknown@example.com';
     const knownCode = '000042';

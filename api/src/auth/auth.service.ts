@@ -22,11 +22,12 @@ const LOGIN_CODE_ERROR_MESSAGES = {
 
 // 새로 가입할 수 있는 이메일은 서버 설정의 개발자 이메일과, 지금 쓸 수 있는 초대가 있는 이메일뿐이다.
 // 모르는 사람이 가입해 둘 수 없게 하려는 것이다(전체 기획 정할 것 17). 만료는 초대 수락과 같은 DB 시계로 본다.
+// now()는 트랜잭션을 시작한 시각이라, 가입 트랜잭션이 기다리는 동안 만료된 초대를 놓친다. 그래서 clock_timestamp()를 쓴다.
 const canSignUp = async (db: Prisma.TransactionClient, email: string) => {
   if (isDeveloper(email)) return true;
   const invitations = await db.$queryRaw<unknown[]>`
     SELECT 1 FROM invitations
-    WHERE email = ${email} AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+    WHERE email = ${email} AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > clock_timestamp()
     LIMIT 1
   `;
   return invitations.length > 0;
