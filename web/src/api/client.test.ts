@@ -1,4 +1,4 @@
-import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPutForm, toApiError } from './client.ts'
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost, apiPostForm, apiPutForm, toApiError } from './client.ts'
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn())
@@ -236,6 +236,27 @@ describe('apiPutForm', () => {
   })
 })
 
+describe('apiPostForm', () => {
+  it('경로 앞에 /api를 붙이고 같은 FormData를 Content-Type 지정 없이 POST로 한 번 보낸다', async () => {
+    const form = new FormData()
+    const file = new File(['photo bytes'], '참고 사진.png', { type: 'image/png' })
+    form.append('file', file)
+    const response = Response.json({ id: 'issue-id' }, { status: 201 })
+    vi.mocked(fetch).mockResolvedValueOnce(response)
+
+    await expect(apiPostForm('/issues/issue-id/attachments', form)).resolves.toBe(response)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(
+      '/api/issues/issue-id/attachments',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    const options = vi.mocked(fetch).mock.calls[0][1]
+    expect(options?.body).toBe(form)
+    expect(new Headers(options?.headers).has('Content-Type')).toBe(false)
+    expect(form.getAll('file')).toEqual([file])
+  })
+})
+
 describe('apiDelete', () => {
   it('경로 앞에 /api를 붙이고 본문 없이 DELETE로 한 번 요청한다', async () => {
     const response = new Response(JSON.stringify({ id: 'version-id', screens: [] }), { status: 200 })
@@ -254,6 +275,7 @@ describe('apiDelete', () => {
 describe.each([
   { name: 'apiPatch', call: () => apiPatch('/versions/version-id', { summary: '수정한 화면' }) },
   { name: 'apiPutForm', call: () => apiPutForm('/versions/version-id/screens/screen-id/asset', new FormData()) },
+  { name: 'apiPostForm', call: () => apiPostForm('/issues/issue-id/attachments', new FormData()) },
   { name: 'apiDelete', call: () => apiDelete('/versions/version-id/screens/screen-id') },
 ])('$name 응답 처리', ({ call }) => {
   it.each([200, 201, 299])('%i 응답은 본문을 읽지 않고 같은 Response를 돌려준다', async (status) => {

@@ -21,6 +21,7 @@ const project: ProjectDetail = {
 const items: ActivityItem[] = [
   {
     id: 'f6dadf8d-5cb9-4602-80db-8c868ebaf601',
+    issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-09T09:04:00.000Z',
     actorName: '최개발',
@@ -29,6 +30,7 @@ const items: ActivityItem[] = [
   },
   {
     id: 'ae3ddac8-e194-4396-ab22-f28b81e040b0',
+    issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-08T23:59:00.000Z',
     actorName: '김개발',
@@ -37,6 +39,7 @@ const items: ActivityItem[] = [
   },
   {
     id: '695d8b02-3c89-4a80-b86d-5a01e345c9a5',
+    issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-07T00:01:00.000Z',
     actorName: '이개발',
@@ -186,6 +189,7 @@ describe('ActivityPage 기록 표시', () => {
     async ({ type, actorName, memberName, message }) => {
       const event: ActivityItem = {
         id: 'd375d33f-813b-4651-8316-727f094c14b2',
+        issue: null,
         type,
         createdAt: '2026-11-10T09:04:00.000Z',
         actorName,
