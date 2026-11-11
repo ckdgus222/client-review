@@ -60,6 +60,16 @@ const send = async (name = '쪽지 남기기') => {
   })
 }
 
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+
 beforeEach(() => {
   vi.mocked(createIssue).mockReset().mockResolvedValue(saved)
 })
@@ -242,7 +252,8 @@ describe('IssueComposer', () => {
     })
     expect(props.onCreated).toHaveBeenCalledExactlyOnceWith(saved)
     expect(vi.mocked(props.onCreated).mock.calls[0][0]).toBe(saved)
-    expect(props.onLockChange).not.toHaveBeenCalledWith(true)
+    expect(props.onLockChange).toHaveBeenCalledWith(true)
+    expect(props.onLockChange).toHaveBeenLastCalledWith(false)
   })
 
   it('제목 오류를 고치면 안내가 사라지고 보낼 수 있다', async () => {
@@ -376,6 +387,70 @@ describe('IssueComposer', () => {
     expect(vi.mocked(createIssue).mock.calls[1]).toEqual(firstRequest)
   })
 
+  it('응답을 기다리는 중에는 위치 없이 쓰기가 없고 핀 잠금을 알린다', async () => {
+    const pending = deferred<IssueDetail>()
+    vi.mocked(createIssue).mockReturnValueOnce(pending.promise)
+    const { props } = renderComposer({ pin })
+    fillDraft()
+    expect(screen.getByRole('button', { name: '위치 없이 쓰기' })).toBeTruthy()
+
+    await send()
+
+    expect(createIssue).toHaveBeenCalledTimes(1)
+    expect(props.onCreated).not.toHaveBeenCalled()
+    expect(props.onLockChange).toHaveBeenLastCalledWith(true)
+    expect(screen.queryByRole('button', { name: '위치 없이 쓰기' })).toBeNull()
+    expect(props.onClearPin).not.toHaveBeenCalled()
+
+    await act(async () => {
+      pending.resolve(saved)
+    })
+    expect(props.onCreated).toHaveBeenCalledExactlyOnceWith(saved)
+    expect(props.onLockChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('보내는 중 다른 사진을 보아 pin이 없어져도 선택한 위치 안내를 유지한다', async () => {
+    const pending = deferred<IssueDetail>()
+    vi.mocked(createIssue).mockReturnValueOnce(pending.promise)
+    const { props, rerender } = renderComposer({ pin })
+    fillDraft()
+    await send()
+
+    rerender(<IssueComposer {...props} pin={undefined} />)
+
+    expect(screen.getByText('선택한 위치에 쪽지를 남겨요.')).toBeTruthy()
+    expect(screen.queryByText(/위치를 정하지 않은 쪽지예요/)).toBeNull()
+    expect(screen.queryByRole('button', { name: '위치 없이 쓰기' })).toBeNull()
+    expect(props.onLockChange).toHaveBeenLastCalledWith(true)
+    await act(async () => {
+      pending.resolve(saved)
+    })
+    expect(props.onCreated).toHaveBeenCalledExactlyOnceWith(saved)
+  })
+
+  it('보내는 중 pin이 없어지고 연결이 끊겨도 다시 보내기는 처음 핀을 그대로 보낸다', async () => {
+    const pending = deferred<IssueDetail>()
+    vi.mocked(createIssue).mockReturnValueOnce(pending.promise)
+    const { props, rerender } = renderComposer({ pin })
+    fillDraft()
+    await send()
+    const firstRequest = structuredClone(vi.mocked(createIssue).mock.calls[0])
+    expect(firstRequest[1].pin).toEqual({ screenId: pin.screenId, xRatio: 0, yRatio: 1 })
+
+    rerender(<IssueComposer {...props} pin={undefined} versionId="other-version" />)
+    await act(async () => {
+      pending.reject(new TypeError('Failed to fetch'))
+    })
+
+    expect(screen.getByText('선택한 위치에 쪽지를 남겨요.')).toBeTruthy()
+    expect(props.onLockChange).toHaveBeenLastCalledWith(true)
+    await send('다시 보내기')
+    expect(createIssue).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createIssue).mock.calls[1]).toEqual(firstRequest)
+    expect(props.onCreated).toHaveBeenCalledExactlyOnceWith(saved)
+    expect(props.onLockChange).toHaveBeenLastCalledWith(false)
+  })
+
   it('잠긴 뒤 프로젝트가 바뀌어도 처음 프로젝트와 요청으로 다시 보낸다', async () => {
     vi.mocked(createIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
     const { props, rerender } = renderComposer({ pin })
@@ -486,7 +561,8 @@ describe('IssueComposer', () => {
       expect(title.value).toBe(saved.title)
       expect(body.value).toBe(saved.body)
       expect(screen.getByRole('button', { name: '위치 없이 쓰기' })).toBeTruthy()
-      expect(props.onLockChange).not.toHaveBeenCalledWith(true)
+      expect(props.onLockChange).toHaveBeenCalledWith(true)
+      expect(props.onLockChange).toHaveBeenLastCalledWith(false)
       expect(props.onCreated).not.toHaveBeenCalled()
       if (status === 401) {
         const link = screen.getByRole('link', { name: '새 탭에서 로그인하기' })

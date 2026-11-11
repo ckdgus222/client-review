@@ -20,7 +20,7 @@ type IssueComposerProps = {
   onClearPin: () => void
   onCancel: () => void
   onCreated: (issue: IssueDetail) => void
-  // 잠겼는지 알린다. 잠긴 동안 검수실은 화면·버전을 바꿔도 임시 핀을 지우지 않는다(기획 정할 것 12).
+  // 보내는 중이거나 잠겼는지 알린다. 그동안 검수실은 임시 핀을 옮기지도 지우지도 않는다(기획 정할 것 12).
   onLockChange: (locked: boolean) => void
   onGoLatest: () => void
 }
@@ -48,14 +48,18 @@ export const IssueComposer = ({
     onCreated,
   )
   const isLocked = locked !== undefined
+  // 보내기 시작한 때부터 자리를 묶는다. 응답을 기다리는 사이 핀을 옮기면, 연결이 끊긴 뒤 화면의 핀과
+  // 다시 보낼 자리(처음 보낸 자리)가 달라진다.
+  const frozen = sending || isLocked
+  const [sentWithPin, setSentWithPin] = useState(false)
 
   useEffect(() => {
-    onLockChange(isLocked)
-  }, [isLocked, onLockChange])
+    onLockChange(frozen)
+  }, [frozen, onLockChange])
 
-  // 잠긴 동안에는 제목과 내용 칸을 고칠 수 없어서 화면의 글이 곧 처음 보낸 글이다.
-  // 자리는 검수실이 바꿀 수 있는 값(pin)이라, 잠긴 동안에는 처음 보낸 요청의 것으로 본다.
-  const hasPin = isLocked ? locked.issue.pin !== undefined : pin !== undefined
+  // 묶인 동안에는 제목과 내용 칸을 고칠 수 없어서 화면의 글이 곧 처음 보낸 글이다.
+  // 자리는 다른 사진을 보면 넘어오지 않는 값(pin)이라, 묶인 동안에는 처음 보낸 요청의 것으로 본다.
+  const hasPin = frozen ? sentWithPin : pin !== undefined
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault()
@@ -70,6 +74,7 @@ export const IssueComposer = ({
       return
     }
     setTitleError(undefined)
+    setSentWithPin(pin !== undefined)
     void submit({
       projectId,
       issue: {
@@ -93,7 +98,7 @@ export const IssueComposer = ({
       {hasPin ? (
         <p className={styles.place}>
           {pin ? `${pin.label}의 선택한 위치에 쪽지를 남겨요.` : '선택한 위치에 쪽지를 남겨요.'}{' '}
-          {!isLocked && (
+          {!frozen && (
             <button type="button" className={styles.link} onClick={onClearPin}>
               위치 없이 쓰기
             </button>
@@ -119,7 +124,7 @@ export const IssueComposer = ({
           value={body}
           onChange={(event) => setBody(event.target.value)}
           // 잠긴 글은 고칠 수 없지만 읽고 복사할 수는 있게 disabled 대신 readOnly로 둔다.
-          readOnly={sending || isLocked}
+          readOnly={frozen}
           aria-describedby={`${bodyId}-hint`}
         />
         <span className={styles.hint} id={`${bodyId}-hint`}>

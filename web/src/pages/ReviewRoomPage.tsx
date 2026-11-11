@@ -149,7 +149,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const [showIssuePlace, setShowIssuePlace] = useState(true)
   const [composing, setComposing] = useState(false)
   const [draftPin, setDraftPin] = useState<DraftPin>()
-  // 보낸 쪽지가 저장됐는지 몰라 잠긴 동안에는 화면·버전을 바꿔도 임시 핀을 지우지 않는다(기획 정할 것 12).
+  // 쪽지를 보내는 중이거나, 보낸 쪽지가 저장됐는지 몰라 잠긴 동안이다. 이때는 임시 핀을 옮기지도 지우지도 않는다(기획 정할 것 12).
   const [composerLocked, setComposerLocked] = useState(false)
 
   // 로그인 확인을 기다리지 않고 같이 부른다. 하나라도 실패하면 오류 하나로 보여 준다.
@@ -214,32 +214,37 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const openIssue = issues.find((issue) => issue.id === requestedIssueId?.toLowerCase())
   const openIssueId = openIssue?.id
 
-  useEffect(() => {
-    if (!openIssueId) return
-    // 쪽지를 빠르게 바꾸면 이전 쪽지 응답이 늦게 올 수 있다. 정리 함수가 그 응답을 버린다.
-    let ignore = false
-    getIssue(openIssueId).then(
+  // 쪽지 목록과 상세를 부를 때마다 번호를 매겨, 가장 나중에 시작한 요청의 응답만 받는다. 쪽지를 만들거나 바꾼 뒤에도
+  // 번호를 올려서, 그보다 먼저 시작한 요청의 응답(방금 만든 쪽지나 방금 바뀐 내용이 빠져 있다)이 늦게 와도 버린다.
+  // 상세는 어느 쪽지를 부르는 중인지도 함께 적는다. 그사이 다른 쪽지를 열었는지 이것으로 안다.
+  const listRequest = useRef(0)
+  const detailRequest = useRef({ issueId: '', number: 0 })
+
+  // 쪽지를 처음 열 때와 새로 부를 때(15초마다, 댓글을 남긴 뒤, 쪽지 상태가 달라져 있을 때) 함께 쓴다.
+  // 새로 부르기는 도움 기능이라 실패를 알리지 않는다(showError).
+  const loadIssue = useCallback((issueId: string, showError: boolean) => {
+    const number = detailRequest.current.number + 1
+    detailRequest.current = { issueId, number }
+    getIssue(issueId).then(
       (detail) => {
-        if (!ignore) setLoadedIssue({ id: openIssueId, detail })
+        if (detailRequest.current.number === number) setLoadedIssue({ id: issueId, detail })
       },
       (caught) => {
-        if (!ignore) setLoadedIssue({ id: openIssueId, error: toMessage(caught) })
+        if (showError && detailRequest.current.number === number) {
+          setLoadedIssue({ id: issueId, error: toMessage(caught) })
+        }
       },
     )
-    return () => {
-      ignore = true
-    }
-  }, [openIssueId])
+  }, [])
+
+  useEffect(() => {
+    if (openIssueId) loadIssue(openIssueId, true)
+  }, [openIssueId, loadIssue])
 
   // 다른 사람이 쓴 쪽지와 댓글이 새로고침 없이 보이게 한다. 쪽지 목록과 열어 둔 쪽지만 다시 부르고,
   // 프로젝트와 버전은 부르지 않는다. 보던 버전이 저절로 바뀌면 쓰던 글과 핀이 흔들리기 때문이다.
   // 새 버전이 올라왔는지는 쓰기 요청의 409로 안다(기획 정할 것 4).
   // 도움 기능이라 실패해도 알리지 않고 보던 내용을 그대로 둔다. 다음 차례에 다시 부른다.
-  // 새로 부르는 요청마다 번호를 매겨, 가장 나중에 시작한 요청의 응답만 받는다. 쪽지를 만들거나 바꾼 뒤에도 번호를
-  // 올려서, 그보다 먼저 시작한 요청의 응답(방금 만든 쪽지나 방금 바뀐 내용이 빠져 있다)이 늦게 와도 버린다.
-  const listRequest = useRef(0)
-  const detailRequest = useRef(0)
-
   const refreshList = () => {
     const request = ++listRequest.current
     listIssues(id).then(
@@ -252,16 +257,9 @@ const ReviewRoom = ({ id }: { id: string }) => {
 
   const refreshIssues = () => {
     refreshList()
-    if (!openIssueId) return
-    const request = ++detailRequest.current
-    getIssue(openIssueId).then(
-      // 응답이 오는 사이 다른 쪽지로 바꿨으면 버린다.
-      (detail) => {
-        if (detailRequest.current !== request) return
-        setLoadedIssue((shown) => (shown?.id === detail.id ? { id: detail.id, detail } : shown))
-      },
-      () => {},
-    )
+    // 처음 여는 요청이 아직 안 끝났으면 상세는 새로 부르지 않는다. 새로 부르면 처음 요청의 응답이 버려져서,
+    // 그 요청이 실패했을 때 오류를 보여 주지 못한다.
+    if (openIssueId && loadedIssue?.id === openIssueId) loadIssue(openIssueId, false)
   }
 
   // 타이머는 한 번만 걸고, 울릴 때마다 그때의 쪽지(openIssueId)로 새로 부른다.
@@ -301,7 +299,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const wantedScreenId = shownOrigin && originInViewedVersion ? shownOrigin.screenId : selectedScreenId
   const selected = detail?.screens.find((screen) => screen.screenId === wantedScreenId) ?? detail?.screens[0]
   // 임시 핀은 찍은 버전·화면의 사진을 보는 동안에만 보이고, 그때만 쓰기 칸에 넘긴다. 보이지 않는 핀이 보내지지 않게 하려는 것이다.
-  // 잠긴 요청은 쓰기 칸이 처음 보낸 그대로 기억하고 있어서, 여기 값과 상관없이 처음 자리로 다시 간다.
+  // 보내는 중이거나 잠긴 요청은 쓰기 칸이 처음 보낸 그대로 기억하고 있어서, 여기 값과 상관없이 처음 자리로 다시 간다.
   const shownDraftPin =
     draftPin?.versionId === detail?.id && draftPin?.screenId === selected?.screenId ? draftPin : undefined
 
@@ -315,7 +313,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
     })
 
   // 아직 보내지 않은 글의 핀은 화면이나 버전을 바꾸면 지운다(글은 쓰기 칸에 남는다). A 사진의 자리가 B 사진의 쪽지로
-  // 저장되지 않게 하려는 것이다. 이미 보내서 잠긴 요청의 핀은 건드리지 않는다(기획 정할 것 11·12).
+  // 저장되지 않게 하려는 것이다. 보내는 중이거나 잠긴 요청의 핀은 건드리지 않는다(기획 정할 것 11·12).
   const dropDraftPin = () => {
     if (!composerLocked) setDraftPin(undefined)
   }
@@ -388,7 +386,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
         ? [{ id: issue.id, number: issue.number, title: issue.title, ...issue.origin }]
         : [],
     )
-    // 새 핀은 쓸 수 있는 버전의 사진에만 찍는다. 잠긴 동안에는 처음 보낸 자리를 바꾸지 않는다.
+    // 새 핀은 쓸 수 있는 버전의 사진에만 찍는다. 보내는 중이거나 잠긴 동안에는 처음 보낸 자리를 바꾸지 않는다.
     const canPlacePin = canWrite && !composerLocked
     return (
       <PhotoCanvas
@@ -473,10 +471,13 @@ const ReviewRoom = ({ id }: { id: string }) => {
             isDeveloper={isDeveloper}
             // 서버가 바뀐 쪽지를 이미 돌려줬으니 상세는 다시 부르지 않고, 목록(상태·댓글 수)만 새로 부른다.
             onChanged={(issue) => {
-              // 응답을 기다리는 사이 다른 쪽지를 열었으면 그 쪽지의 상세를 덮어쓰지 않는다. 덮어쓰면 지금 보는 쪽지와
-              // 쓰던 댓글이 화면에서 사라진다. 먼저 시작한 새로 불러오기의 응답(바뀌기 전 내용)도 버린다.
-              detailRequest.current += 1
-              setLoadedIssue((shown) => (shown?.id === issue.id ? { id: issue.id, detail: issue } : shown))
+              // 응답을 기다리는 사이 다른 쪽지를 열었으면 그 쪽지의 상세도, 그 쪽지를 부르는 요청도 건드리지 않는다.
+              // 건드리면 지금 보는 쪽지와 쓰던 댓글이 화면에서 사라진다.
+              // 같은 쪽지면 먼저 시작한 상세 요청의 응답(바뀌기 전 내용)을 버린다.
+              if (detailRequest.current.issueId === issue.id) {
+                detailRequest.current = { issueId: issue.id, number: detailRequest.current.number + 1 }
+                setLoadedIssue({ id: issue.id, detail: issue })
+              }
               refreshList()
             }}
             onRefresh={refreshIssues}
