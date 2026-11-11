@@ -1,0 +1,23 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+/* 수정 중: 채운 점과 선택색 글자. 접수는 빈 점 그대로다. */
+.badge[data-status='IN_PROGRESS'] {
+  color: var(--color-review-selected);
+}
+
+.badge[data-status='IN_PROGRESS'] .dot {
+  background: currentColor;
+}
