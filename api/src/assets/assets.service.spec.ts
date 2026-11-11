@@ -108,6 +108,73 @@ describe('AssetsService', () => {
     return screen;
   };
 
+  const createReferencePhoto = async () => {
+    const version = await createVersion('IN_REVIEW');
+    await prisma.project.update({ where: { id: projectId }, data: { currentVersionId: version.id } });
+    const asset = await createAsset();
+    await prisma.issue.create({
+      data: {
+        projectId,
+        originVersionId: version.id,
+        authorId: clientId,
+        number: 1,
+        title: '참고 시안',
+        body: '이 사진을 봐 주세요',
+        requestId: randomUUID(),
+        attachments: { create: { assetId: asset.id } },
+      },
+    });
+    return asset;
+  };
+
+  it('클라이언트는 버전 화면에 쓰이지 않아도 다른 사람이 쓴 쪽지의 참고 사진을 받는다', async () => {
+    const asset = await createReferencePhoto();
+    const reader = await prisma.user.create({ data: { email: 'reader@example.com', name: '다른 참여자' } });
+    await prisma.projectMember.create({ data: { projectId, userId: reader.id, role: 'CLIENT' } });
+
+    await expect(service.getFileForMember(asset.id, reader.id)).resolves.toStrictEqual({
+      path: join(directory, asset.storageKey),
+      mime: asset.mime,
+    });
+  });
+
+  it.each(['게시 전 버전', '어디에도 안 붙음'] as const)(
+    '다른 참고 사진이 있어도 클라이언트에게 %s 전용 사진은 404다',
+    async (usage) => {
+      await createReferencePhoto();
+      const asset = await createAsset();
+      if (usage === '게시 전 버전') {
+        const draft = await createVersion('DRAFT');
+        await attachAsset(draft.id, asset);
+      }
+
+      const denied = await service.getFileForMember(asset.id, clientId).catch((error: unknown) => error);
+
+      expectAssetNotFound(denied);
+      await expect(service.getFileForMember(asset.id, developerId)).resolves.toStrictEqual({
+        path: join(directory, asset.storageKey),
+        mime: asset.mime,
+      });
+    },
+  );
+
+  it('쪽지에 붙은 사진도 비멤버와 접근이 철회된 작성자에게는 404다', async () => {
+    const asset = await createReferencePhoto();
+    await expect(service.getFileForMember(asset.id, clientId)).resolves.toStrictEqual({
+      path: join(directory, asset.storageKey),
+      mime: asset.mime,
+    });
+    await prisma.projectMember.update({
+      where: { projectId_userId: { projectId, userId: clientId } },
+      data: { revokedAt: new Date() },
+    });
+
+    for (const userId of [outsiderId, clientId]) {
+      const error = await service.getFileForMember(asset.id, userId).catch((error: unknown) => error);
+      expectAssetNotFound(error);
+    }
+  });
+
   it.each(['DRAFT', 'IN_REVIEW', 'APPROVED', null] as const)(
     '개발자는 사용 버전 상태가 %s인 사진도 받는다(null은 어디에도 안 쓰임)',
     async (status) => {
