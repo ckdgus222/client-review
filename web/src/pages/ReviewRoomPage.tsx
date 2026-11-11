@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useEffectEvent, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { Link, Navigate, useParams, useSearchParams } from 'react-router'
 import { ApiError } from '../api/client.ts'
 import { isUuid } from '../api/ids.ts'
@@ -235,16 +235,31 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 프로젝트와 버전은 부르지 않는다. 보던 버전이 저절로 바뀌면 쓰던 글과 핀이 흔들리기 때문이다.
   // 새 버전이 올라왔는지는 쓰기 요청의 409로 안다(기획 정할 것 4).
   // 도움 기능이라 실패해도 알리지 않고 보던 내용을 그대로 둔다. 다음 차례에 다시 부른다.
+  // 새로 부르는 요청마다 번호를 매겨, 가장 나중에 시작한 요청의 응답만 받는다. 쪽지를 만들거나 바꾼 뒤에도 번호를
+  // 올려서, 그보다 먼저 시작한 요청의 응답(방금 만든 쪽지나 방금 바뀐 내용이 빠져 있다)이 늦게 와도 버린다.
+  const listRequest = useRef(0)
+  const detailRequest = useRef(0)
+
   const refreshList = () => {
-    listIssues(id).then(setIssues, () => {})
+    const request = ++listRequest.current
+    listIssues(id).then(
+      (list) => {
+        if (listRequest.current === request) setIssues(list)
+      },
+      () => {},
+    )
   }
 
   const refreshIssues = () => {
     refreshList()
     if (!openIssueId) return
+    const request = ++detailRequest.current
     getIssue(openIssueId).then(
       // 응답이 오는 사이 다른 쪽지로 바꿨으면 버린다.
-      (detail) => setLoadedIssue((shown) => (shown?.id === detail.id ? { id: detail.id, detail } : shown)),
+      (detail) => {
+        if (detailRequest.current !== request) return
+        setLoadedIssue((shown) => (shown?.id === detail.id ? { id: detail.id, detail } : shown))
+      },
       () => {},
     )
   }
@@ -285,6 +300,10 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 버전을 바꿔도 같은 화면(예: 메인 · PC)을 이어서 보여 줘서, 차수끼리 비교하기 쉽다. 그 화면이 없으면 첫 화면이다.
   const wantedScreenId = shownOrigin && originInViewedVersion ? shownOrigin.screenId : selectedScreenId
   const selected = detail?.screens.find((screen) => screen.screenId === wantedScreenId) ?? detail?.screens[0]
+  // 임시 핀은 찍은 버전·화면의 사진을 보는 동안에만 보이고, 그때만 쓰기 칸에 넘긴다. 보이지 않는 핀이 보내지지 않게 하려는 것이다.
+  // 잠긴 요청은 쓰기 칸이 처음 보낸 그대로 기억하고 있어서, 여기 값과 상관없이 처음 자리로 다시 간다.
+  const shownDraftPin =
+    draftPin?.versionId === detail?.id && draftPin?.screenId === selected?.screenId ? draftPin : undefined
 
   // 쓰기와 고르기에서 주소의 쪽지·버전을 바꾼다. 다른 값은 그대로 둔다.
   const setParam = (name: 'issue' | 'version', value?: string) =>
@@ -321,6 +340,10 @@ const ReviewRoom = ({ id }: { id: string }) => {
   }
 
   const startComposing = (pin?: DraftPin) => {
+    // 쪽지를 열어서 그 쪽지의 화면을 보던 중이면, 그 화면을 "고른 화면"으로 붙잡아 둔다. 주소에서 쪽지를 지우면
+    // 화면을 고른 근거도 사라져서 첫 화면으로 돌아가고, 방금 찍은 핀이 다른 사진의 쪽지로 보내진다.
+    if (selected) setSelectedScreenId(selected.screenId)
+    setShowIssuePlace(false)
     setDraftPin(pin)
     setComposing(true)
     setParam('issue')
@@ -365,7 +388,6 @@ const ReviewRoom = ({ id }: { id: string }) => {
         ? [{ id: issue.id, number: issue.number, title: issue.title, ...issue.origin }]
         : [],
     )
-    const pinIsHere = draftPin?.versionId === version.id && draftPin.screenId === selected.screenId
     // 새 핀은 쓸 수 있는 버전의 사진에만 찍는다. 잠긴 동안에는 처음 보낸 자리를 바꾸지 않는다.
     const canPlacePin = canWrite && !composerLocked
     return (
@@ -386,7 +408,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
         alt={screenLabel(selected)}
         pins={pins}
         selectedPinId={openIssueId}
-        draftPin={pinIsHere ? draftPin : undefined}
+        draftPin={shownDraftPin}
         // 쓰는 중에는 핀을 눌러도 다른 쪽지로 넘어가지 않는다. 쓰던 글이 사라지지 않게 하려는 것이다.
         onSelectPin={composing ? () => {} : selectIssue}
         onPlacePin={
@@ -402,16 +424,17 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 버전을 바꾸는 사이 이 칸이 사라졌다 다시 그려지면 쓰던 글과 잠긴 요청이 지워진다.
   const renderPanel = (shownVersionId: string) => {
     if (composing) {
-      const pinScreen = detail?.screens.find((screen) => screen.screenId === draftPin?.screenId)
+      const pinScreen = detail?.screens.find((screen) => screen.screenId === shownDraftPin?.screenId)
       return (
         <IssueComposer
           projectId={id}
           versionId={shownVersionId}
           canSubmit={canWrite}
-          pin={draftPin && { ...draftPin, label: pinScreen ? screenLabel(pinScreen) : '' }}
+          pin={shownDraftPin && { ...shownDraftPin, label: pinScreen ? screenLabel(pinScreen) : '' }}
           onClearPin={() => setDraftPin(undefined)}
           onCancel={closeComposer}
           onCreated={(issue) => {
+            listRequest.current += 1
             closeComposer()
             setLoadedIssue({ id: issue.id, detail: issue })
             setIssues((list) => [issue, ...list.filter((item) => item.id !== issue.id)])
@@ -450,7 +473,10 @@ const ReviewRoom = ({ id }: { id: string }) => {
             isDeveloper={isDeveloper}
             // 서버가 바뀐 쪽지를 이미 돌려줬으니 상세는 다시 부르지 않고, 목록(상태·댓글 수)만 새로 부른다.
             onChanged={(issue) => {
-              setLoadedIssue({ id: issue.id, detail: issue })
+              // 응답을 기다리는 사이 다른 쪽지를 열었으면 그 쪽지의 상세를 덮어쓰지 않는다. 덮어쓰면 지금 보는 쪽지와
+              // 쓰던 댓글이 화면에서 사라진다. 먼저 시작한 새로 불러오기의 응답(바뀌기 전 내용)도 버린다.
+              detailRequest.current += 1
+              setLoadedIssue((shown) => (shown?.id === issue.id ? { id: issue.id, detail: issue } : shown))
               refreshList()
             }}
             onRefresh={refreshIssues}

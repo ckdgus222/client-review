@@ -265,6 +265,11 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* 사진 아래에 쪽지 칸이 바로 오게, 넓은 화면용 최소 높이를 없앤다. 두면 사진 아래에 큰 빈칸이 생긴다. */
+  .workspace {
+    min-height: 0;
+  }
+
   .inspector {
     border-top: 1px solid var(--color-border);
     border-left: 0;
