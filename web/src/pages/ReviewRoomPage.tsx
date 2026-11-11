@@ -168,9 +168,13 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 주소의 지금 값. 늦게 끝난 요청의 콜백(쪽지를 만든 뒤 그 쪽지 열기, 최신 버전으로 가기)이 주소를 바꿀 때 쓴다.
   // 그런 콜백은 요청을 시작한 때의 주소를 기억하고 있어서(setSearchParams에 함수를 넘겨도 같다), 그대로 쓰면
   // 기다리는 사이 연 다른 쪽지나 고른 버전을 옛 값으로 되돌린다.
-  const latestParams = useRef(searchParams)
+  // 검수실을 떠나면 비운다(setParam 참고).
+  const latestParams = useRef<URLSearchParams | undefined>(searchParams)
   useEffect(() => {
     latestParams.current = searchParams
+    return () => {
+      latestParams.current = undefined
+    }
   }, [searchParams])
 
   // 쪽지 목록과 상세를 부를 때마다 번호를 매겨, 가장 나중에 시작한 요청의 응답만 받는다. 쪽지를 만들거나 바꾼 뒤에도
@@ -216,6 +220,11 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 주소에 고른 버전이 없으면 현재 버전을 본다. 빈 값(?version=)은 고른 것으로 보고 아래에서 틀린 id로 거른다.
   const versionId = requestedVersionId ?? project?.currentVersion?.id
 
+  // "최신 버전 보기"(goLatest)가 프로젝트를 다시 불러오는 데 성공할 때마다 올린다. 보던 버전과 같은 버전이어도 상세를 다시 부르게 한다.
+  // 지난번에 최신 버전의 사진을 불러오지 못했으면, 이것 없이는 같은 버전이라 다시 부르지 않아서 사진도 버전 고르기도
+  // 없는 화면에서 새로 고침 말고는 빠져나올 길이 없다(쓰던 글이 사라진다).
+  const [versionReloads, setVersionReloads] = useState(0)
+
   useEffect(() => {
     if (!isValidId || !versionId || !isUuid(versionId)) return
     // 버전을 빠르게 바꾸면 이전 버전 응답이 늦게 올 수 있다. 정리 함수가 그 응답을 버린다.
@@ -231,12 +240,16 @@ const ReviewRoom = ({ id }: { id: string }) => {
       })
       .catch((caught) => {
         if (ignore) return
-        setLoaded(isNotFound(caught) ? { versionId, missing: true } : { versionId, error: toMessage(caught) })
+        if (isNotFound(caught)) return setLoaded({ versionId, missing: true })
+        // 같은 버전을 다시 부르다 실패했으면(goLatest) 보여 주던 사진을 그대로 둔다.
+        setLoaded((shown) =>
+          shown?.versionId === versionId && shown.detail ? shown : { versionId, error: toMessage(caught) },
+        )
       })
     return () => {
       ignore = true
     }
-  }, [id, isValidId, versionId])
+  }, [id, isValidId, versionId, versionReloads])
 
   // 주소의 쪽지는 이 프로젝트의 쪽지 목록에 있을 때만 연다. 두 프로젝트의 멤버면 다른 프로젝트의 쪽지 상세도
   // 서버가 주기 때문에, 상세를 부르기 전에 목록으로 거른다. 주소의 id는 대문자일 수 있어서 소문자로 맞춘다.
@@ -330,6 +343,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
 
   // 쓰기와 고르기에서 주소의 쪽지·버전을 바꾼다. 다른 값은 그대로 둔다. 지금 주소(latestParams)에서 바꾼다.
   const setParam = (name: 'issue' | 'version', value?: string) => {
+    // 검수실을 떠난 뒤에 끝난 요청의 콜백이면 주소를 바꾸지 않는다. 바꾸면 다른 페이지로 간 사용자를 검수실로 다시 끌고 온다.
+    if (!latestParams.current) return
     const next = new URLSearchParams(latestParams.current)
     if (value === undefined) next.delete(name)
     else next.set(name, value)
@@ -391,6 +406,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const goLatest = () => {
     loadRoom().then(
       () => {
+        setVersionReloads((count) => count + 1)
         setShowIssuePlace(false)
         setParam('version')
       },

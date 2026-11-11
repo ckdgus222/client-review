@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { getMe } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
 import {
@@ -163,13 +163,15 @@ const CurrentAddress = () => {
     </output>
   )
 }
-const renderRoom = async (query = '') => {
+const renderRoom = async (query = '', destination?: string) => {
   let view!: ReturnType<typeof render>
   await act(async () => {
     view = render(
       <MemoryRouter initialEntries={[`/projects/${project.id}${query}`]}>
         <CurrentAddress />
+        {destination && <Link to={destination}>다른 페이지로 이동</Link>}
         <Routes>
+          <Route path="/" element={<h1>프로젝트 목록</h1>} />
           <Route path="/projects/:id" element={<ReviewRoomPage />} />
           <Route path="/login" element={<h1>로그인</h1>} />
         </Routes>
@@ -2177,6 +2179,206 @@ describe('ReviewRoomPage 최신 버전 이동과 늦은 목록 응답', () => {
     expect(screen.getByRole('option', { name: '2차' })).toBeTruthy()
     expect(photo().getAttribute('src')).toBe('/api/assets/new-current-product')
     expect(screen.queryByText(/처음 사진의 위치를 보여 드려요/)).toBeNull()
+  })
+})
+
+describe('ReviewRoomPage 검수실을 떠난 뒤 응답과 버전 재시도', () => {
+  const otherProject: ProjectDetail = {
+    ...project,
+    id: 'a6666666-6666-4666-8666-666666666666',
+    name: '다른 검수 프로젝트',
+    currentVersion: { id: 'b6666666-6666-4666-8666-666666666666', number: 1 },
+  }
+  const otherVersion: VersionDetail = {
+    ...current,
+    id: otherProject.currentVersion!.id,
+    projectId: otherProject.id,
+    screens: current.screens.map((item) => ({
+      ...item,
+      asset: { ...item.asset, id: `other-${item.asset.id}` },
+    })),
+  }
+  const destinations = [
+    { page: '프로젝트 목록', address: '/?filter=active', heading: '프로젝트 목록' },
+    {
+      page: '다른 프로젝트 검수실',
+      address: `/projects/${otherProject.id}?version=${otherVersion.id}&keep=other`,
+      heading: otherProject.name,
+    },
+  ]
+
+  beforeEach(() => {
+    vi.mocked(listVersions).mockImplementation(async (id) =>
+      id === otherProject.id ? [otherVersion] : [latest, current, initial],
+    )
+    vi.mocked(listIssues).mockImplementation(async (id) => (id === otherProject.id ? [] : issues))
+    vi.mocked(getVersion).mockImplementation(async (id) => {
+      const version = [current, initial, latest, otherVersion].find((item) => item.id === id)
+      if (!version) throw new ApiError(404)
+      return version
+    })
+  })
+
+  it.each(destinations)(
+    '쪽지 저장을 기다리다 $page으로 이동하면 늦은 저장 응답은 pathname과 search를 바꾸지 않는다',
+    async ({ address, heading }) => {
+      vi.mocked(getProject).mockImplementation(async (id) => (id === otherProject.id ? otherProject : project))
+      const pendingIssue = deferred<IssueDetail>()
+      vi.mocked(createIssue).mockReturnValueOnce(pendingIssue.promise)
+      await renderRoom(`?version=${current.id}&keep=original`, address)
+      await click('쪽지 쓰기')
+      fillDraft()
+      await click('쪽지 남기기')
+      expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+        requestId: expect.any(String),
+        versionId: current.id,
+        title: savedIssue.title,
+        body: savedIssue.body,
+        pin: undefined,
+      })
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('link', { name: '다른 페이지로 이동' }))
+      })
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(address)
+      expect(screen.getByRole('heading', { name: heading })).toBeTruthy()
+      await act(async () => {
+        pendingIssue.resolve({ ...savedIssue, origin: null })
+      })
+
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(address)
+      expect(screen.getByRole('heading', { name: heading })).toBeTruthy()
+      expect(screen.queryByRole('heading', { name: project.name })).toBeNull()
+      expect(queryParams().has('issue')).toBe(false)
+      expect(queryParams().get('version')).not.toBe(current.id)
+      expect(getIssue).not.toHaveBeenCalledWith(savedIssue.id)
+    },
+  )
+
+  it.each(destinations)(
+    '최신 버전 보기를 기다리다 $page으로 이동하면 늦은 프로젝트 응답은 pathname과 search를 바꾸지 않는다',
+    async ({ address, heading }) => {
+      vi.mocked(createComment).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+      await renderRoom(`?version=${current.id}&issue=${productIssue.id}&keep=original`, address)
+      fillComment()
+      await click('댓글 남기기')
+      expect(screen.getByText('새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.')).toBeTruthy()
+      const pendingProject = deferred<ProjectDetail>()
+      vi.mocked(getProject)
+        .mockImplementation(async (id) => (id === otherProject.id ? otherProject : project))
+        .mockReturnValueOnce(pendingProject.promise)
+      await click('최신 버전 보기')
+      expect(getProject).toHaveBeenCalledTimes(2)
+      expect(queryParams().get('version')).toBe(current.id)
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('link', { name: '다른 페이지로 이동' }))
+      })
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(address)
+      expect(screen.getByRole('heading', { name: heading })).toBeTruthy()
+      await act(async () => {
+        pendingProject.resolve({ ...project, currentVersion: { id: latest.id, number: 2 } })
+      })
+
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(address)
+      expect(screen.getByRole('heading', { name: heading })).toBeTruthy()
+      expect(screen.queryByRole('heading', { name: project.name })).toBeNull()
+      expect(queryParams().has('issue')).toBe(false)
+      expect(queryParams().get('version')).not.toBe(current.id)
+      expect(getVersion).not.toHaveBeenCalledWith(latest.id)
+    },
+  )
+
+  it('최신 버전 상세가 500으로 실패해도 글이 남고 다시 누르면 같은 버전을 불러 복구한 뒤 새 versionId로 저장한다', async () => {
+    vi.mocked(createIssue).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    await renderRoom(`?version=${current.id}&keep=yes`)
+    await click('쪽지 쓰기')
+    fillDraft()
+    await click('쪽지 남기기')
+    expect(screen.getByText('새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.')).toBeTruthy()
+    publishLatest()
+    const firstVersion = deferred<VersionDetail>()
+    vi.mocked(getVersion).mockImplementation((id) =>
+      id === latest.id ? firstVersion.promise : Promise.resolve(current),
+    )
+    await click('최신 버전 보기')
+    expect(vi.mocked(getVersion).mock.calls.filter(([id]) => id === latest.id)).toEqual([[latest.id]])
+    expectDraft()
+    await act(async () => {
+      firstVersion.reject(new ApiError(500))
+    })
+
+    expect(screen.getByText('잠시 뒤 다시 시도해 주세요')).toBeTruthy()
+    expect(screen.queryByRole('img', { name: '상품 상세 · PC' })).toBeNull()
+    expect(screen.queryByRole('combobox', { name: '버전' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '쪽지 남기기' })).toBeNull()
+    expectDraft()
+    const address = screen.getByLabelText('현재 주소').textContent
+    const secondVersion = deferred<VersionDetail>()
+    vi.mocked(getVersion).mockReturnValueOnce(secondVersion.promise)
+    await click('최신 버전 보기')
+    expect(getProject).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(getVersion).mock.calls.filter(([id]) => id === latest.id)).toEqual([[latest.id], [latest.id]])
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(address)
+    expectDraft()
+    await act(async () => {
+      secondVersion.resolve(latest)
+    })
+
+    expect(screen.queryByText('잠시 뒤 다시 시도해 주세요')).toBeNull()
+    expect(photo().getAttribute('src')).toBe('/api/assets/new-current-product')
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(latest.id)
+    expectDraft()
+    const created = { ...savedIssue, origin: null, originVersion: { id: latest.id, number: 2 } }
+    vi.mocked(createIssue).mockResolvedValueOnce(created)
+    vi.mocked(getIssue).mockResolvedValueOnce(created)
+    await click('쪽지 남기기')
+    expect(createIssue).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createIssue).mock.calls[1]).toEqual([
+      project.id,
+      { ...vi.mocked(createIssue).mock.calls[0][1], versionId: latest.id },
+    ])
+    expect(queryParams().get('issue')).toBe(created.id)
+    expect(within(screen.getByRole('article', { name: '쪽지 #5' })).getByText(created.body)).toBeTruthy()
+  })
+
+  it('최신 사진을 보여 주다가 같은 버전 상세를 다시 불러 500으로 실패하면 사진과 글을 남기고 불러오기 오류를 보이지 않는다', async () => {
+    vi.mocked(createIssue).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    await renderRoom(`?version=${current.id}`)
+    await click('쪽지 쓰기')
+    fillDraft()
+    await click('쪽지 남기기')
+    publishLatest()
+    const firstVersion = deferred<VersionDetail>()
+    vi.mocked(getVersion).mockImplementation((id) =>
+      id === latest.id ? firstVersion.promise : Promise.resolve(current),
+    )
+    await click('최신 버전 보기')
+    await act(async () => {
+      firstVersion.resolve(latest)
+    })
+    const shownPhoto = photo()
+    expect(shownPhoto.getAttribute('src')).toBe('/api/assets/new-current-product')
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(latest.id)
+    expectDraft()
+    const alerts = screen.getAllByRole('alert').map((alert) => alert.textContent)
+    const pendingVersion = deferred<VersionDetail>()
+    vi.mocked(getVersion).mockReturnValueOnce(pendingVersion.promise)
+    await click('최신 버전 보기')
+    expect(getProject).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(getVersion).mock.calls.filter(([id]) => id === latest.id)).toEqual([[latest.id], [latest.id]])
+    expect(photo()).toBe(shownPhoto)
+    await act(async () => {
+      pendingVersion.reject(new ApiError(500))
+    })
+
+    expect(photo()).toBe(shownPhoto)
+    expect(photo().getAttribute('src')).toBe('/api/assets/new-current-product')
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(latest.id)
+    expect(screen.queryByText('잠시 뒤 다시 시도해 주세요')).toBeNull()
+    expect(screen.getAllByRole('alert').map((alert) => alert.textContent)).toEqual(alerts)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '쪽지 남기기' }).disabled).toBe(false)
+    expectDraft()
   })
 })
 
