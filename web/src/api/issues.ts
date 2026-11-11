@@ -1,5 +1,6 @@
 import { apiDelete, apiGet, apiPost, apiPostForm } from './client.ts'
-import type { Viewport } from './projects.ts'
+import { screenLabel, type Viewport } from './projects.ts'
+import { versionLabel } from './versions.ts'
 
 // 확인 요청·확인 완료·철회는 6번 기능에서 생긴다.
 export type IssueStatus = 'OPEN' | 'IN_PROGRESS'
@@ -38,6 +39,12 @@ export type IssueDetail = IssueSummary & {
   isMine: boolean
   attachments: IssueAttachment[]
   comments: IssueComment[]
+}
+
+// 쪽지가 처음 남겨진 자리. 예: "초안 · 상품 상세 · PC", "2차 · 위치 없음". 목록과 상세가 같은 글자로 보여 준다.
+export const originLabel = ({ originVersion, origin }: Pick<IssueSummary, 'originVersion' | 'origin'>) => {
+  const place = origin ? screenLabel({ name: origin.screenName, viewport: origin.viewport }) : '위치 없음'
+  return `${versionLabel(originVersion.number)} · ${place}`
 }
 
 // requestId는 쓰기 칸을 열 때 만든 번호다. 실패해서 다시 보낼 때도 같은 번호를 써야 쪽지가 하나만 생긴다.
