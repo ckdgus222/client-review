@@ -2382,6 +2382,103 @@ describe('ReviewRoomPage 검수실을 떠난 뒤 응답과 버전 재시도', ()
   })
 })
 
+describe('ReviewRoomPage 댓글의 최신 버전 복구와 중복 요청', () => {
+  it('댓글 409 뒤 최신 버전 상세가 500이면 최신 버전 보기로 같은 버전을 다시 불러 쓰던 댓글을 새 versionId로 보낸다', async () => {
+    vi.mocked(createComment).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    await renderRoom(`?version=${current.id}&issue=${productIssue.id}`)
+    fillComment()
+    await click('댓글 남기기')
+    expect(screen.getByText('새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.')).toBeTruthy()
+    const firstRequest = structuredClone(vi.mocked(createComment).mock.calls[0])
+    expect(firstRequest[1].versionId).toBe(current.id)
+    publishLatest()
+    const firstVersion = deferred<VersionDetail>()
+    vi.mocked(getVersion).mockImplementation((id) =>
+      id === latest.id ? firstVersion.promise : Promise.resolve(current),
+    )
+    await click('최신 버전 보기')
+    expect(vi.mocked(getVersion).mock.calls.filter(([id]) => id === latest.id)).toEqual([[latest.id]])
+    await act(async () => {
+      firstVersion.reject(new ApiError(500))
+    })
+
+    expect(screen.getByText('잠시 뒤 다시 시도해 주세요')).toBeTruthy()
+    expect(screen.queryByRole('img', { name: '상품 상세 · PC' })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '댓글 남기기' })).toBeNull()
+    expect(screen.getByText('새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: '최신 버전 보기' })).toBeTruthy()
+    expect(queryParams().get('issue')).toBe(productIssue.id)
+    const secondVersion = deferred<VersionDetail>()
+    vi.mocked(getVersion).mockReturnValueOnce(secondVersion.promise)
+    await click('최신 버전 보기')
+    expect(getProject).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(getVersion).mock.calls.filter(([id]) => id === latest.id)).toEqual([[latest.id], [latest.id]])
+    await act(async () => {
+      secondVersion.resolve(latest)
+    })
+
+    expect(screen.queryByText('잠시 뒤 다시 시도해 주세요')).toBeNull()
+    expect(photo().getAttribute('src')).toBe('/api/assets/new-current-product')
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(latest.id)
+    expect(queryParams().get('issue')).toBe(productIssue.id)
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+    await click('댓글 남기기')
+    expect(createComment).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createComment).mock.calls[1]).toEqual([
+      productIssue.id,
+      { ...firstRequest[1], versionId: latest.id },
+    ])
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe('')
+  })
+
+  it.each(['성공', '실패'] as const)(
+    '최신 버전 보기의 프로젝트 응답을 기다리는 중에는 한 번만 요청하고 %s 뒤에는 다시 요청할 수 있다',
+    async (result) => {
+      vi.mocked(createComment).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+      await renderRoom(`?version=${current.id}&issue=${productIssue.id}`)
+      fillComment()
+      await click('댓글 남기기')
+      publishLatest()
+      const firstProject = deferred<ProjectDetail>()
+      vi.mocked(getProject).mockClear().mockReturnValueOnce(firstProject.promise)
+      await click('최신 버전 보기')
+      expect(getProject).toHaveBeenCalledExactlyOnceWith(project.id)
+      await click('최신 버전 보기')
+      expect(getProject).toHaveBeenCalledExactlyOnceWith(project.id)
+      expect(queryParams().get('version')).toBe(current.id)
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+
+      await act(async () => {
+        if (result === '실패') {
+          firstProject.reject(new ApiError(500))
+          return
+        }
+        firstProject.resolve({ ...project, currentVersion: { id: latest.id, number: 2 } })
+      })
+      expect(getProject).toHaveBeenCalledTimes(1)
+      expect(photo().getAttribute('src')).toBe(
+        result === '성공' ? '/api/assets/new-current-product' : '/api/assets/current-product',
+      )
+      const secondProject = deferred<ProjectDetail>()
+      vi.mocked(getProject).mockReturnValueOnce(secondProject.promise)
+      await click('최신 버전 보기')
+      expect(getProject).toHaveBeenCalledTimes(2)
+      expect(getProject).toHaveBeenNthCalledWith(2, project.id)
+      await click('최신 버전 보기')
+      expect(getProject).toHaveBeenCalledTimes(2)
+      await act(async () => {
+        secondProject.resolve({ ...project, currentVersion: { id: latest.id, number: 2 } })
+      })
+      expect(photo().getAttribute('src')).toBe('/api/assets/new-current-product')
+      expect(queryParams().has('version')).toBe(false)
+      expect(queryParams().get('issue')).toBe(productIssue.id)
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+      expect(createComment).toHaveBeenCalledTimes(1)
+    },
+  )
+})
+
 describe('ReviewRoomPage 작성 상태 경계', () => {
   it('잠기지 않은 쪽지를 쓰다가 지난 버전을 고르면 새 글을 보내는 버튼은 없다', async () => {
     await renderRoom()

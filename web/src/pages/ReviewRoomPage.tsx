@@ -224,6 +224,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 지난번에 최신 버전의 사진을 불러오지 못했으면, 이것 없이는 같은 버전이라 다시 부르지 않아서 사진도 버전 고르기도
   // 없는 화면에서 새로 고침 말고는 빠져나올 길이 없다(쓰던 글이 사라진다).
   const [versionReloads, setVersionReloads] = useState(0)
+  // goLatest가 프로젝트를 다시 불러오는 중인가.
+  const loadingLatest = useRef(false)
 
   useEffect(() => {
     if (!isValidId || !versionId || !isUuid(versionId)) return
@@ -403,15 +405,23 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 응답이 온 뒤의 일은 누른 때의 화면 상태를 읽지 않는다. 기다리는 사이 다른 쪽지를 열거나 쪽지를 보냈을 수 있다.
   // 그래서 임시 핀은 여기서 지우지 않는다. 핀은 찍은 버전의 사진에서만 보이고 보내져서(shownDraftPin),
   // 새 버전으로 가면 저절로 빠진다.
+  // 불러오는 중에 한 번 더 누르면 받지 않는다. 요청이 둘이면 먼저 보낸 요청의 응답이 나중에 와서,
+  // 더 새 버전을 보여 주던 화면을 그 전 버전으로 되돌릴 수 있다.
   const goLatest = () => {
-    loadRoom().then(
-      () => {
-        setVersionReloads((count) => count + 1)
-        setShowIssuePlace(false)
-        setParam('version')
-      },
-      () => {},
-    )
+    if (loadingLatest.current) return
+    loadingLatest.current = true
+    loadRoom()
+      .then(
+        () => {
+          setVersionReloads((count) => count + 1)
+          setShowIssuePlace(false)
+          setParam('version')
+        },
+        () => {},
+      )
+      .finally(() => {
+        loadingLatest.current = false
+      })
   }
 
   const renderCanvas = (version: VersionDetail) => {

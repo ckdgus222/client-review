@@ -572,6 +572,51 @@ describe('IssueDetail', () => {
     },
   )
 
+  it('댓글의 VERSION_CHANGED 뒤 읽기 전용이면 안내와 최신 버전 보기만 남고 다시 쓸 수 있으면 쓰던 글이 보인다', async () => {
+    vi.mocked(createComment).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    const { props, rerender } = renderDetail()
+    fillComment()
+    await click('댓글 남기기')
+    expect(screen.getByRole('alert').textContent).toContain('새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.')
+
+    rerender(<IssueDetail {...props} canWrite={false} />)
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '댓글 남기기' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '다시 보내기' })).toBeNull()
+    expect(screen.getByRole('alert').textContent).toContain('새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.')
+    await click('최신 버전 보기')
+    expect(props.onGoLatest).toHaveBeenCalledTimes(1)
+    expect(createComment).toHaveBeenCalledTimes(1)
+
+    rerender(<IssueDetail {...props} canWrite={true} />)
+    expect(commentInput().value).toBe('  새 댓글\n둘째 줄  ')
+    expect(commentInput().readOnly).toBe(false)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '댓글 남기기' }).disabled).toBe(false)
+  })
+
+  it.each([
+    [422, '입력한 내용을 확인해 주세요'],
+    [401, '로그인이 끝났어요. 다른 탭에서 로그인한 뒤 다시 눌러 주세요'],
+    [403, '잠시 뒤 다시 시도해 주세요'],
+    [404, '찾을 수 없어요. 화면을 새로 고쳐 주세요'],
+  ] as const)('댓글의 %i 뒤 읽기 전용이 되면 실패 문구와 댓글 입력을 모두 숨긴다', async (status, message) => {
+    vi.mocked(createComment).mockRejectedValueOnce(new ApiError(status))
+    const { props, rerender } = renderDetail()
+    fillComment()
+    await click('댓글 남기기')
+    expect(screen.getByRole('alert').textContent).toContain(message)
+    expect(commentInput().value).toBe('  새 댓글\n둘째 줄  ')
+
+    rerender(<IssueDetail {...props} canWrite={false} />)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText(message, { exact: false })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '댓글 남기기' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '최신 버전 보기' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '새 탭에서 로그인하기' })).toBeNull()
+    expect(createComment).toHaveBeenCalledTimes(1)
+  })
+
   it('잠긴 댓글을 취소하면 글은 남고 잠금과 오류가 풀리며 다음 보내기는 새 requestId를 쓴다', async () => {
     vi.mocked(createComment).mockRejectedValueOnce(new TypeError('Failed to fetch'))
     const { props } = renderDetail()

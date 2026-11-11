@@ -174,7 +174,12 @@ const CommentForm = ({ issue, versionId, canWrite, onRefresh, onGoLatest }: Comm
   }
 
   // 이미 보내서 잠긴 댓글은 읽기 전용보다 앞선다. 지난 버전을 골라 봐도 다시 보내기와 취소가 남는다.
-  if (!canWrite && !isLocked) return null
+  if (!canWrite && !isLocked) {
+    // 읽기 전용이면 댓글 칸을 감추지만 새 버전 안내("최신 버전 보기")는 남긴다. 최신 버전의 사진을 불러오지 못해도
+    // 읽기 전용이 되는데, 그때 이 버튼까지 감추면 다시 불러올 길이 없다. 쓰던 댓글은 감춘 칸에 그대로 남아 있다.
+    const versionChanged = error?.kind === 'conflict' && error.code === 'VERSION_CHANGED'
+    return versionChanged ? <SubmitErrorText error={error} locked={false} onGoLatest={onGoLatest} /> : null
+  }
 
   return (
     <form className={styles.commentForm} onSubmit={handleSubmit} noValidate>
