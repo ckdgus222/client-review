@@ -7,7 +7,8 @@ import { ApiError } from '../api/client.ts'
 export type SubmitError =
   { kind: 'unknown' } | { kind: 'session' } | { kind: 'conflict'; code?: string } | { kind: 'rejected'; status: number }
 
-const toSubmitError = (error: unknown): SubmitError => {
+// 훅을 거치지 않는 한 번짜리 쓰기(수정 시작, 참고 사진)도 같은 종류로 나눠 같은 문구를 쓴다.
+export const toSubmitError = (error: unknown): SubmitError => {
   if (!(error instanceof ApiError) || error.status >= 500) return { kind: 'unknown' }
   if (error.status === 401) return { kind: 'session' }
   if (error.status === 409) return { kind: 'conflict', code: error.code }

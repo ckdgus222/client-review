@@ -1,0 +1,16 @@
+/* 문장 속이나 작은 자리의 버튼을 링크처럼 보인다. 다른 주소로 가는 것이 아니라 화면 상태를 바꾸는 동작이라
+   a 대신 button을 쓰고, 모양만 링크에 맞춘다. 쓰는 쪽은 composes로 가져다 쓴다. */
+.linkButton {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.linkButton:disabled {
+  color: var(--color-disabled-text);
+  cursor: not-allowed;
+}
