@@ -206,7 +206,7 @@ describe('ReviewRoomPage 승인자 알림', () => {
       renderReview()
       await screen.findByRole('heading', { name: project.name })
 
-      expect(listMembers).toHaveBeenCalledExactlyOnceWith(project.id)
+      await waitFor(() => expect(listMembers).toHaveBeenCalledExactlyOnceWith(project.id))
       expect(screen.queryByText('승인자를 정해 주세요.')).toBeNull()
       expect(screen.queryByRole('link', { name: '설정으로 가기' })).toBeNull()
       await act(async () => pending.resolve({ members: [developer, client], invitations: [] }))
@@ -239,7 +239,7 @@ describe('ReviewRoomPage 승인자 알림', () => {
       }),
     )
 
-    expect(listMembers).toHaveBeenCalledExactlyOnceWith(project.id)
+    await waitFor(() => expect(listMembers).toHaveBeenCalledExactlyOnceWith(project.id))
     expect(screen.queryByText('승인자를 정해 주세요.')).toBeNull()
     expect(screen.queryByRole('link', { name: '설정으로 가기' })).toBeNull()
   })
@@ -281,7 +281,7 @@ describe('ReviewRoomPage 승인자 알림', () => {
     await screen.findByRole('img', { name: '메인 · PC' })
     await act(async () => pending.reject(error))
 
-    expect(listMembers).toHaveBeenCalledExactlyOnceWith(project.id)
+    await waitFor(() => expect(listMembers).toHaveBeenCalledExactlyOnceWith(project.id))
     expect(screen.queryByText('승인자를 정해 주세요.')).toBeNull()
     expect(screen.queryByRole('link', { name: '설정으로 가기' })).toBeNull()
     expect(screen.getByRole('heading', { name: project.name })).toBeDefined()

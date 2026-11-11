@@ -216,13 +216,13 @@ const ReviewRoom = ({ id }: { id: string }) => {
 
   // 쪽지 목록과 상세를 부를 때마다 번호를 매겨, 가장 나중에 시작한 요청의 응답만 받는다. 쪽지를 만들거나 바꾼 뒤에도
   // 번호를 올려서, 그보다 먼저 시작한 요청의 응답(방금 만든 쪽지나 방금 바뀐 내용이 빠져 있다)이 늦게 와도 버린다.
-  // 상세는 어느 쪽지를 부르는 중인지도 함께 적는다. 그사이 다른 쪽지를 열었는지 이것으로 안다.
+  // 상세는 가장 나중에 연 쪽지가 무엇인지도 함께 적는다. 늦게 끝난 요청의 콜백은 그 요청을 시작한 때의 쪽지를
+  // 기억하고 있어서, 그사이 다른 쪽지를 열었는지는 화면 상태가 아니라 이 값으로 확인한다.
   const listRequest = useRef(0)
   const detailRequest = useRef({ issueId: '', number: 0 })
 
   // 쪽지를 처음 열 때와 새로 부를 때(15초마다, 댓글을 남긴 뒤, 쪽지 상태가 달라져 있을 때) 함께 쓴다.
-  // 새로 부르기는 도움 기능이라 실패를 알리지 않는다(showError).
-  const loadIssue = useCallback((issueId: string, showError: boolean) => {
+  const loadIssue = useCallback((issueId: string) => {
     const number = detailRequest.current.number + 1
     detailRequest.current = { issueId, number }
     getIssue(issueId).then(
@@ -230,21 +230,24 @@ const ReviewRoom = ({ id }: { id: string }) => {
         if (detailRequest.current.number === number) setLoadedIssue({ id: issueId, detail })
       },
       (caught) => {
-        if (showError && detailRequest.current.number === number) {
-          setLoadedIssue({ id: issueId, error: toMessage(caught) })
-        }
+        if (detailRequest.current.number !== number) return
+        // 보여 주던 상세가 있으면 그대로 둔다. 새로 부르기는 도움 기능이라, 실패했다고 보던 쪽지와 쓰던 댓글을 치우지 않는다.
+        // 보여 줄 상세가 없을 때만 오류를 알린다.
+        setLoadedIssue((shown) =>
+          shown?.id === issueId && shown.detail ? shown : { id: issueId, error: toMessage(caught) },
+        )
       },
     )
   }, [])
 
   useEffect(() => {
-    if (openIssueId) loadIssue(openIssueId, true)
+    if (openIssueId) loadIssue(openIssueId)
   }, [openIssueId, loadIssue])
 
   // 다른 사람이 쓴 쪽지와 댓글이 새로고침 없이 보이게 한다. 쪽지 목록과 열어 둔 쪽지만 다시 부르고,
   // 프로젝트와 버전은 부르지 않는다. 보던 버전이 저절로 바뀌면 쓰던 글과 핀이 흔들리기 때문이다.
   // 새 버전이 올라왔는지는 쓰기 요청의 409로 안다(기획 정할 것 4).
-  // 도움 기능이라 실패해도 알리지 않고 보던 내용을 그대로 둔다. 다음 차례에 다시 부른다.
+  // 도움 기능이라 실패해도 보던 내용을 그대로 둔다. 다음 차례에 다시 부른다.
   const refreshList = () => {
     const request = ++listRequest.current
     listIssues(id).then(
@@ -255,16 +258,16 @@ const ReviewRoom = ({ id }: { id: string }) => {
     )
   }
 
-  const refreshIssues = () => {
+  // issueId는 부르는 쪽이 보고 있던 쪽지다. 그사이 다른 쪽지를 열었으면 목록만 새로 부른다.
+  // 그때 상세까지 부르면 지금 연 쪽지의 요청이 밀려나고, 그 쪽지의 상세와 쓰던 댓글이 화면에서 사라진다.
+  const refreshIssues = (issueId?: string) => {
     refreshList()
-    // 처음 여는 요청이 아직 안 끝났으면 상세는 새로 부르지 않는다. 새로 부르면 처음 요청의 응답이 버려져서,
-    // 그 요청이 실패했을 때 오류를 보여 주지 못한다.
-    if (openIssueId && loadedIssue?.id === openIssueId) loadIssue(openIssueId, false)
+    if (issueId && detailRequest.current.issueId === issueId) loadIssue(issueId)
   }
 
   // 타이머는 한 번만 걸고, 울릴 때마다 그때의 쪽지(openIssueId)로 새로 부른다.
   const refreshIfVisible = useEffectEvent(() => {
-    if (document.visibilityState === 'visible') refreshIssues()
+    if (document.visibilityState === 'visible') refreshIssues(openIssueId)
   })
 
   useEffect(() => {
@@ -480,7 +483,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
               }
               refreshList()
             }}
-            onRefresh={refreshIssues}
+            onRefresh={() => refreshIssues(shownIssue.id)}
             onGoLatest={goLatest}
             onClose={() => setParam('issue')}
           />
