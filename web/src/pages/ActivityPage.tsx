@@ -16,7 +16,7 @@ const toMessage = (error: unknown): ReactNode => {
 }
 
 // 서버는 사건 종류(type)만 보내고 문장은 화면이 만든다.
-const describe = ({ type, actorName, version, memberName }: ActivityItem) => {
+const describe = ({ type, actorName, version, memberName, issue }: ActivityItem) => {
   // 초대받은 사람은 아직 멤버가 아니라서 서버가 대상 이름을 보내지 않는다.
   if (type === 'INVITATION_CREATED') return `${actorName}님이 클라이언트를 초대했어요`
   // 수락한 사람이 곧 참여한 사람이라 이름은 한 번만 쓴다.
@@ -29,6 +29,10 @@ const describe = ({ type, actorName, version, memberName }: ActivityItem) => {
     if (!memberName) return `${actorName}님이 승인자를 비웠어요`
     return `${actorName}님이 ${memberName}님을 승인자로 정했어요`
   }
+  // 번호를 "쪽지" 앞에 둬서 조사가 늘 "쪽지를"이다. 번호 뒤에 조사를 붙이면 13은 "을", 14는 "를"로 갈린다.
+  const issueLabel = issue ? `#${issue.number} 쪽지` : '쪽지'
+  if (type === 'ISSUE_CREATED') return `${actorName}님이 ${issueLabel}를 남겼어요`
+  if (type === 'ISSUE_STARTED') return `${actorName}님이 ${issueLabel} 수정을 시작했어요`
   if (!version) return `${actorName}님이 버전을 게시했어요`
   // "초안을", "1차를"처럼 받침에 따라 조사가 다르다. 번호 0이 초안이다.
   const particle = version.number === 0 ? '을' : '를'
@@ -44,10 +48,11 @@ const ActivityRow = ({ projectId, item }: { projectId: string; item: ActivityIte
       </time>
     </>
   )
-  // 누르면 그 버전을 고른 검수실로 간다. 가리키는 버전이 없는 줄은 갈 곳이 없어 글만 보인다.
-  if (!item.version) return <div className={styles.row}>{content}</div>
+  // 누르면 그 쪽지나 그 버전을 연 검수실로 간다. 가리키는 것이 없는 줄은 갈 곳이 없어 글만 보인다.
+  const target = item.issue ? `issue=${item.issue.id}` : item.version && `version=${item.version.id}`
+  if (!target) return <div className={styles.row}>{content}</div>
   return (
-    <Link className={styles.row} to={`/projects/${projectId}?version=${item.version.id}`}>
+    <Link className={styles.row} to={`/projects/${projectId}?${target}`}>
       {content}
     </Link>
   )
