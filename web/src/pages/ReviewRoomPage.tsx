@@ -74,21 +74,34 @@ const VersionPicker = ({ versionId, versions, isCurrent, onSelectVersion }: Vers
 )
 
 type VersionViewProps = {
-  projectId: string
   version: VersionDetail
   // 왼쪽 목록에서 눌린 화면. 지난 버전 쪽지의 처음 사진을 보는 동안에는 없다.
   selected?: VersionScreen
   isCurrent: boolean
+  // 최신 버전으로 가는 주소의 ? 뒷부분. 고른 버전만 빼고 나머지(열어 둔 쪽지)는 그대로다.
+  latestSearch: string
+  onLeaveVersion: () => void
   onSelectScreen: (screenId: string) => void
   canvas: ReactNode
 }
 
 // 버전 하나의 틀이다: 위에 설명 줄, 아래에 왼쪽 화면 목록과 사진.
-const VersionView = ({ projectId, version, selected, isCurrent, onSelectScreen, canvas }: VersionViewProps) => (
+const VersionView = ({
+  version,
+  selected,
+  isCurrent,
+  latestSearch,
+  onLeaveVersion,
+  onSelectScreen,
+  canvas,
+}: VersionViewProps) => (
   <>
     {!isCurrent && (
       <p className={styles.notice}>
-        지난 버전이에요. 읽기만 할 수 있어요. <Link to={`/projects/${projectId}`}>최신 버전 보기</Link>
+        지난 버전이에요. 읽기만 할 수 있어요.{' '}
+        <Link to={{ search: latestSearch }} onClick={onLeaveVersion}>
+          최신 버전 보기
+        </Link>
       </p>
     )}
     <div className={styles.info}>
@@ -152,18 +165,34 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 쪽지를 보내는 중이거나, 보낸 쪽지가 저장됐는지 몰라 잠긴 동안이다. 이때는 임시 핀을 옮기지도 지우지도 않는다(기획 정할 것 12).
   const [composerLocked, setComposerLocked] = useState(false)
 
+  // 주소의 지금 값. 늦게 끝난 요청의 콜백(쪽지를 만든 뒤 그 쪽지 열기, 최신 버전으로 가기)이 주소를 바꿀 때 쓴다.
+  // 그런 콜백은 요청을 시작한 때의 주소를 기억하고 있어서(setSearchParams에 함수를 넘겨도 같다), 그대로 쓰면
+  // 기다리는 사이 연 다른 쪽지나 고른 버전을 옛 값으로 되돌린다.
+  const latestParams = useRef(searchParams)
+  useEffect(() => {
+    latestParams.current = searchParams
+  }, [searchParams])
+
+  // 쪽지 목록과 상세를 부를 때마다 번호를 매겨, 가장 나중에 시작한 요청의 응답만 받는다. 쪽지를 만들거나 바꾼 뒤에도
+  // 번호를 올려서, 그보다 먼저 시작한 요청의 응답(방금 만든 쪽지나 방금 바뀐 내용이 빠져 있다)이 늦게 와도 버린다.
+  // 상세는 가장 나중에 연 쪽지가 무엇인지도 함께 적는다. 늦게 끝난 요청의 콜백은 그 요청을 시작한 때의 쪽지를
+  // 기억하고 있어서, 그사이 다른 쪽지를 열었는지는 화면 상태가 아니라 이 값으로 확인한다.
+  const listRequest = useRef(0)
+  const detailRequest = useRef({ issueId: '', number: 0 })
+
   // 로그인 확인을 기다리지 않고 같이 부른다. 하나라도 실패하면 오류 하나로 보여 준다.
-  const loadRoom = useCallback(
-    () =>
-      Promise.all([getProject(id), listVersions(id), listIssues(id)]).then(
-        ([loadedProject, loadedVersions, loadedIssues]) => {
-          setProject(loadedProject)
-          setVersions(loadedVersions)
-          setIssues(loadedIssues)
-        },
-      ),
-    [id],
-  )
+  // 쪽지 목록에는 위의 번호를 함께 쓴다. 안 그러면 먼저 시작한 15초 새로 부르기의 늦은 응답이 여기서 받은 목록을
+  // 덮어써서, 방금 열린 쪽지가 목록에서 빠지고 그 상세와 쓰던 댓글이 사라진다.
+  const loadRoom = useCallback(() => {
+    const request = ++listRequest.current
+    return Promise.all([getProject(id), listVersions(id), listIssues(id)]).then(
+      ([loadedProject, loadedVersions, loadedIssues]) => {
+        setProject(loadedProject)
+        setVersions(loadedVersions)
+        if (listRequest.current === request) setIssues(loadedIssues)
+      },
+    )
+  }, [id])
 
   useEffect(() => {
     if (!isValidId) return
@@ -213,13 +242,6 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 서버가 주기 때문에, 상세를 부르기 전에 목록으로 거른다. 주소의 id는 대문자일 수 있어서 소문자로 맞춘다.
   const openIssue = issues.find((issue) => issue.id === requestedIssueId?.toLowerCase())
   const openIssueId = openIssue?.id
-
-  // 쪽지 목록과 상세를 부를 때마다 번호를 매겨, 가장 나중에 시작한 요청의 응답만 받는다. 쪽지를 만들거나 바꾼 뒤에도
-  // 번호를 올려서, 그보다 먼저 시작한 요청의 응답(방금 만든 쪽지나 방금 바뀐 내용이 빠져 있다)이 늦게 와도 버린다.
-  // 상세는 가장 나중에 연 쪽지가 무엇인지도 함께 적는다. 늦게 끝난 요청의 콜백은 그 요청을 시작한 때의 쪽지를
-  // 기억하고 있어서, 그사이 다른 쪽지를 열었는지는 화면 상태가 아니라 이 값으로 확인한다.
-  const listRequest = useRef(0)
-  const detailRequest = useRef({ issueId: '', number: 0 })
 
   // 쪽지를 처음 열 때와 새로 부를 때(15초마다, 댓글을 남긴 뒤, 쪽지 상태가 달라져 있을 때) 함께 쓴다.
   const loadIssue = useCallback((issueId: string) => {
@@ -306,16 +328,16 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const shownDraftPin =
     draftPin?.versionId === detail?.id && draftPin?.screenId === selected?.screenId ? draftPin : undefined
 
-  // 쓰기와 고르기에서 주소의 쪽지·버전을 바꾼다. 다른 값은 그대로 둔다.
-  const setParam = (name: 'issue' | 'version', value?: string) =>
-    setSearchParams((params) => {
-      const next = new URLSearchParams(params)
-      if (value === undefined) next.delete(name)
-      else next.set(name, value)
-      return next
-    })
+  // 쓰기와 고르기에서 주소의 쪽지·버전을 바꾼다. 다른 값은 그대로 둔다. 지금 주소(latestParams)에서 바꾼다.
+  const setParam = (name: 'issue' | 'version', value?: string) => {
+    const next = new URLSearchParams(latestParams.current)
+    if (value === undefined) next.delete(name)
+    else next.set(name, value)
+    latestParams.current = next
+    setSearchParams(next)
+  }
 
-  // 아직 보내지 않은 글의 핀은 화면이나 버전을 바꾸면 지운다(글은 쓰기 칸에 남는다). A 사진의 자리가 B 사진의 쪽지로
+  // 아직 보내지 않은 글의 핀은 화면이나 버전을 고르면 지운다(글은 쓰기 칸에 남는다. goLatest만 지우지 않고 감춘다). A 사진의 자리가 B 사진의 쪽지로
   // 저장되지 않게 하려는 것이다. 보내는 중이거나 잠긴 요청의 핀은 건드리지 않는다(기획 정할 것 11·12).
   const dropDraftPin = () => {
     if (!composerLocked) setDraftPin(undefined)
@@ -327,11 +349,16 @@ const ReviewRoom = ({ id }: { id: string }) => {
     dropDraftPin()
   }
 
-  const selectVersion = (nextId: string) => {
+  // 보던 버전을 떠날 때 한다. 버전 고르기와 지난 버전의 "최신 버전 보기" 링크가 함께 쓴다.
+  const leaveVersion = () => {
     // 처음에 저절로 보인 첫 화면도 "보던 화면"으로 붙잡아 둔다. 안 그러면 새 버전의 첫 화면으로 바뀐다.
     if (selected) setSelectedScreenId(selected.screenId)
     setShowIssuePlace(false)
     dropDraftPin()
+  }
+
+  const selectVersion = (nextId: string) => {
+    leaveVersion()
     setParam('version', nextId)
   }
 
@@ -358,10 +385,12 @@ const ReviewRoom = ({ id }: { id: string }) => {
 
   // 새 버전 409 뒤에 누른다. 프로젝트를 다시 불러 최신 버전을 알아내고 그 버전으로 간다. 쓰던 글은 그대로다.
   // 다시 불러오기가 실패하면 아무것도 바꾸지 않는다. 화면 전체를 오류로 바꾸면 쓰던 글이 사라진다. 한 번 더 누르면 된다.
+  // 응답이 온 뒤의 일은 누른 때의 화면 상태를 읽지 않는다. 기다리는 사이 다른 쪽지를 열거나 쪽지를 보냈을 수 있다.
+  // 그래서 임시 핀은 여기서 지우지 않는다. 핀은 찍은 버전의 사진에서만 보이고 보내져서(shownDraftPin),
+  // 새 버전으로 가면 저절로 빠진다.
   const goLatest = () => {
     loadRoom().then(
       () => {
-        dropDraftPin()
         setShowIssuePlace(false)
         setParam('version')
       },
@@ -527,12 +556,15 @@ const ReviewRoom = ({ id }: { id: string }) => {
       )
     }
     if (!detail) return <p className={styles.message}>불러오는 중이에요.</p>
+    const searchWithoutVersion = new URLSearchParams(searchParams)
+    searchWithoutVersion.delete('version')
     return (
       <VersionView
-        projectId={id}
         version={detail}
         selected={olderVersionOrigin ? undefined : selected}
         isCurrent={isCurrent}
+        latestSearch={searchWithoutVersion.toString()}
+        onLeaveVersion={leaveVersion}
         onSelectScreen={selectScreen}
         canvas={renderCanvas(detail)}
       />

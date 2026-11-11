@@ -79,7 +79,9 @@ describe('IssueComposer', () => {
     const { title, body, props } = renderComposer({ canSubmit: false })
     fillDraft()
 
-    expect(screen.getByText('읽기 전용인 버전을 보고 있어요. 검수 중인 최신 버전으로 돌아오면 남길 수 있어요.')).toBeTruthy()
+    expect(
+      screen.getByText('읽기 전용인 버전을 보고 있어요. 검수 중인 최신 버전으로 돌아오면 남길 수 있어요.'),
+    ).toBeTruthy()
     expect(screen.queryByRole('button', { name: '쪽지 남기기' })).toBeNull()
     expect(screen.queryByRole('button', { name: '다시 보내기' })).toBeNull()
     expect(title.disabled).toBe(false)
