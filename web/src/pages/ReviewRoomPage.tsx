@@ -17,6 +17,7 @@ import {
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { ProjectNotFound } from '../components/ProjectNotFound.tsx'
 import { useMe } from '../hooks/useMe.ts'
+import { PhotoCanvas } from './PhotoCanvas.tsx'
 import styles from './ReviewRoomPage.module.css'
 
 const toMessage = (error: unknown): ReactNode => {
@@ -104,26 +105,24 @@ const VersionView = ({ projectId, version, selected, isCurrent, onSelectScreen }
         ))}
       </ul>
       {selected && (
-        <div className={styles.canvas}>
-          <p className={styles.caption}>
-            {/* 검수실에는 게시한 버전만 와서 번호가 늘 있다. 타입이 null을 허용해서 확인만 한다. */}
-            <span>
-              {version.number !== null && `${versionLabel(version.number)} · `}
-              {screenLabel(selected)}
-            </span>
-            <span>
-              사진 {version.screens.indexOf(selected) + 1} / {version.screens.length}
-            </span>
-          </p>
-          <div className={styles.photo}>
-            <img
-              src={assetUrl(selected.asset.id)}
-              width={selected.asset.width}
-              height={selected.asset.height}
-              alt={screenLabel(selected)}
-            />
-          </div>
-        </div>
+        <PhotoCanvas
+          caption={
+            <>
+              {/* 검수실에는 게시한 버전만 와서 번호가 늘 있다. 타입이 null을 허용해서 확인만 한다. */}
+              <span>
+                {version.number !== null && `${versionLabel(version.number)} · `}
+                {screenLabel(selected)}
+              </span>
+              <span>
+                사진 {version.screens.indexOf(selected) + 1} / {version.screens.length}
+              </span>
+            </>
+          }
+          asset={selected.asset}
+          alt={screenLabel(selected)}
+          pins={[]}
+          onSelectPin={() => {}}
+        />
       )}
     </div>
   </>
@@ -266,7 +265,12 @@ const ReviewRoom = ({ id }: { id: string }) => {
         <div className={styles.heading}>
           <h1>{project.name}</h1>
           {detail && (
-            <VersionPicker versionId={detail.id} versions={versions} isCurrent={isCurrent} onSelectVersion={selectVersion} />
+            <VersionPicker
+              versionId={detail.id}
+              versions={versions}
+              isCurrent={isCurrent}
+              onSelectVersion={selectVersion}
+            />
           )}
         </div>
         <nav className={styles.links}>

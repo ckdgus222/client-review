@@ -180,33 +180,6 @@
   background: var(--color-canvas);
 }
 
-/* 흰 사진이 바탕과 섞이지 않게 회색 바탕 위에 둔다. */
-.canvas {
-  padding: 0 var(--gutter) var(--gutter);
-  background: var(--color-canvas);
-}
-
-.caption {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-3) 0;
-  font-size: var(--font-size-sm);
-}
-
-.photo {
-  background: var(--color-surface);
-}
-
-/* 판보다 큰 사진은 폭에 맞춰 줄인다. width·height 속성은 사진이 오기 전에 자리를 잡아 화면이 덜컹거리지 않게 한다. */
-.photo img {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  margin: 0 auto;
-}
-
 /* 안내·오류·불러오는 중 문구 */
 .message {
   display: flex;

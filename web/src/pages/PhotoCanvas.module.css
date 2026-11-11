@@ -1,0 +1,96 @@
+/* 흰 사진이 바탕과 섞이지 않게 회색 바탕 위에 둔다. */
+.canvas {
+  padding: 0 var(--gutter) var(--gutter);
+  background: var(--color-canvas);
+}
+
+.caption {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  font-size: var(--font-size-sm);
+}
+
+.notice {
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  border-left: 2px solid var(--color-review-selected);
+  background: var(--color-surface);
+  font-size: var(--font-size-sm);
+}
+
+.photo {
+  background: var(--color-surface);
+}
+
+/* 핀의 기준 상자다. 사진과 정확히 같은 크기라서 핀의 퍼센트 위치가 사진의 비율 위치가 된다. */
+.frame {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+/* 판보다 큰 사진은 폭에 맞춰 줄인다. width·height 속성은 사진이 오기 전에 자리를 잡아 화면이 덜컹거리지 않게 한다. */
+.frame img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.frame img[data-placeable='true'] {
+  cursor: crosshair;
+}
+
+/* 누르는 영역은 44px, 보이는 동그라미는 28px다. 가운데가 핀 자리에 오게 반만큼 당긴다. */
+.pin {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+}
+
+.pin > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-accent);
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 고른 쪽지의 핀. 색만으로 구분하지 않게 바탕을 채우고 테두리를 한 겹 더 그린다. */
+.pin[aria-pressed='true'] > span {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  box-shadow:
+    0 0 0 2px var(--color-surface),
+    0 0 0 3px var(--color-accent);
+}
+
+/* 아직 저장하지 않은 자리. 점선 테두리로 저장된 핀과 구분한다. 누를 수 없다. */
+.draft {
+  cursor: default;
+  pointer-events: none;
+}
+
+.draft > span {
+  border-style: dashed;
+  border-color: var(--color-review-selected);
+  color: var(--color-review-selected);
+}
