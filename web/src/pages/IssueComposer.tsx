@@ -11,8 +11,10 @@ const BODY_MAX = 4000
 
 type IssueComposerProps = {
   projectId: string
-  // 지금 보고 있는 버전(현재 버전). 보내는 순간의 값이 요청에 들어간다.
+  // 지금 보고 있는 버전. 보내는 순간의 값이 요청에 들어간다.
   versionId: string
+  // 지금 보고 있는 버전에 쓸 수 있는가. 쓰다가 지난 버전을 골라 보면 글은 남기고 보내기만 막는다.
+  canSubmit: boolean
   // 사진에서 고른 자리. 없으면 위치 없는 쪽지다. label은 "상품 상세 · PC" 같은 화면 이름이다.
   pin?: { screenId: string; xRatio: number; yRatio: number; label: string }
   onClearPin: () => void
@@ -26,6 +28,7 @@ type IssueComposerProps = {
 export const IssueComposer = ({
   projectId,
   versionId,
+  canSubmit,
   pin,
   onClearPin,
   onCancel,
@@ -60,6 +63,7 @@ export const IssueComposer = ({
       void retry()
       return
     }
+    if (!canSubmit) return
     const trimmed = title.trim()
     if (trimmed.length < 1 || trimmed.length > TITLE_MAX) {
       setTitleError(`제목은 1~${TITLE_MAX}자로 써 주세요`)
@@ -103,7 +107,8 @@ export const IssueComposer = ({
         value={title}
         onChange={setTitle}
         error={titleError}
-        disabled={sending || isLocked}
+        disabled={sending}
+        readOnly={isLocked}
       />
       <div className={styles.field}>
         <label htmlFor={bodyId}>내용</label>
@@ -122,13 +127,19 @@ export const IssueComposer = ({
         </span>
       </div>
       {error && <SubmitErrorText error={error} locked={isLocked} onGoLatest={onGoLatest} />}
+      {!canSubmit && !isLocked && (
+        <p className={styles.hint}>읽기 전용인 버전을 보고 있어요. 검수 중인 최신 버전으로 돌아오면 남길 수 있어요.</p>
+      )}
       <div className={styles.actions}>
         <Button variant="secondary" onClick={handleCancel} disabled={sending}>
           취소
         </Button>
-        <Button type="submit" disabled={sending}>
-          {isLocked ? '다시 보내기' : '쪽지 남기기'}
-        </Button>
+        {/* 이미 보내서 잠긴 요청은 읽기 전용보다 앞선다. 지난 버전을 골라 봐도 다시 보내기는 남는다. */}
+        {(canSubmit || isLocked) && (
+          <Button type="submit" disabled={sending}>
+            {isLocked ? '다시 보내기' : '쪽지 남기기'}
+          </Button>
+        )}
       </div>
     </form>
   )

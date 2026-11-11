@@ -88,6 +88,7 @@ beforeEach(() => {
   responses.set('/api/auth/me', () => Response.json(user))
   responses.set(projectUrl, () => Response.json(project))
   responses.set(activityUrl, () => Response.json(items))
+  responses.set(`${projectUrl}/issues`, () => Response.json([]))
   responses.set(nextProjectUrl, () => Response.json(nextProject))
   responses.set(`${nextProjectUrl}/activity`, () => Response.json([]))
   fetchMock.mockReset().mockImplementation(async (input) => {

@@ -4,6 +4,12 @@ import App from './App.tsx'
 import { getVersion, listVersions } from './api/versions.ts'
 import { getMe } from './api/auth.ts'
 import { getProject, listProjects, listScreens } from './api/projects.ts'
+import { listIssues } from './api/issues.ts'
+
+vi.mock('./api/issues.ts', async () => {
+  const actual = await vi.importActual<typeof import('./api/issues.ts')>('./api/issues.ts')
+  return { ...actual, listIssues: vi.fn() }
+})
 
 vi.mock('./api/auth.ts', async () => {
   const actual = await vi.importActual<typeof import('./api/auth.ts')>('./api/auth.ts')
@@ -28,6 +34,7 @@ const user = {
 }
 
 beforeEach(() => {
+  vi.mocked(listIssues).mockReset().mockResolvedValue([])
   vi.mocked(listVersions).mockReset().mockResolvedValue([])
   vi.mocked(getVersion).mockReset()
   vi.mocked(getMe).mockReset()

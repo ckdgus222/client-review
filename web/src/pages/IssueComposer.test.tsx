@@ -35,6 +35,7 @@ const renderComposer = (overrides: Partial<ComponentProps<typeof IssueComposer>>
   const props = {
     projectId,
     versionId,
+    canSubmit: true,
     onClearPin: vi.fn(),
     onCancel: vi.fn(),
     onCreated: vi.fn(),
@@ -64,6 +65,133 @@ beforeEach(() => {
 })
 
 describe('IssueComposer', () => {
+  it('읽기 전용이면 안내와 취소만 보이고 유효한 글도 폼 제출로 보내지 않는다', async () => {
+    const { title, body, props } = renderComposer({ canSubmit: false })
+    fillDraft()
+
+    expect(screen.getByText('읽기 전용인 버전을 보고 있어요. 검수 중인 최신 버전으로 돌아오면 남길 수 있어요.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '쪽지 남기기' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '다시 보내기' })).toBeNull()
+    expect(title.disabled).toBe(false)
+    expect(title.readOnly).toBe(false)
+    expect(body.disabled).toBe(false)
+    expect(body.readOnly).toBe(false)
+
+    // Enter로 발생하는 폼 제출도 버튼 유무와 별개로 막아야 한다.
+    await act(async () => {
+      fireEvent.submit(title.form!)
+    })
+
+    expect(createIssue).not.toHaveBeenCalled()
+    expect(props.onCreated).not.toHaveBeenCalled()
+    expect(props.onLockChange).not.toHaveBeenCalledWith(true)
+    expect(title.value).toBe(saved.title)
+    expect(body.value).toBe(saved.body)
+    fireEvent.click(screen.getByRole('button', { name: '취소' }))
+    expect(props.onCancel).toHaveBeenCalledExactlyOnceWith()
+  })
+
+  it('쓰다가 읽기 전용이 되어도 글을 고칠 수 있고 최신 버전으로 돌아오면 고친 글을 보낸다', async () => {
+    const { props, rerender, title, body } = renderComposer({ pin })
+    fillDraft()
+    rerender(<IssueComposer {...props} canSubmit={false} versionId="past-version" pin={undefined} />)
+
+    expect(title.value).toBe(saved.title)
+    expect(body.value).toBe(saved.body)
+    expect(title.disabled).toBe(false)
+    expect(title.readOnly).toBe(false)
+    expect(body.disabled).toBe(false)
+    expect(body.readOnly).toBe(false)
+    expect(screen.queryByRole('button', { name: '쪽지 남기기' })).toBeNull()
+    fillDraft('고친 제목', '고친 내용')
+    await act(async () => {
+      fireEvent.submit(title.form!)
+    })
+    expect(createIssue).not.toHaveBeenCalled()
+
+    rerender(<IssueComposer {...props} pin={undefined} />)
+    expect(screen.queryByText(/읽기 전용인 버전을 보고 있어요/)).toBeNull()
+    expect(title.value).toBe('고친 제목')
+    expect(body.value).toBe('고친 내용')
+    await send()
+
+    expect(createIssue).toHaveBeenCalledExactlyOnceWith(projectId, {
+      requestId: expect.any(String),
+      versionId,
+      title: '고친 제목',
+      body: '고친 내용',
+      pin: undefined,
+    })
+  })
+
+  it.each(['버튼', '폼 제출'])('잠긴 뒤 읽기 전용이어도 %s로 처음 요청을 다시 보낼 수 있다', async (method) => {
+    vi.mocked(createIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const { props, rerender, title, body } = renderComposer({ pin })
+    fillDraft()
+    await send()
+    const firstRequest = structuredClone(vi.mocked(createIssue).mock.calls[0])
+
+    rerender(<IssueComposer {...props} canSubmit={false} versionId="past-version" pin={undefined} />)
+
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '다시 보내기' }).disabled).toBe(false)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '취소' }).disabled).toBe(false)
+    expect(screen.queryByRole('button', { name: '쪽지 남기기' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '위치 없이 쓰기' })).toBeNull()
+    expect(screen.queryByText(/읽기 전용인 버전을 보고 있어요/)).toBeNull()
+    expect(title.value).toBe(saved.title)
+    expect(title.readOnly).toBe(true)
+    expect(title.disabled).toBe(false)
+    expect(body.value).toBe(saved.body)
+    expect(body.readOnly).toBe(true)
+    expect(body.disabled).toBe(false)
+
+    await act(async () => {
+      if (method === '폼 제출') {
+        fireEvent.submit(title.form!)
+        return
+      }
+      fireEvent.click(screen.getByRole('button', { name: '다시 보내기' }))
+    })
+
+    expect(createIssue).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createIssue).mock.calls[1]).toEqual(firstRequest)
+    expect(props.onCreated).toHaveBeenCalledExactlyOnceWith(saved)
+    expect(props.onLockChange).toHaveBeenLastCalledWith(false)
+    expect(title.readOnly).toBe(false)
+    expect(body.readOnly).toBe(false)
+    expect(screen.queryByRole('button', { name: '다시 보내기' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '쪽지 남기기' })).toBeNull()
+  })
+
+  it.each(['취소', '409'])('읽기 전용에서 %s로 잠금이 풀려도 새 요청은 보내지 않는다', async (action) => {
+    vi.mocked(createIssue)
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    const { props, rerender, title, body } = renderComposer({ pin })
+    fillDraft()
+    await send()
+    rerender(<IssueComposer {...props} canSubmit={false} versionId="past-version" pin={undefined} />)
+
+    await send(action === '취소' ? '취소' : '다시 보내기')
+
+    expect(props.onCancel).toHaveBeenCalledTimes(action === '취소' ? 1 : 0)
+    expect(props.onLockChange).toHaveBeenLastCalledWith(false)
+    expect(title.readOnly).toBe(false)
+    expect(title.disabled).toBe(false)
+    expect(body.readOnly).toBe(false)
+    expect(title.value).toBe(saved.title)
+    expect(body.value).toBe(saved.body)
+    expect(screen.queryByRole('button', { name: '다시 보내기' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '쪽지 남기기' })).toBeNull()
+    expect(screen.getByText(/읽기 전용인 버전을 보고 있어요/)).toBeTruthy()
+
+    await act(async () => {
+      fireEvent.submit(title.form!)
+    })
+    expect(createIssue).toHaveBeenCalledTimes(action === '취소' ? 1 : 2)
+    expect(props.onCreated).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['빈 제목', ''],
     ['공백뿐인 제목', ' \t  '],
@@ -207,7 +335,8 @@ describe('IssueComposer', () => {
 
     expect(title.value).toBe(saved.title)
     expect(body.value).toBe(saved.body)
-    expect(title.disabled).toBe(true)
+    expect(title.disabled).toBe(false)
+    expect(title.readOnly).toBe(true)
     expect(body.readOnly).toBe(true)
     expect(body.disabled).toBe(false)
     expect(screen.queryByRole('button', { name: '위치 없이 쓰기' })).toBeNull()
@@ -229,6 +358,7 @@ describe('IssueComposer', () => {
     expect(props.onCreated).toHaveBeenCalledExactlyOnceWith(saved)
     expect(props.onLockChange).toHaveBeenLastCalledWith(false)
     expect(title.disabled).toBe(false)
+    expect(title.readOnly).toBe(false)
     expect(body.readOnly).toBe(false)
     expect(screen.queryByRole('alert')).toBeNull()
   })
@@ -275,7 +405,8 @@ describe('IssueComposer', () => {
     await send('다시 보내기')
 
     expect(screen.getByRole('alert')).toBeTruthy()
-    expect(title.disabled).toBe(true)
+    expect(title.disabled).toBe(false)
+    expect(title.readOnly).toBe(true)
     expect(body.readOnly).toBe(true)
     expect(title.value).toBe(saved.title)
     expect(body.value).toBe(saved.body)
@@ -309,6 +440,7 @@ describe('IssueComposer', () => {
       await send('다시 보내기')
 
       expect(title.disabled).toBe(false)
+      expect(title.readOnly).toBe(false)
       expect(body.readOnly).toBe(false)
       expect(title.value).toBe(saved.title)
       expect(body.value).toBe(saved.body)
@@ -349,6 +481,7 @@ describe('IssueComposer', () => {
 
       expect(screen.getByRole('alert')).toBeTruthy()
       expect(title.disabled).toBe(false)
+      expect(title.readOnly).toBe(false)
       expect(body.readOnly).toBe(false)
       expect(title.value).toBe(saved.title)
       expect(body.value).toBe(saved.body)
@@ -390,6 +523,7 @@ describe('IssueComposer', () => {
     expect(props.onCancel).toHaveBeenCalledExactlyOnceWith()
     expect(props.onLockChange).toHaveBeenLastCalledWith(false)
     expect(title.disabled).toBe(false)
+    expect(title.readOnly).toBe(false)
     expect(body.readOnly).toBe(false)
     expect(screen.queryByRole('alert')).toBeNull()
     expect(createIssue).toHaveBeenCalledTimes(locked ? 1 : 0)

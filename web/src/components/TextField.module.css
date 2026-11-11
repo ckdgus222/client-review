@@ -25,6 +25,11 @@
   cursor: not-allowed;
 }
 
+/* 읽기 전용: 고칠 수 없다는 것이 보이게 바탕만 회색으로 바꾼다. 글자는 읽을 수 있게 그대로 둔다. */
+.input:read-only {
+  background: var(--color-disabled-bg);
+}
+
 /* 틀렸다는 상태를 aria-invalid 하나에만 두고, 모양도 그 속성을 보고 바꾼다. */
 .input[aria-invalid='true'] {
   border-color: var(--color-danger);

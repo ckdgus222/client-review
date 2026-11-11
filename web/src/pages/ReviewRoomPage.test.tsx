@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { getMe, type Me } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
+import { getIssue, listIssues } from '../api/issues.ts'
 import { listMembers, type Member, type MemberList } from '../api/members.ts'
 import { getProject, type ProjectDetail } from '../api/projects.ts'
 import { getVersion, listVersions, type VersionDetail, type VersionSummary } from '../api/versions.ts'
@@ -21,6 +22,17 @@ vi.mock('../api/projects.ts', async () => {
 })
 
 vi.mock('../api/members.ts', () => ({ listMembers: vi.fn() }))
+
+vi.mock('../api/issues.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/issues.ts')>()),
+  listIssues: vi.fn(),
+  getIssue: vi.fn(),
+  createIssue: vi.fn(),
+  createComment: vi.fn(),
+  startIssue: vi.fn(),
+  attachIssuePhoto: vi.fn(),
+  removeIssuePhoto: vi.fn(),
+}))
 
 vi.mock('../api/versions.ts', async () => {
   const actual = await vi.importActual<typeof import('../api/versions.ts')>('../api/versions.ts')
@@ -150,6 +162,8 @@ const renderReview = (path = `/projects/${project.id}`, basename = '/') => {
 }
 
 beforeEach(() => {
+  vi.mocked(listIssues).mockReset().mockResolvedValue([])
+  vi.mocked(getIssue).mockReset()
   vi.mocked(getMe).mockReset().mockResolvedValue(user)
   vi.mocked(getProject).mockReset().mockResolvedValue(project)
   vi.mocked(listMembers).mockReset().mockResolvedValue({ members: [], invitations: [] })
