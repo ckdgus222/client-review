@@ -1,0 +1,10 @@
+/* 문장 안의 버튼을 링크처럼 보인다. 다른 주소로 가는 것이 아니라 화면 상태를 바꾸는 동작이라 버튼이다. */
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
