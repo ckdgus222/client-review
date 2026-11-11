@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -727,17 +727,25 @@ describe('쪽지 API (e2e)', () => {
     }
   });
 
-  it.each(['쪽지 쓰기', '수정 시작', '댓글'] as const)(
+  it.each(['쪽지 쓰기', '수정 시작', '댓글', '참고 사진'] as const)(
     '현재 버전이 승인된 뒤 %s는 409 VERSION_NOT_IN_REVIEW이고 아무것도 바뀌지 않는다',
     async (operation) => {
       const created = await createIssue(issueInput()).expect(201);
       await prisma.deliveryVersion.update({ where: { id: versionId }, data: { status: 'APPROVED' } });
       const before = await readIssueState();
       const commentsBefore = await prisma.comment.findMany({ orderBy: { id: 'asc' } });
+      const attachmentsBefore = await prisma.issueAttachment.findMany({ orderBy: { id: 'asc' } });
+      const assetsBefore = await prisma.asset.findMany({ orderBy: { id: 'asc' } });
+      const filesBefore = (await readdir(directory, { recursive: true, withFileTypes: true }))
+        .filter((entry) => entry.isFile())
+        .map((entry) => join(entry.parentPath, entry.name))
+        .sort();
       const requests = {
         '쪽지 쓰기': () => createIssue(issueInput()),
         '수정 시작': () => post(`/api/issues/${created.body.id}/start`).send({ versionId }),
-        댓글: () => post(`/api/issues/${created.body.id}/comments`).send({ versionId, requestId: randomUUID(), body: '댓글' }),
+        댓글: () =>
+          post(`/api/issues/${created.body.id}/comments`).send({ versionId, requestId: randomUUID(), body: '댓글' }),
+        '참고 사진': () => post(`/api/issues/${created.body.id}/attachments`).attach('file', photo, 'reference.png'),
       };
       const pending = requests[operation]();
       await pending.expect(409).expect({
@@ -747,9 +755,71 @@ describe('쪽지 API (e2e)', () => {
       });
       expect(await readIssueState()).toEqual(before);
       expect(await prisma.comment.findMany({ orderBy: { id: 'asc' } })).toEqual(commentsBefore);
+      expect(await prisma.asset.findMany({ orderBy: { id: 'asc' } })).toEqual(assetsBefore);
+      expect(await prisma.issueAttachment.findMany({ orderBy: { id: 'asc' } })).toEqual(attachmentsBefore);
+      expect(
+        (await readdir(directory, { recursive: true, withFileTypes: true }))
+          .filter((entry) => entry.isFile())
+          .map((entry) => join(entry.parentPath, entry.name))
+          .sort(),
+      ).toEqual(filesBefore);
       expect((await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: versionId } })).status).toBe('APPROVED');
     },
   );
+
+  it('철회된 사람의 쪽지·댓글은 그 이름으로 남고 다시 들어오면 isMine이 참이며 참고 사진을 붙일 수 있다', async () => {
+    vi.stubEnv('APP_URL', 'https://review.example.com');
+    const created = await createIssue(issueInput(), clientCookie).expect(201);
+    await post(`/api/issues/${created.body.id}/comments`, clientCookie)
+      .send({ versionId, requestId: randomUUID(), body: '예전 댓글' })
+      .expect(201);
+    const before = await get(`/api/issues/${created.body.id}`, clientCookie).expect(200);
+    const issueBefore = await prisma.issue.findUniqueOrThrow({ where: { id: created.body.id } });
+    const commentsBefore = await prisma.comment.findMany({ where: { issueId: created.body.id } });
+    const author = await prisma.user.findUniqueOrThrow({ where: { email: 'client@example.com' } });
+    const member = await prisma.projectMember.findUniqueOrThrow({
+      where: { projectId_userId: { projectId, userId: author.id } },
+    });
+    await post(`/api/members/${member.id}/revoke`).expect(204);
+    await get(`/api/issues/${created.body.id}`, clientCookie).expect(404).expect(issueNotFoundBody);
+    await get(`/api/issues/${created.body.id}`)
+      .expect(200)
+      .expect({ ...before.body, isMine: false });
+    const list = await get(`/api/projects/${projectId}/issues`).expect(200);
+    expect(list.body).toEqual([
+      expect.objectContaining({ id: created.body.id, authorName: '클라이언트', commentCount: 1 }),
+    ]);
+    expect(before.body.comments).toEqual([expect.objectContaining({ authorName: '클라이언트', body: '예전 댓글' })]);
+    await post(`/api/issues/${created.body.id}/attachments`, clientCookie)
+      .attach('file', photo, 'reference.png')
+      .expect(404)
+      .expect(issueNotFoundBody);
+    const invitation = await post(`/api/projects/${projectId}/invitations`).send({ email: author.email }).expect(201);
+    const token = new URL(invitation.body.link).pathname.split('/').at(-1)!;
+    await post('/api/invitations/accept', clientCookie).send({ token }).expect(200).expect({ projectId });
+    await get(`/api/issues/${created.body.id}`, clientCookie).expect(200).expect(before.body);
+    const attached = await post(`/api/issues/${created.body.id}/attachments`, clientCookie)
+      .attach('file', photo, 'reference.png')
+      .expect(201);
+    expect(attached.body).toEqual({
+      ...before.body,
+      attachments: [{ id: expect.any(String), assetId: expect.any(String), width: 32, height: 24 }],
+    });
+    await get(`/api/issues/${created.body.id}`, clientCookie).expect(200).expect(attached.body);
+    expect(await prisma.issue.count()).toBe(1);
+    expect(await prisma.comment.count()).toBe(1);
+    expect(await prisma.issueAttachment.count({ where: { issueId: created.body.id } })).toBe(1);
+    expect(await prisma.issue.findUniqueOrThrow({ where: { id: created.body.id } })).toMatchObject({
+      authorId: author.id,
+    });
+    expect(await prisma.comment.findMany()).toEqual([expect.objectContaining({ authorId: author.id })]);
+    expect(await prisma.issue.findUniqueOrThrow({ where: { id: created.body.id } })).toEqual(issueBefore);
+    expect(await prisma.comment.findMany({ where: { issueId: created.body.id } })).toEqual(commentsBefore);
+    expect(await prisma.projectMember.findUniqueOrThrow({ where: { id: member.id } })).toMatchObject({
+      userId: author.id,
+      revokedAt: null,
+    });
+  });
 
   it('쪽지 작성과 수정 시작은 일지에 쪽지 번호와 함께 남고 댓글은 남지 않는다', async () => {
     const created = await createIssue(issueInput(), clientCookie).expect(201);
