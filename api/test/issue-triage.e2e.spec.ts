@@ -562,6 +562,8 @@ describe('쪽지 정리 API (e2e)', () => {
     ['배열 분류', { category: ['BUG'] }],
     ['숫자 범위', { scope: 0 }],
     ['2026-02-30', { dueDate: '2026-02-30' }],
+    ['0202-11-15', { dueDate: '0202-11-15' }],
+    ['0999-05-05', { dueDate: '0999-05-05' }],
     ['2026-13-01', { dueDate: '2026-13-01' }],
     ['2027-02-29', { dueDate: '2027-02-29' }],
     ['1900-02-29', { dueDate: '1900-02-29' }],
@@ -614,6 +616,33 @@ describe('쪽지 정리 API (e2e)', () => {
       expect(list.body).toEqual([
         expect.objectContaining({ id: issueId, category: 'BUG', scope: 'IN_SCOPE', dueDate }),
       ]);
+    }
+  });
+
+  it('가장 이른 해와 가장 늦은 해의 마감일도 보낸 날짜 그대로 저장된다', async () => {
+    const cases = [
+      { dueDate: '1000-01-01', comment: '마감일: 없음 → 1000년 1월 1일' },
+      { dueDate: '9999-12-31', comment: '마감일: 없음 → 9999년 12월 31일' },
+    ];
+    for (const { dueDate, comment } of cases) {
+      const issue = await createIssue(issueInput(), clientCookie).expect(201);
+      expect(issue.body.dueDate).toBeNull();
+      const targetIssueId = issue.body.id;
+      const response = await update({ dueDate }, cookie, targetIssueId).expect(200);
+      expect(response.body).toMatchObject({ id: targetIssueId, dueDate, commentCount: 1 });
+      expect(response.body.comments).toEqual([expect.objectContaining({ body: comment, authorName: '개발자' })]);
+      expect(await prisma.issue.findUniqueOrThrow({ where: { id: targetIssueId } })).toMatchObject({
+        dueDate: new Date(`${dueDate}T00:00:00.000Z`),
+      });
+      expect(
+        await prisma.$queryRaw<{ dueDate: string }[]>`
+        SELECT due_date::text AS "dueDate" FROM issues WHERE id = ${targetIssueId}::uuid
+      `,
+      ).toEqual([{ dueDate }]);
+      expect(await prisma.comment.findMany({ where: { issueId: targetIssueId } })).toEqual([
+        expect.objectContaining({ body: comment, authorId: developerId, versionId, requestId: null }),
+      ]);
+      await get(`/api/issues/${targetIssueId}`).expect(200).expect(response.body);
     }
   });
 

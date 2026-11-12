@@ -43,6 +43,30 @@ describe('UpdateIssueDto', () => {
     await expect(validate(changes)).resolves.toMatchObject({ versionId, ...changes });
   });
 
+  describe.each(['UTC', 'Asia/Seoul', 'America/Los_Angeles'])('서버 시간대가 %s일 때', (timezone) => {
+    beforeEach(() => {
+      vi.stubEnv('TZ', timezone);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it.each(['0202-11-15', '0999-05-05', '0100-01-01', '0000-01-01', '0001-01-01', '1000-02-30'])(
+      'dueDate %s는 422로 거부한다',
+      async (dueDate) => {
+        await expect(validate({ dueDate })).rejects.toMatchObject({ status: 422 });
+      },
+    );
+
+    it.each(['1000-01-01', '1999-12-31', '9999-12-31', '2028-02-29'])(
+      'dueDate %s는 보낸 날짜 그대로 통과한다',
+      async (dueDate) => {
+        await expect(validate({ dueDate })).resolves.toMatchObject({ versionId, dueDate });
+      },
+    );
+  });
+
   it.each([
     ['없음', undefined],
     ['null', null],

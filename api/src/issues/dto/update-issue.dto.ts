@@ -20,8 +20,10 @@ export class UpdateIssueDto {
 
   // "YYYY-MM-DD" 모양이면서 달력에 있는 날짜다. null은 마감일을 지운다는 뜻이라 검사하지 않는다.
   // Matches가 모양을 보고(시각이 붙은 글자와 숫자를 거부), IsISO8601(strict)가 2월 30일 같은 없는 날짜를 거부한다.
+  // 해는 1000~9999만 받는다. 그보다 작은 해는 IsISO8601이 서버의 현지 시각으로 읽어서 서버 시간대에 따라 통과하기도
+  // 거절되기도 한다. 통과하면 잘못 친 해(0202)가 지울 수 없는 자동 댓글로 남는다.
   @ValidateIf((_, value) => value !== undefined && value !== null)
-  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @Matches(/^[1-9]\d{3}-\d{2}-\d{2}$/)
   @IsISO8601({ strict: true })
   dueDate?: string | null;
 }

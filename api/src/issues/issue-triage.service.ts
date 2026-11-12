@@ -11,9 +11,11 @@ export type IssueChange = {
   dueDate?: string | null;
 };
 
+// 자동 댓글에 적는 글자. 화면(web/src/api/issues.ts)의 범위 이름과 같아야 한다. 바꾸면 함께 바꾼다.
 const SCOPE_LABELS: Record<IssueScope, string> = { IN_SCOPE: '하자 수정', OUT_OF_SCOPE: '추가 요청' };
 
 // 받은 글자를 그대로 나눠 적는다. Date로 바꿔 계산하지 않아서 시간대에 따라 하루가 밀리지 않는다.
+// 화면은 올해의 해를 빼고 보여 주지만, 댓글은 나중에 읽는 기록이라 늘 해를 적는다.
 const dueDateLabel = (date: string | null) => {
   if (date === null) return '없음';
   const [year, month, day] = date.split('-').map(Number);
@@ -35,10 +37,12 @@ export class IssueTriageService {
 
       // 칸마다 권한을 먼저 다 본다. 하나라도 안 되면 바꿀 수 있는 칸도 저장하지 않는다.
       const isDeveloper = role === ProjectRole.DEVELOPER;
-      if (!isDeveloper && (change.scope !== undefined || change.dueDate !== undefined)) {
-        throw new ForbiddenException('개발자만 할 수 있어요');
-      }
-      if (!isDeveloper && authorId !== userId) throw new ForbiddenException('쓴 사람과 개발자만 할 수 있어요');
+      const isAuthor = authorId === userId;
+      const changesScopeOrDueDate = change.scope !== undefined || change.dueDate !== undefined;
+      // 범위와 마감일은 개발자만 바꾼다.
+      if (changesScopeOrDueDate && !isDeveloper) throw new ForbiddenException('개발자만 할 수 있어요');
+      // 분류는 개발자와 쓴 사람이 바꾼다. 위를 지난 개발자 아닌 사람의 요청에는 분류만 남아 있다.
+      if (!isDeveloper && !isAuthor) throw new ForbiddenException('쓴 사람과 개발자만 할 수 있어요');
       const versionId = await this.issues.requireVersionInReview(tx, projectId, change.versionId);
 
       // 잠근 뒤에 읽은 값과 비교해서 달라진 칸만 고른다. 같은 값이면 쪽지도 댓글도 쓰지 않아서,
