@@ -36,6 +36,7 @@ const renderComposer = (overrides: Partial<ComponentProps<typeof IssueComposer>>
     projectId,
     versionId,
     canSubmit: true,
+    versionLoaded: true,
     onClearPin: vi.fn(),
     onCancel: vi.fn(),
     onCreated: vi.fn(),
@@ -75,6 +76,69 @@ beforeEach(() => {
 })
 
 describe('IssueComposer', () => {
+  it.each([
+    [false, '아직 사진을 불러오지 못했어요. 지금은 쪽지를 남길 수 없어요.'],
+    [true, '읽기 전용인 버전을 보고 있어요. 검수 중인 최신 버전으로 돌아오면 남길 수 있어요.'],
+  ] as const)(
+    '쓸 수 없고 versionLoaded=%s이면 사진 상태에 맞는 안내만 보이며 글은 남는다',
+    async (versionLoaded, message) => {
+      const { props, rerender, title, body } = renderComposer()
+      fillDraft()
+      rerender(<IssueComposer {...props} canSubmit={false} versionLoaded={versionLoaded} />)
+
+      expect(screen.getByText(message)).toBeTruthy()
+      expect(screen.queryByText(versionLoaded ? /아직 사진을 불러오지 못했어요/ : /읽기 전용/)).toBeNull()
+      expect(screen.queryByRole('button', { name: '쪽지 남기기' })).toBeNull()
+      await act(async () => fireEvent.submit(title.form!))
+      expect(createIssue).not.toHaveBeenCalled()
+      expect(title.value).toBe(saved.title)
+      expect(body.value).toBe(saved.body)
+
+      rerender(<IssueComposer {...props} />)
+      expect(screen.queryByText(/아직 사진을 불러오지 못했어요|읽기 전용/)).toBeNull()
+      await send()
+      expect(createIssue).toHaveBeenCalledExactlyOnceWith(
+        projectId,
+        expect.objectContaining({ title: saved.title, body: saved.body }),
+      )
+    },
+  )
+
+  it.each([false, true])('쓸 수 있으면 versionLoaded=%s여도 사진 대기와 읽기 전용 안내가 없다', (versionLoaded) => {
+    renderComposer({ versionLoaded })
+    expect(screen.queryByText(/아직 사진을 불러오지 못했어요|읽기 전용/)).toBeNull()
+    expect(screen.getByRole('button', { name: '쪽지 남기기' })).toBeTruthy()
+  })
+
+  it.each(['다시 보내기', '취소'])('사진을 못 불러와도 잠긴 쪽지는 안내보다 앞서고 %s가 가능하다', async (action) => {
+    vi.mocked(createIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const { props, rerender, title, body } = renderComposer({ pin })
+    fillDraft()
+    await send()
+    const firstRequest = structuredClone(vi.mocked(createIssue).mock.calls[0])
+    rerender(
+      <IssueComposer {...props} canSubmit={false} versionLoaded={false} versionId="other-version" pin={undefined} />,
+    )
+
+    expect(screen.queryByText(/아직 사진을 불러오지 못했어요|읽기 전용/)).toBeNull()
+    expect(title.value).toBe(saved.title)
+    expect(title.readOnly).toBe(true)
+    expect(body.value).toBe(saved.body)
+    expect(body.readOnly).toBe(true)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '다시 보내기' }).disabled).toBe(false)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '취소' }).disabled).toBe(false)
+    expect(screen.queryByRole('button', { name: '쪽지 남기기' })).toBeNull()
+    await send(action)
+    if (action === '취소') {
+      expect(props.onCancel).toHaveBeenCalledExactlyOnceWith()
+      expect(createIssue).toHaveBeenCalledTimes(1)
+      return
+    }
+    expect(createIssue).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createIssue).mock.calls[1]).toEqual(firstRequest)
+    expect(props.onCreated).toHaveBeenCalledExactlyOnceWith(saved)
+  })
+
   it('읽기 전용이면 안내와 취소만 보이고 유효한 글도 폼 제출로 보내지 않는다', async () => {
     const { title, body, props } = renderComposer({ canSubmit: false })
     fillDraft()

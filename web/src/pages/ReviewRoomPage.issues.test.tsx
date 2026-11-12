@@ -288,6 +288,245 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('ReviewRoomPage 사진 대기 안내와 쪽지 불러오기 표시', () => {
+  it('버전 상세를 기다리거나 실패한 동안 열린 쪽지에는 사진 대기 안내가 보이고 다시 시도하면 쓸 수 있다', async () => {
+    const version = deferred<VersionDetail>()
+    vi.mocked(getVersion).mockReturnValueOnce(version.promise)
+    await renderRoom(`?issue=${productIssue.id}`)
+
+    expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+    expect(screen.getByText('아직 사진을 불러오지 못했어요. 지금은 쪽지와 댓글을 바꿀 수 없어요.')).toBeTruthy()
+    expect(screen.queryByText(/읽기 전용/)).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '수정 시작' })).toBeNull()
+    expect(screen.queryByLabelText('참고 사진 붙이기')).toBeNull()
+    expect(screen.queryByRole('button', { name: '지우기' })).toBeNull()
+
+    await act(async () => version.reject(new ApiError(500)))
+    expect(screen.getByText('잠시 뒤 다시 시도해 주세요')).toBeTruthy()
+    expect(screen.getByText('아직 사진을 불러오지 못했어요. 지금은 쪽지와 댓글을 바꿀 수 없어요.')).toBeTruthy()
+    expect(screen.queryByText(/읽기 전용/)).toBeNull()
+    await click('다시 시도')
+
+    expect(getVersion).toHaveBeenCalledTimes(2)
+    expect(getVersion).toHaveBeenLastCalledWith(current.id)
+    expect(screen.queryByText(/아직 사진을 불러오지 못했어요|읽기 전용/)).toBeNull()
+    expect(screen.getByRole('button', { name: '수정 시작' })).toBeTruthy()
+    expect(screen.getByLabelText('참고 사진 붙이기')).toBeTruthy()
+    fillComment()
+    await click('댓글 남기기')
+    expect(createComment).toHaveBeenCalledExactlyOnceWith(
+      productIssue.id,
+      expect.objectContaining({ versionId: current.id, body: savedComment.body }),
+    )
+  })
+
+  it.each(['쪽지 상세', '쪽지 쓰기'])(
+    '지난 버전을 기다리거나 실패한 %s에는 사진 대기 안내가 보이고 불러온 뒤에만 읽기 전용이다',
+    async (panel) => {
+      await renderRoom(`?issue=${productIssue.id}`)
+      if (panel === '쪽지 상세') fillComment()
+      if (panel === '쪽지 쓰기') {
+        await click('쪽지 쓰기')
+        fillDraft()
+      }
+      const version = deferred<VersionDetail>()
+      vi.mocked(getVersion).mockReturnValueOnce(version.promise)
+      await chooseVersion(initial.id)
+      const message =
+        panel === '쪽지 상세'
+          ? '아직 사진을 불러오지 못했어요. 지금은 쪽지와 댓글을 바꿀 수 없어요.'
+          : '아직 사진을 불러오지 못했어요. 지금은 쪽지를 남길 수 없어요.'
+      expect(screen.getByText(message)).toBeTruthy()
+      expect(screen.queryByText(/읽기 전용/)).toBeNull()
+      expect(screen.queryByRole('button', { name: '쪽지 남기기' })).toBeNull()
+      expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+
+      await act(async () => version.reject(new ApiError(500)))
+      expect(screen.getByText(message)).toBeTruthy()
+      expect(screen.queryByText(/읽기 전용/)).toBeNull()
+      await click('다시 시도')
+      expect(getVersion).toHaveBeenLastCalledWith(initial.id)
+      expect(screen.queryByText(message)).toBeNull()
+      expect(
+        screen.getByText(
+          panel === '쪽지 상세'
+            ? '읽기 전용이에요. 쪽지와 댓글은 바꿀 수 없어요.'
+            : '읽기 전용인 버전을 보고 있어요. 검수 중인 최신 버전으로 돌아오면 남길 수 있어요.',
+        ),
+      ).toBeTruthy()
+      expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+      expect(screen.queryByRole('button', { name: '쪽지 남기기' })).toBeNull()
+
+      await chooseVersion(current.id)
+      expect(screen.queryByText(/아직 사진을 불러오지 못했어요|읽기 전용/)).toBeNull()
+      if (panel === '쪽지 쓰기') {
+        expectDraft()
+        expect(screen.getByRole('button', { name: '쪽지 남기기' })).toBeTruthy()
+        return
+      }
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+    },
+  )
+
+  it('쓰던 쪽지의 최신 버전 사진이 실패하면 사진 대기 안내가 보이고 다시 시도하면 글을 그대로 보낼 수 있다', async () => {
+    await renderRoom()
+    await click('쪽지 쓰기')
+    fillDraft()
+    vi.mocked(createIssue).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    await click('쪽지 남기기')
+    publishLatest()
+    const version = deferred<VersionDetail>()
+    vi.mocked(getVersion).mockImplementation((id) => (id === latest.id ? version.promise : Promise.resolve(current)))
+    await click('최신 버전 보기')
+
+    expect(screen.getByText('아직 사진을 불러오지 못했어요. 지금은 쪽지를 남길 수 없어요.')).toBeTruthy()
+    expect(screen.queryByText(/읽기 전용/)).toBeNull()
+    expect(screen.queryByRole('button', { name: '쪽지 남기기' })).toBeNull()
+    expectDraft()
+    await act(async () => version.reject(new ApiError(500)))
+    expect(screen.getByText('아직 사진을 불러오지 못했어요. 지금은 쪽지를 남길 수 없어요.')).toBeTruthy()
+    expect(screen.queryByText(/읽기 전용/)).toBeNull()
+    expect(screen.getByRole('button', { name: '최신 버전 보기' })).toBeTruthy()
+    vi.mocked(getVersion).mockResolvedValue(latest)
+    await click('다시 시도')
+
+    expect(getVersion).toHaveBeenLastCalledWith(latest.id)
+    expect(screen.queryByText(/아직 사진을 불러오지 못했어요|읽기 전용/)).toBeNull()
+    expectDraft()
+    await click('쪽지 남기기')
+    expect(createIssue).toHaveBeenCalledTimes(2)
+    expect(createIssue).toHaveBeenLastCalledWith(
+      project.id,
+      expect.objectContaining({ versionId: latest.id, title: savedIssue.title, body: savedIssue.body }),
+    )
+  })
+
+  it.each(['목록', '핀', '주소'])(
+    '%s에서 쪽지를 열면 상세 응답 전에 status가 보이고 성공하면 사라진다',
+    async (entry) => {
+      const pending = deferred<IssueDetail>()
+      vi.mocked(getIssue).mockReturnValueOnce(pending.promise)
+      await renderRoom(entry === '주소' ? `?issue=${productIssue.id}` : '')
+      if (entry === '목록') await chooseIssue(productIssue)
+      if (entry === '핀') await click(pinName(productIssue))
+
+      expect(getIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id)
+      expect(within(screen.getByRole('complementary', { name: '쪽지' })).getByRole('status').textContent).toContain(
+        '쪽지를 불러오는 중이에요',
+      )
+      expect(screen.queryByRole('article')).toBeNull()
+      await act(async () => pending.resolve(productIssue))
+      expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+      expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+      expect(screen.queryByText('쪽지를 불러오는 중이에요')).toBeNull()
+      await click('쪽지 닫기')
+      expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+      expect(screen.queryByRole('article')).toBeNull()
+    },
+  )
+
+  it.each([
+    [new ApiError(500), '잠시 뒤 다시 시도해 주세요'],
+    [new TypeError('Failed to fetch'), '연결을 확인하고 다시 시도해 주세요'],
+  ])('쪽지 상세가 %s로 실패하면 status 대신 실패 문구가 보인다', async (error, message) => {
+    const pending = deferred<IssueDetail>()
+    vi.mocked(getIssue).mockReturnValueOnce(pending.promise)
+    await renderRoom(`?issue=${productIssue.id}`)
+    expect(within(screen.getByRole('complementary', { name: '쪽지' })).getByRole('status').textContent).toContain(
+      '쪽지를 불러오는 중이에요',
+    )
+    await act(async () => pending.reject(error))
+    expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+    expect(screen.queryByText('쪽지를 불러오는 중이에요')).toBeNull()
+    expect(screen.getByText(message)).toBeTruthy()
+    expect(screen.queryByRole('article')).toBeNull()
+  })
+
+  it('상세를 기다리다가 뒤로 가기로 쪽지를 닫으면 status가 사라지고 늦은 응답에도 돌아오지 않는다', async () => {
+    const pending = deferred<IssueDetail>()
+    vi.mocked(getIssue).mockReturnValueOnce(pending.promise)
+    await renderRoom()
+    await chooseIssue(productIssue)
+    expect(within(screen.getByRole('complementary', { name: '쪽지' })).getByRole('status').textContent).toContain(
+      '쪽지를 불러오는 중이에요',
+    )
+    await click('브라우저 뒤로 가기')
+    expect(queryParams().has('issue')).toBe(false)
+    expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+    await act(async () => pending.resolve(productIssue))
+    expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+    expect(screen.queryByRole('article')).toBeNull()
+  })
+
+  it('다른 쪽지를 기다리는 동안에는 먼저 보던 상세 대신 status를 보여 준다', async () => {
+    await renderRoom(`?issue=${productIssue.id}`)
+    const pending = deferred<IssueDetail>()
+    vi.mocked(getIssue).mockReturnValueOnce(pending.promise)
+    await chooseIssue(cartIssue)
+    expect(within(screen.getByRole('complementary', { name: '쪽지' })).getByRole('status').textContent).toContain(
+      '쪽지를 불러오는 중이에요',
+    )
+    expect(screen.queryByRole('article')).toBeNull()
+    await act(async () => pending.resolve(cartIssue))
+    expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+    expect(screen.getByRole('article', { name: '쪽지 #2' })).toBeTruthy()
+  })
+
+  it.each(['성공', '실패'])(
+    '15초 상세 갱신 중에는 status가 없고 %s 뒤에도 상세와 쓰던 댓글이 남는다',
+    async (result) => {
+      vi.useFakeTimers()
+      await renderRoom(`?issue=${productIssue.id}`)
+      fillComment()
+      const pending = deferred<IssueDetail>()
+      vi.mocked(getIssue).mockReturnValueOnce(pending.promise)
+      await advance()
+      expect(getIssue).toHaveBeenCalledTimes(2)
+      expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+      expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+      await act(async () => {
+        if (result === '실패') {
+          pending.reject(new ApiError(500))
+          return
+        }
+        pending.resolve(productIssue)
+      })
+      expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+      expect(screen.queryByText('쪽지를 불러오는 중이에요')).toBeNull()
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+    },
+  )
+
+  it('방금 만든 쪽지는 후속 상세 요청을 기다려도 status 없이 바로 열린다', async () => {
+    await renderRoom()
+    await click('쪽지 쓰기')
+    fillDraft()
+    const pending = deferred<IssueDetail>()
+    vi.mocked(getIssue).mockReturnValueOnce(pending.promise)
+    await click('쪽지 남기기')
+    expect(getIssue).toHaveBeenCalledExactlyOnceWith(savedIssue.id)
+    expect(screen.getByRole('article', { name: '쪽지 #5' })).toBeTruthy()
+    expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+    expect(screen.queryByText('쪽지를 불러오는 중이에요')).toBeNull()
+    await act(async () => pending.resolve(savedIssue))
+    expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+  })
+
+  it.each(['a9999999-9999-4999-8999-999999999999', 'wrong-id', ''])(
+    '목록에 없는 쪽지 주소 %s에는 status가 없고 상세를 부르지 않는다',
+    async (id) => {
+      await renderRoom(`?issue=${id}`)
+      expect(screen.getByText('없는 쪽지예요.')).toBeTruthy()
+      expect(screen.getByRole('region', { name: '쪽지 목록' })).toBeTruthy()
+      expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+      expect(screen.queryByText('쪽지를 불러오는 중이에요')).toBeNull()
+      expect(getIssue).not.toHaveBeenCalled()
+    },
+  )
+})
+
 describe('ReviewRoomPage 버전 재시도와 초기 불러오기', () => {
   it.each([
     { reason: '서버 오류', error: new ApiError(500), message: '잠시 뒤 다시 시도해 주세요' },

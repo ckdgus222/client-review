@@ -554,6 +554,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
           projectId={id}
           versionId={shownVersionId}
           canSubmit={canWrite}
+          versionLoaded={detail !== undefined}
           pin={shownDraftPin && { ...shownDraftPin, label: pinScreen ? screenLabel(pinScreen) : '' }}
           onClearPin={() => setDraftPin(undefined)}
           onCancel={closeComposer}
@@ -584,6 +585,13 @@ const ReviewRoom = ({ id }: { id: string }) => {
             <ErrorText message={shownIssue.error} />
           </div>
         )}
+        {/* 고른 쪽지를 아직 받지 못했다. 느린 연결에서 빈칸으로 보이지 않게 돌아가는 동그라미와 글자를 보여 준다. */}
+        {openIssue && !shownIssue && (
+          <p className={`${styles.panelMessage} ${styles.loading}`} role="status">
+            <span className={styles.spinner} aria-hidden="true" />
+            쪽지를 불러오는 중이에요
+          </p>
+        )}
         {shownIssue?.detail && (
           <IssueDetail
             // 쪽지를 바꾸면 쓰던 댓글과 잠금이 다음 쪽지로 넘어가지 않게 새로 시작한다. 버전만 바꾸면 그대로 남는다.
@@ -591,6 +599,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
             issue={shownIssue.detail}
             versionId={shownVersionId}
             canWrite={canWrite}
+            versionLoaded={detail !== undefined}
             isDeveloper={isDeveloper}
             // 누른 때의 번호를 넘긴다(applyChange).
             onChanged={(issue) => applyChange(issue, detailNumber)}

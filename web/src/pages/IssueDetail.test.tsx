@@ -72,6 +72,7 @@ const renderDetail = (overrides: Partial<ComponentProps<typeof IssueDetail>> = {
     issue,
     versionId,
     canWrite: true,
+    versionLoaded: true,
     isDeveloper: true,
     onChanged: vi.fn(),
     onCommented: vi.fn(),
@@ -118,6 +119,88 @@ afterEach(() => {
 })
 
 describe('IssueDetail', () => {
+  it.each([
+    [false, '아직 사진을 불러오지 못했어요. 지금은 쪽지와 댓글을 바꿀 수 없어요.'],
+    [true, '읽기 전용이에요. 쪽지와 댓글은 바꿀 수 없어요.'],
+  ] as const)(
+    '쓸 수 없고 versionLoaded=%s이면 사진 상태에 맞는 안내만 보이며 쓰던 댓글은 남는다',
+    (versionLoaded, message) => {
+      const { props, rerender } = renderDetail()
+      fillComment('남겨 둘 댓글')
+      rerender(<IssueDetail {...props} canWrite={false} versionLoaded={versionLoaded} />)
+
+      expect(screen.getByText(message)).toBeTruthy()
+      expect(screen.queryByText(versionLoaded ? /아직 사진을 불러오지 못했어요/ : /읽기 전용/)).toBeNull()
+      expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+      for (const name of ['댓글 남기기', '수정 시작', '지우기', '다시 보내기', '취소']) {
+        expect(screen.queryByRole('button', { name })).toBeNull()
+      }
+      expect(screen.queryByLabelText('참고 사진 붙이기')).toBeNull()
+      expect(screen.getByText(issue.body, { collapseWhitespace: false })).toBeTruthy()
+      expect(screen.getByText(issue.comments[0].body)).toBeTruthy()
+      expect(createComment).not.toHaveBeenCalled()
+
+      rerender(<IssueDetail {...props} />)
+      expect(screen.queryByText(/아직 사진을 불러오지 못했어요|읽기 전용/)).toBeNull()
+      expect(commentInput().value).toBe('남겨 둘 댓글')
+    },
+  )
+
+  it.each([false, true])('쓸 수 있으면 versionLoaded=%s여도 사진 대기와 읽기 전용 안내가 없다', (versionLoaded) => {
+    renderDetail({ versionLoaded })
+    expect(screen.queryByText(/아직 사진을 불러오지 못했어요|읽기 전용/)).toBeNull()
+    expect(screen.getByRole('textbox', { name: '댓글' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '댓글 남기기' })).toBeTruthy()
+  })
+
+  it.each(['다시 보내기', '취소'])('사진을 못 불러와도 잠긴 댓글은 감춰지지 않고 %s가 가능하다', async (action) => {
+    vi.mocked(createComment).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const { props, rerender } = renderDetail()
+    fillComment('잠긴 댓글')
+    await click('댓글 남기기')
+    const firstRequest = structuredClone(vi.mocked(createComment).mock.calls[0])
+    rerender(<IssueDetail {...props} canWrite={false} versionLoaded={false} versionId={latestVersionId} />)
+
+    expect(commentInput().value).toBe('잠긴 댓글')
+    expect(commentInput().readOnly).toBe(true)
+    expect(commentInput().disabled).toBe(false)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '다시 보내기' }).disabled).toBe(false)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '취소' }).disabled).toBe(false)
+    expect(screen.queryByRole('button', { name: '댓글 남기기' })).toBeNull()
+    await click(action)
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '다시 보내기' })).toBeNull()
+    if (action === '취소') {
+      expect(createComment).toHaveBeenCalledTimes(1)
+      expect(props.onCommented).not.toHaveBeenCalled()
+      return
+    }
+    expect(createComment).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createComment).mock.calls[1]).toEqual(firstRequest)
+    expect(props.onCommented).toHaveBeenCalledExactlyOnceWith(savedComment)
+  })
+
+  it('댓글 409 뒤 사진을 못 불러와도 새 버전 안내와 최신 버전 보기가 남고 복구하면 쓰던 댓글을 보낸다', async () => {
+    vi.mocked(createComment).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    const { props, rerender } = renderDetail()
+    fillComment('새 버전에도 남길 댓글')
+    await click('댓글 남기기')
+    rerender(<IssueDetail {...props} canWrite={false} versionLoaded={false} />)
+
+    expect(screen.getByText('아직 사진을 불러오지 못했어요. 지금은 쪽지와 댓글을 바꿀 수 없어요.')).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.')
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+    await click('최신 버전 보기')
+    expect(props.onGoLatest).toHaveBeenCalledTimes(1)
+    rerender(<IssueDetail {...props} versionId={latestVersionId} />)
+    expect(commentInput().value).toBe('새 버전에도 남길 댓글')
+    await click('댓글 남기기')
+    expect(createComment).toHaveBeenLastCalledWith(
+      issue.id,
+      expect.objectContaining({ versionId: latestVersionId, body: '새 버전에도 남길 댓글' }),
+    )
+  })
+
   it('번호·상태·제목·처음 위치·작성 정보·본문과 오래된 순의 댓글을 보여 주고 닫기를 알린다', async () => {
     const { props } = renderDetail()
     expect(screen.getByRole('article', { name: '쪽지 #14' })).toBeTruthy()

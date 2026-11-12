@@ -28,6 +28,9 @@ type IssueDetailProps = {
   versionId: string
   // 고른 버전이 현재 버전이고 검수 중인가. 쪽지가 어느 버전에서 시작했는지는 보지 않는다.
   canWrite: boolean
+  // 고른 버전의 사진을 불러왔는가. 아직이면 쓸 수 있는지 알 수 없어서 canWrite가 거짓인데,
+  // 그때는 "읽기 전용"이 아니라 아직 불러오지 못했다고 알린다.
+  versionLoaded: boolean
   isDeveloper: boolean
   // 수정 시작·참고 사진처럼 서버가 바뀐 쪽지를 돌려준 경우.
   onChanged: (issue: Issue) => void
@@ -240,6 +243,7 @@ export const IssueDetail = ({
   issue,
   versionId,
   canWrite,
+  versionLoaded,
   isDeveloper,
   onChanged,
   onCommented,
@@ -301,6 +305,12 @@ export const IssueDetail = ({
         onGoLatest={onGoLatest}
       />
     </section>
-    {!canWrite && <p className={styles.readonly}>읽기 전용이에요. 쪽지와 댓글은 바꿀 수 없어요.</p>}
+    {!canWrite && (
+      <p className={styles.readonly}>
+        {versionLoaded
+          ? '읽기 전용이에요. 쪽지와 댓글은 바꿀 수 없어요.'
+          : '아직 사진을 불러오지 못했어요. 지금은 쪽지와 댓글을 바꿀 수 없어요.'}
+      </p>
+    )}
   </article>
 )

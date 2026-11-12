@@ -15,6 +15,8 @@ type IssueComposerProps = {
   versionId: string
   // 지금 보고 있는 버전에 쓸 수 있는가. 쓰다가 지난 버전을 골라 보면 글은 남기고 보내기만 막는다.
   canSubmit: boolean
+  // 고른 버전의 사진을 불러왔는가. 아직이면 canSubmit이 거짓이어도 "읽기 전용인 버전"이라고 하지 않는다.
+  versionLoaded: boolean
   // 사진에서 고른 자리. 없으면 위치 없는 쪽지다. label은 "상품 상세 · PC" 같은 화면 이름이다.
   pin?: { screenId: string; xRatio: number; yRatio: number; label: string }
   onClearPin: () => void
@@ -29,6 +31,7 @@ export const IssueComposer = ({
   projectId,
   versionId,
   canSubmit,
+  versionLoaded,
   pin,
   onClearPin,
   onCancel,
@@ -133,7 +136,11 @@ export const IssueComposer = ({
       </div>
       {error && <SubmitErrorText error={error} locked={isLocked} onGoLatest={onGoLatest} />}
       {!canSubmit && !isLocked && (
-        <p className={styles.hint}>읽기 전용인 버전을 보고 있어요. 검수 중인 최신 버전으로 돌아오면 남길 수 있어요.</p>
+        <p className={styles.hint}>
+          {versionLoaded
+            ? '읽기 전용인 버전을 보고 있어요. 검수 중인 최신 버전으로 돌아오면 남길 수 있어요.'
+            : '아직 사진을 불러오지 못했어요. 지금은 쪽지를 남길 수 없어요.'}
+        </p>
       )}
       <div className={styles.actions}>
         <Button variant="secondary" onClick={handleCancel} disabled={sending}>
