@@ -1,0 +1,70 @@
+.list :where(h2, p, ul) {
+  margin: 0;
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.heading h2 {
+  font-size: var(--font-size-md);
+}
+
+.hint {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.empty {
+  padding: var(--space-4) var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.rows {
+  padding: 0;
+  list-style: none;
+}
+
+/* 줄 전체가 버튼이다. 첫 줄은 번호와 제목이고, 상태와 처음 위치는 제목 아래에 한 줄씩 놓인다. */
+.rows button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-1) var(--space-2);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--space-3);
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rows button > :nth-child(n + 3) {
+  grid-column: 2;
+}
+
+/* 지금 연 쪽지다. 색만으로 구분하지 않게 왼쪽 선과 굵기도 바꾼다. */
+.rows button[aria-pressed='true'] {
+  border-left: 2px solid var(--color-review-selected);
+  padding-left: calc(var(--space-3) - 2px);
+  background: var(--color-bg);
+  font-weight: 600;
+}
+
+.number {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.title {
+  overflow-wrap: anywhere;
+}

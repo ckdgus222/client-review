@@ -14,9 +14,11 @@ type TextFieldProps = {
   inputMode?: 'numeric'
   // 서버에 보내는 동안 잠가서, 보낸 값과 다음 단계에서 쓰는 값이 달라지지 않게 한다.
   disabled?: boolean
+  // 고칠 수는 없지만 읽고 복사할 수는 있어야 할 때 쓴다(disabled는 글을 고를 수 없다).
+  readOnly?: boolean
 }
 
-// label·onChange·error만 여기서 쓰고, 나머지(value, type, autoComplete, inputMode, disabled)는 input에 그대로 넘긴다.
+// label·onChange·error만 여기서 쓰고, 나머지(value, type, autoComplete, inputMode, disabled, readOnly)는 input에 그대로 넘긴다.
 export const TextField = ({ label, onChange, error, ...inputProps }: TextFieldProps) => {
   // 한 화면에 칸이 여러 개여도 라벨과 오류 문구가 자기 칸에만 이어지게 칸마다 다른 id를 만든다.
   const id = useId()

@@ -128,11 +128,65 @@
   color: var(--color-text-muted);
 }
 
-/* 왼쪽 화면 목록, 가운데 큰 사진이다. 오른쪽 쪽지 칸은 5번 기능에서 더한다. */
+/* 왼쪽은 버전(설명, 화면 목록, 사진), 오른쪽은 쪽지 칸이다. 쪽지 칸은 버전을 불러오는 동안에도 그대로 남는다. */
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22.5rem;
+}
+
+.main {
+  min-width: 0;
+}
+
+/* 왼쪽 화면 목록, 가운데 큰 사진이다. */
 .workspace {
   display: grid;
   grid-template-columns: 11rem minmax(0, 1fr);
   min-height: 74vh;
+}
+
+/* 쪽지 목록과, 고른 쪽지의 상세나 쓰기 칸이 위에서 아래로 놓인다. */
+.inspector {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.panelMessage {
+  padding: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* 고른 쪽지를 불러오는 동안 보이는 돌아가는 동그라미와 글자다. 여백과 글자 색은 .panelMessage를 함께 쓴다. */
+.loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-text);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 움직임 줄이기를 켠 사람에게는 돌리지 않는다. 옆의 글자가 같은 뜻을 전한다. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
 }
 
 .screens {
@@ -178,33 +232,6 @@
   object-fit: cover;
   object-position: top;
   background: var(--color-canvas);
-}
-
-/* 흰 사진이 바탕과 섞이지 않게 회색 바탕 위에 둔다. */
-.canvas {
-  padding: 0 var(--gutter) var(--gutter);
-  background: var(--color-canvas);
-}
-
-.caption {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-3) 0;
-  font-size: var(--font-size-sm);
-}
-
-.photo {
-  background: var(--color-surface);
-}
-
-/* 판보다 큰 사진은 폭에 맞춰 줄인다. width·height 속성은 사진이 오기 전에 자리를 잡아 화면이 덜컹거리지 않게 한다. */
-.photo img {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  margin: 0 auto;
 }
 
 /* 안내·오류·불러오는 중 문구 */
@@ -256,9 +283,30 @@
   }
 }
 
-/* 768px 이하: 양옆 여백을 줄여 사진을 조금 더 크게 보여 준다. */
+/* 768px 이하: 양옆 여백을 줄여 사진을 조금 더 크게 보여 준다. 사진을 먼저 보여 주고 쪽지 칸은 그 아래에 둔다.
+   쪽지를 열면 쪽지 칸에는 그 쪽지만 보인다. */
 @media (max-width: 48rem) {
   .room {
     --gutter: var(--space-3);
+  }
+
+  .stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 사진 아래에 쪽지 칸이 바로 오게, 넓은 화면용 최소 높이를 없앤다. 두면 사진 아래에 큰 빈칸이 생긴다. */
+  .workspace {
+    min-height: 0;
+  }
+
+  .inspector {
+    border-top: 1px solid var(--color-border);
+    border-left: 0;
+  }
+
+  /* 쪽지(article)를 열면 목록(section)을 감춘다. 사진 바로 아래에 쪽지 내용이 오고, "쪽지 닫기"를 누르면 목록이 돌아온다.
+     목록까지 두면 긴 쪽지 아래로 밀려서, 다른 쪽지를 고르려면 맨 아래까지 내려가야 한다. */
+  .inspector:has(> article) > section {
+    display: none;
   }
 }

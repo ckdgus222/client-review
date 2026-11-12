@@ -82,6 +82,21 @@ describe('사진 API (e2e)', () => {
     return { versionId, screenId: screen.id, asset };
   };
 
+  const createIssueWithReferencePhoto = async () => {
+    const { versionId } = await createDraftWithPhoto();
+    await post(`/api/versions/${versionId}/publish`).expect(200);
+    const issue = await post(`/api/projects/${projectId}/issues`, clientCookie)
+      .send({ requestId: randomUUID(), versionId, title: '참고 시안', body: '이 사진을 봐 주세요' })
+      .expect(201);
+    const attached = await post(`/api/issues/${issue.body.id}/attachments`, clientCookie)
+      .attach('file', photo, 'reference.png')
+      .expect(201);
+    expect(attached.body.attachments).toHaveLength(1);
+    const attachment = attached.body.attachments[0] as { id: string; assetId: string };
+    const asset = await prisma.asset.findUniqueOrThrow({ where: { id: attachment.assetId } });
+    return { issueId: issue.body.id as string, versionId, attachment, asset };
+  };
+
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'assets-e2e-'));
     vi.stubEnv('ASSET_DIR', directory);
@@ -195,6 +210,108 @@ describe('사진 API (e2e)', () => {
     expect(developer.headers.etag).toEqual(expect.any(String));
     await getPhoto(asset.id).expect(404).expect(assetNotFoundBody);
     await getPhoto(asset.id).set('If-None-Match', developer.headers.etag).expect(404).expect(assetNotFoundBody);
+  });
+
+  it('쪽지의 참고 사진은 같은 프로젝트 클라이언트에게 보이고 남의 프로젝트·철회된 사람에게는 404다', async () => {
+    const otherClient = await prisma.user.create({ data: { email: 'reader@example.com', name: '다른 참여자' } });
+    const approver = await prisma.user.create({ data: { email: 'approver@example.com', name: '승인자' } });
+    const outsideClient = await prisma.user.create({
+      data: { email: 'outside-client@example.com', name: '남의 고객' },
+    });
+    await prisma.projectMember.create({ data: { projectId, userId: otherClient.id, role: 'CLIENT' } });
+    const approverMember = await prisma.projectMember.create({
+      data: { projectId, userId: approver.id, role: 'CLIENT' },
+    });
+    await prisma.project.update({ where: { id: projectId }, data: { approverMemberId: approverMember.id } });
+    await prisma.projectMember.create({
+      data: { projectId: otherProjectId, userId: outsideClient.id, role: 'CLIENT' },
+    });
+    const otherClientCookie = await login(otherClient.id);
+    const approverCookie = await login(approver.id);
+    const outsideClientCookie = await login(outsideClient.id);
+    const { asset } = await createIssueWithReferencePhoto();
+    const saved = await readFile(join(directory, asset.storageKey));
+    expect(asset.mime).toBe('image/png');
+
+    for (const memberCookie of [clientCookie, otherClientCookie, approverCookie, cookie]) {
+      const response = await getPhoto(asset.id, memberCookie).expect(200);
+      expect(Buffer.isBuffer(response.body)).toBe(true);
+      expect(response.body).toEqual(saved);
+      expect(response.headers['content-type']).toBe(asset.mime);
+      expect(response.headers['cache-control']).toBe('private, no-cache');
+      expect(response.headers['x-content-type-options']).toBe('nosniff');
+    }
+    const first = await getPhoto(asset.id).expect(200);
+    expect(first.headers.etag).toEqual(expect.any(String));
+    await getPhoto(asset.id).set('If-None-Match', first.headers.etag).expect(304);
+
+    await prisma.projectMember.update({
+      where: { projectId_userId: { projectId, userId: clientId } },
+      data: { revokedAt: new Date() },
+    });
+
+    for (const deniedCookie of [outsideClientCookie, outsiderCookie, clientCookie]) {
+      await getPhoto(asset.id, deniedCookie).expect(404).expect(assetNotFoundBody);
+      await getPhoto(asset.id, deniedCookie)
+        .set('If-None-Match', first.headers.etag)
+        .expect(404)
+        .expect(assetNotFoundBody);
+    }
+    await request(server).get(`/api/assets/${asset.id}`).expect(401);
+    await request(server).get(`/api/assets/${asset.id}`).set('If-None-Match', first.headers.etag).expect(401);
+    const stillVisible = await getPhoto(asset.id, otherClientCookie).expect(200);
+    expect(stillVisible.body).toEqual(saved);
+  });
+
+  it('참고 사진을 지우면 작성자와 개발자도 같은 주소와 ETag로 사진을 받지 못한다', async () => {
+    const { issueId, attachment, asset } = await createIssueWithReferencePhoto();
+    const first = await getPhoto(asset.id).expect(200);
+    expect(first.headers.etag).toEqual(expect.any(String));
+    await getPhoto(asset.id, cookie).expect(200);
+
+    const removed = await request(server)
+      .delete(`/api/issues/${issueId}/attachments/${attachment.id}`)
+      .set('Origin', origin)
+      .set('Cookie', clientCookie)
+      .expect(200);
+
+    expect(removed.body.attachments).toEqual([]);
+    for (const memberCookie of [clientCookie, cookie]) {
+      await getPhoto(asset.id, memberCookie).expect(404).expect(assetNotFoundBody);
+      await getPhoto(asset.id, memberCookie)
+        .set('If-None-Match', first.headers.etag)
+        .expect(404)
+        .expect(assetNotFoundBody);
+    }
+  });
+
+  it('같은 프로젝트 쪽지에 참고 사진이 있어도 게시 전 버전 전용 사진은 클라이언트에게 404다', async () => {
+    const reference = await createIssueWithReferencePhoto();
+    const draft = await createDraftWithPhoto();
+    const developer = await getPhoto(draft.asset.id, cookie).expect(200);
+    expect(developer.body).toEqual(await readFile(join(directory, draft.asset.storageKey)));
+    expect(developer.headers.etag).toEqual(expect.any(String));
+
+    await getPhoto(draft.asset.id).expect(404).expect(assetNotFoundBody);
+    await getPhoto(draft.asset.id).set('If-None-Match', developer.headers.etag).expect(404).expect(assetNotFoundBody);
+    const visible = await getPhoto(reference.asset.id).expect(200);
+    expect(visible.body).toEqual(await readFile(join(directory, reference.asset.storageKey)));
+  });
+
+  it('새 버전 게시와 승인 뒤에도 지난 쪽지의 참고 사진은 클라이언트에게 보인다', async () => {
+    const { asset } = await createIssueWithReferencePhoto();
+    const saved = await readFile(join(directory, asset.storageKey));
+    const next = await createDraftWithPhoto();
+    await post(`/api/versions/${next.versionId}/publish`).expect(200);
+    const afterPublish = await getPhoto(asset.id).expect(200);
+    expect(afterPublish.body).toEqual(saved);
+
+    // 승인 API는 7번 기능에서 만든다. 현재 버전 상태만 승인으로 바꾼다.
+    await prisma.deliveryVersion.update({ where: { id: next.versionId }, data: { status: 'APPROVED' } });
+
+    const afterApproval = await getPhoto(asset.id).expect(200);
+    expect(afterApproval.body).toEqual(saved);
+    expect(afterApproval.headers['content-type']).toBe(asset.mime);
   });
 
   it('다른 프로젝트의 개발자여도 멤버가 아닌 사진은 같은 404다', async () => {

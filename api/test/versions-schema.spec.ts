@@ -587,6 +587,7 @@ describe('버전과 사진 테이블', () => {
       type: 'VERSION_PUBLISHED',
       versionId: null,
       memberId: null,
+      issueId: null,
       createdAt: expect.any(Date),
     });
   });

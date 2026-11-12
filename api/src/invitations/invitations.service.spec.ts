@@ -126,6 +126,7 @@ describe('InvitationsService', () => {
         type: 'INVITATION_CREATED',
         memberId: null,
         versionId: null,
+        issueId: null,
         createdAt: expect.any(Date),
       },
     ]);
@@ -384,6 +385,7 @@ describe('InvitationsService', () => {
         type: 'INVITATION_ACCEPTED',
         memberId: member.id,
         versionId: null,
+        issueId: null,
         createdAt: expect.any(Date),
       },
     ]);

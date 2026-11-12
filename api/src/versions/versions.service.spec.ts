@@ -607,6 +607,7 @@ describe('VersionsService', () => {
         type: 'VERSION_PUBLISHED',
         versionId: version.id,
         memberId: null,
+        issueId: null,
         createdAt: expect.any(Date),
       })),
     );
@@ -700,6 +701,7 @@ describe('VersionsService', () => {
         type: 'VERSION_PUBLISHED',
         versionId: draft.id,
         memberId: null,
+        issueId: null,
         createdAt: expect.any(Date),
       },
     ]);

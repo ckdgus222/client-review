@@ -3,6 +3,25 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { TextField } from './TextField.tsx'
 
 describe('TextField 입력 잠금', () => {
+  it.each([true, false])('readOnly=%s를 반영하되 입력칸을 disabled로 만들지 않는다', (readOnly) => {
+    render(<TextField label="제목" value="복사할 글" onChange={vi.fn()} readOnly={readOnly} />)
+
+    const input = screen.getByLabelText<HTMLInputElement>('제목')
+
+    expect(input.readOnly).toBe(readOnly)
+    expect(input.disabled).toBe(false)
+    expect(input.value).toBe('복사할 글')
+  })
+
+  it('readOnly를 생략하면 읽기 전용이 아니다', () => {
+    render(<TextField label="제목" value="" onChange={vi.fn()} />)
+
+    const input = screen.getByLabelText<HTMLInputElement>('제목')
+
+    expect(input.readOnly).toBe(false)
+    expect(input.disabled).toBe(false)
+  })
+
   it.each([true, false, undefined])('disabled=%s를 실제 입력칸에 반영한다', (disabled) => {
     render(<TextField label="이메일" value="reader@example.com" onChange={vi.fn()} disabled={disabled} />)
 

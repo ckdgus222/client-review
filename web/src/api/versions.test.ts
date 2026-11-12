@@ -66,6 +66,7 @@ const versions: VersionSummary[] = [
 const activity: ActivityItem[] = [
   {
     id: 'new-event',
+    issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-08T09:00:00.000Z',
     actorName: '김개발',
@@ -74,6 +75,7 @@ const activity: ActivityItem[] = [
   },
   {
     id: 'old-event',
+    issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-07T09:00:00.000Z',
     actorName: '김개발',
@@ -116,6 +118,25 @@ describe.each([
     await expect(call(projectId)).resolves.toEqual([])
 
     expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/projects/${projectId}/${path}`)
+  })
+})
+
+describe('listActivity 쪽지 사건', () => {
+  it.each(['ISSUE_CREATED', 'ISSUE_STARTED'] as const)('%s의 쪽지 id와 번호를 그대로 돌려준다', async (type) => {
+    const event: ActivityItem = {
+      id: 'issue-event',
+      type,
+      createdAt: '2026-11-11T09:00:00.000Z',
+      actorName: '김개발',
+      memberName: null,
+      version: null,
+      issue: { id: 'issue-id', number: 14 },
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json([event]))
+
+    await expect(listActivity(projectId)).resolves.toEqual([event])
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/projects/${projectId}/activity`)
   })
 })
 

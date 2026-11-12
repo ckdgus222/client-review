@@ -27,13 +27,20 @@ export class AssetsService {
     const role = await this.projects.requireMemberRole(asset.projectId, userId).catch((error) => {
       throw error instanceof NotFoundException ? assetNotFound() : error;
     });
-    // 클라이언트는 게시된 버전이 쓰는 사진만 본다. 사진 id를 알아내도 아직 게시 안 된 버전의 사진은 미리 볼 수 없다.
+    // 클라이언트는 게시된 버전이 쓰는 사진과 쪽지에 붙은 참고 사진만 본다(쪽지는 모든 참여자가 본다).
+    // 사진 id를 알아내도 아직 게시 안 된 버전의 사진은 미리 볼 수 없다.
     if (role !== ProjectRole.DEVELOPER) {
-      const publishedUse = await this.prisma.versionScreen.findFirst({
-        where: { assetId, version: { status: { not: VersionStatus.DRAFT } } },
+      const visible = await this.prisma.asset.findFirst({
+        where: {
+          id: assetId,
+          OR: [
+            { versionScreens: { some: { version: { status: { not: VersionStatus.DRAFT } } } } },
+            { attachment: { isNot: null } },
+          ],
+        },
         select: { id: true },
       });
-      if (!publishedUse) throw assetNotFound();
+      if (!visible) throw assetNotFound();
     }
     return { path: assetPath(asset.storageKey), mime: asset.mime };
   }

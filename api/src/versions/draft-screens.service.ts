@@ -1,5 +1,7 @@
-import { Injectable, Logger, PayloadTooLargeException } from '@nestjs/common';
-import { deleteAsset, saveAsset } from '../assets/asset-storage.js';
+import { Injectable } from '@nestjs/common';
+import { deleteAssetQuietly } from '../assets/asset-cleanup.js';
+import { requireProjectQuota } from '../assets/asset-quota.js';
+import { saveAsset } from '../assets/asset-storage.js';
 import { processImage } from '../assets/image.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -7,13 +9,9 @@ import { screenNotFound } from '../screens/screens.service.js';
 import { conflict, type VersionDetail, VersionsService } from './versions.service.js';
 
 const MAX_SCREENS = 20;
-const PROJECT_QUOTA_MIB = 1024;
-const PROJECT_QUOTA_BYTES = PROJECT_QUOTA_MIB * 1024 * 1024;
 
 @Injectable()
 export class DraftScreensService {
-  private readonly logger = new Logger(DraftScreensService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly versions: VersionsService,
@@ -41,11 +39,7 @@ export class DraftScreensService {
         if (!existing && screenCount >= MAX_SCREENS) {
           throw conflict('TOO_MANY_SCREENS', `화면은 ${MAX_SCREENS}개까지 올릴 수 있어요`);
         }
-        // 잠근 뒤에 합계를 계산해서, 사진 두 장을 동시에 올려도 함께 한도를 넘지 못한다.
-        const { _sum } = await tx.asset.aggregate({ where: { projectId }, _sum: { bytes: true } });
-        if ((_sum.bytes ?? 0) + image.bytes > PROJECT_QUOTA_BYTES) {
-          throw new PayloadTooLargeException(`프로젝트 사진 용량(${PROJECT_QUOTA_MIB} MiB)을 넘어요`);
-        }
+        await requireProjectQuota(tx, projectId, image.bytes);
 
         const asset = await tx.asset.create({
           data: {
@@ -67,11 +61,11 @@ export class DraftScreensService {
         return { detail: await this.versions.loadDetail(versionId, tx), removedKey };
       })
       .catch(async (error) => {
-        await this.deleteFileQuietly(storageKey);
+        await deleteAssetQuietly(storageKey);
         throw error;
       });
 
-    if (result.removedKey) await this.deleteFileQuietly(result.removedKey);
+    if (result.removedKey) await deleteAssetQuietly(result.removedKey);
     return result.detail;
   }
 
@@ -89,7 +83,7 @@ export class DraftScreensService {
       return { detail: await this.versions.loadDetail(versionId, tx), removedKey };
     });
 
-    if (result.removedKey) await this.deleteFileQuietly(result.removedKey);
+    if (result.removedKey) await deleteAssetQuietly(result.removedKey);
     return result.detail;
   }
 
@@ -99,12 +93,5 @@ export class DraftScreensService {
     if (usage > 0) return null;
     const { storageKey } = await tx.asset.delete({ where: { id: assetId }, select: { storageKey: true } });
     return storageKey;
-  }
-
-  // 파일 지우기가 실패해도 요청의 결과(원래 오류나 성공)를 바꾸지 않는다. DB에 없는 파일이 남을 뿐이다.
-  private async deleteFileQuietly(storageKey: string) {
-    await deleteAsset(storageKey).catch((error) => {
-      this.logger.error(`사진 파일을 지우지 못했어요: ${storageKey}`, error);
-    });
   }
 }

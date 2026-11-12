@@ -21,6 +21,7 @@ const project: ProjectDetail = {
 const items: ActivityItem[] = [
   {
     id: 'f6dadf8d-5cb9-4602-80db-8c868ebaf601',
+    issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-09T09:04:00.000Z',
     actorName: '최개발',
@@ -29,6 +30,7 @@ const items: ActivityItem[] = [
   },
   {
     id: 'ae3ddac8-e194-4396-ab22-f28b81e040b0',
+    issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-08T23:59:00.000Z',
     actorName: '김개발',
@@ -37,6 +39,7 @@ const items: ActivityItem[] = [
   },
   {
     id: '695d8b02-3c89-4a80-b86d-5a01e345c9a5',
+    issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-07T00:01:00.000Z',
     actorName: '이개발',
@@ -85,6 +88,7 @@ beforeEach(() => {
   responses.set('/api/auth/me', () => Response.json(user))
   responses.set(projectUrl, () => Response.json(project))
   responses.set(activityUrl, () => Response.json(items))
+  responses.set(`${projectUrl}/issues`, () => Response.json([]))
   responses.set(nextProjectUrl, () => Response.json(nextProject))
   responses.set(`${nextProjectUrl}/activity`, () => Response.json([]))
   fetchMock.mockReset().mockImplementation(async (input) => {
@@ -186,6 +190,7 @@ describe('ActivityPage 기록 표시', () => {
     async ({ type, actorName, memberName, message }) => {
       const event: ActivityItem = {
         id: 'd375d33f-813b-4651-8316-727f094c14b2',
+        issue: null,
         type,
         createdAt: '2026-11-10T09:04:00.000Z',
         actorName,
@@ -273,6 +278,67 @@ describe('ActivityPage 기록 표시', () => {
     expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(items[2].version!.id)
     expect(screen.getByRole('img', { name: '메인 · PC' }).getAttribute('src')).toBe('/api/assets/photo-0')
     expect(screen.queryByText('2번 버전 설명')).toBeNull()
+  })
+})
+
+describe.each([
+  { type: 'ISSUE_CREATED', action: '를 남겼어요' },
+  { type: 'ISSUE_STARTED', action: ' 수정을 시작했어요' },
+] satisfies { type: ActivityItem['type']; action: string }[])('ActivityPage $type 기록', ({ type, action }) => {
+  const issueId = 'a728f97e-4d83-49b2-b50d-38e72d3901c9'
+
+  it.each([13, 14])('#%i를 쪽지 앞에 표시하고 쪽지 주소로 연결한다', async (number) => {
+    const event: ActivityItem = {
+      ...items[0],
+      type,
+      actorName: '김수정',
+      issue: { id: issueId, number },
+      version: null,
+    }
+    responses.set(activityUrl, () => Response.json([event, items[1]]))
+    renderActivity()
+
+    const rows = within(await screen.findByRole('list')).getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]).getByText(`김수정님이 #${number} 쪽지${action}`)).toBeDefined()
+    expect(within(rows[0]).getByRole('link').getAttribute('href')).toBe(`/projects/${project.id}?issue=${issueId}`)
+    expect(rows[0].querySelector('time')?.getAttribute('datetime')).toBe(event.createdAt)
+    expect(within(rows[1]).getByText('김개발님이 1차를 게시했어요')).toBeDefined()
+    expect(within(rows[1]).getByRole('link').getAttribute('href')).toBe(
+      `/projects/${project.id}?version=${items[1].version!.id}`,
+    )
+  })
+
+  it('쪽지와 버전이 모두 null이면 번호 없는 쪽지 문장과 시각을 링크 없이 표시한다', async () => {
+    responses.set(activityUrl, () => Response.json([{ ...items[0], type, issue: null, version: null }]))
+    renderActivity()
+
+    const row = within(await screen.findByRole('list')).getByRole('listitem')
+    expect(within(row).getByText(`최개발님이 쪽지${action}`)).toBeDefined()
+    expect(within(row).queryByRole('link')).toBeNull()
+    expect(row.querySelector('time')?.getAttribute('datetime')).toBe(items[0].createdAt)
+  })
+
+  it.each(['/', '/app'])('basename %s에서 쪽지와 버전이 함께 있으면 쪽지 링크를 우선한다', async (basename) => {
+    responses.set(activityUrl, () => Response.json([{ ...items[0], type, issue: { id: issueId, number: 14 } }]))
+    renderActivity(activityPath, basename)
+
+    const row = within(await screen.findByRole('list')).getByRole('listitem')
+    expect(within(row).getByText(`최개발님이 #14 쪽지${action}`)).toBeDefined()
+    expect(within(row).getAllByRole('link')).toHaveLength(1)
+    const prefix = basename === '/' ? '' : basename
+    expect(within(row).getByRole('link').getAttribute('href')).toBe(`${prefix}/projects/${project.id}?issue=${issueId}`)
+  })
+
+  it('쪽지가 null이고 버전이 있으면 번호 없는 쪽지 문장을 버전 주소로 연결한다', async () => {
+    responses.set(activityUrl, () => Response.json([{ ...items[0], type, issue: null }]))
+    renderActivity()
+
+    const row = within(await screen.findByRole('list')).getByRole('listitem')
+    expect(within(row).getByText(`최개발님이 쪽지${action}`)).toBeDefined()
+    expect(within(row).getByRole('link').getAttribute('href')).toBe(
+      `/projects/${project.id}?version=${items[0].version!.id}`,
+    )
   })
 })
 

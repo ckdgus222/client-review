@@ -1,0 +1,61 @@
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+.composer :where(h2, p) {
+  margin: 0;
+}
+
+.composer h2 {
+  font-size: var(--font-size-md);
+}
+
+.place {
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--color-review-selected);
+  background: var(--color-bg);
+}
+
+/* 내용 칸의 모양을 TextField의 입력칸에 맞춘다. 값은 TextField.module.css와 같다. 그쪽을 바꾸면 함께 바꾼다. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.field label {
+  font-weight: 600;
+}
+
+.field textarea {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  resize: vertical;
+}
+
+/* 보내는 중이거나 잠긴 글. 고칠 수 없다는 것이 보이게 바탕을 회색으로 바꾼다. 글자는 읽을 수 있게 그대로 둔다. */
+.field textarea:read-only {
+  background: var(--color-disabled-bg);
+}
+
+.hint {
+  color: var(--color-text-muted);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.link {
+  composes: linkButton from '../components/LinkButton.module.css';
+}

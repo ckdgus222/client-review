@@ -52,6 +52,13 @@ export const apiPutForm = async (path: string, form: FormData) => {
   return response
 }
 
+// 새로 만드는 파일 올리기(쪽지의 참고 사진)용이다. apiPutForm과 같은 이유로 Content-Type을 적지 않는다.
+export const apiPostForm = async (path: string, form: FormData) => {
+  const response = await fetch(`/api${path}`, { method: 'POST', body: form })
+  if (!response.ok) throw await toApiError(response)
+  return response
+}
+
 export const apiDelete = async (path: string) => {
   const response = await fetch(`/api${path}`, { method: 'DELETE' })
   if (!response.ok) throw await toApiError(response)

@@ -232,6 +232,7 @@ describe('MembersService', () => {
           type: 'MEMBER_REVOKED',
           memberId: clientMember.id,
           versionId: null,
+          issueId: null,
           createdAt: expect.any(Date),
         },
       ]);
@@ -347,6 +348,7 @@ describe('MembersService', () => {
           type: 'APPROVER_CHANGED',
           memberId,
           versionId: null,
+          issueId: null,
           createdAt: expect.any(Date),
         },
       ]);

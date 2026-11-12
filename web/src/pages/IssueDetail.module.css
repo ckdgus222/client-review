@@ -1,0 +1,156 @@
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+.detail :where(h2, h3, p, ul, dl, dd) {
+  margin: 0;
+}
+
+.detail h2 {
+  font-size: var(--font-size-md);
+  overflow-wrap: anywhere;
+}
+
+.detail h3 {
+  margin-bottom: var(--space-2);
+  font-size: var(--font-size-sm);
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* 닫기는 오른쪽 끝으로 민다. */
+.heading .link {
+  margin-left: auto;
+  min-height: 44px;
+}
+
+.number {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.meta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+}
+
+.meta dt {
+  color: var(--color-text-muted);
+}
+
+/* 쓴 사람이 줄을 나눠 쓴 글을 그대로 보여 준다. */
+.body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.photos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.photos li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.photos img {
+  display: block;
+  width: 6rem;
+  height: 6rem;
+  object-fit: cover;
+  border: 1px solid var(--color-border);
+  background: var(--color-canvas);
+}
+
+/* 파일 고르기 칸을 라벨과 함께 세로로 둔다. */
+.attach {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-weight: 600;
+}
+
+.attach input {
+  min-height: 44px;
+  font-weight: 400;
+}
+
+.comments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.commentMeta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+}
+
+.commentMeta strong {
+  color: var(--color-text);
+}
+
+.commentForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.commentForm label {
+  font-weight: 600;
+}
+
+/* 값은 TextField.module.css의 입력칸과 같다. 그쪽을 바꾸면 함께 바꾼다. */
+.commentForm textarea {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  resize: vertical;
+}
+
+.commentForm textarea[aria-invalid='true'] {
+  border-color: var(--color-danger);
+}
+
+/* 보내는 중이거나 잠긴 글. 고칠 수 없다는 것이 보이게 바탕을 회색으로 바꾼다. */
+.commentForm textarea:read-only {
+  background: var(--color-disabled-bg);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.readonly {
+  color: var(--color-text-muted);
+}
+
+.link {
+  composes: linkButton from '../components/LinkButton.module.css';
+}
