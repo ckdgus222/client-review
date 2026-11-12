@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Req,
   UnprocessableEntityException,
@@ -21,7 +22,9 @@ import { CommentsService } from './comments.service.js';
 import { CreateCommentDto } from './dto/create-comment.dto.js';
 import { CreateIssueDto } from './dto/create-issue.dto.js';
 import { StartIssueDto } from './dto/start-issue.dto.js';
+import { UpdateIssueDto } from './dto/update-issue.dto.js';
 import { IssueAttachmentsService } from './issue-attachments.service.js';
+import { IssueTriageService } from './issue-triage.service.js';
 import { issueNotFound, IssuesService } from './issues.service.js';
 
 // 틀린 모양의 id는 DB에 묻기 전에, 없는 프로젝트·쪽지와 같은 404로 끝낸다.
@@ -36,6 +39,7 @@ export class IssuesController {
     private readonly issues: IssuesService,
     private readonly comments: CommentsService,
     private readonly attachments: IssueAttachmentsService,
+    private readonly triage: IssueTriageService,
   ) {}
 
   @Get('projects/:id/issues')
@@ -60,6 +64,20 @@ export class IssuesController {
   @Get('issues/:id')
   get(@Req() request: AuthenticatedRequest, @Param('id', issueIdPipe) issueId: string) {
     return this.issues.getDetail(issueId, request.user.id);
+  }
+
+  // 분류·범위·마감일 중 보낸 칸만 바꾼다. 범위와 마감일을 바꾸면 자동 댓글이 든 쪽지 상세를 돌려준다.
+  @Patch('issues/:id')
+  update(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', issueIdPipe) issueId: string,
+    @Body() body: UpdateIssueDto,
+  ) {
+    const { category, scope, dueDate } = body;
+    if (category === undefined && scope === undefined && dueDate === undefined) {
+      throw new UnprocessableEntityException('바꿀 칸을 보내 주세요');
+    }
+    return this.triage.update(issueId, request.user.id, body);
   }
 
   @Post('issues/:id/comments')
