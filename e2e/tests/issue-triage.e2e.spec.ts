@@ -425,6 +425,62 @@ test('필터를 건 채 쪽지를 열어 범위를 바꿔 목록에서 빠져도
   await expect(issueList(page).getByRole('listitem')).toHaveCount(1)
 })
 
+test('필터를 건 채 쪽지 쓰기 칸을 열었다 닫거나 쪽지를 남겨도 필터가 유지된다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const bug = await seedIssue(room, '필터에 맞는 버그')
+  const design = await seedIssue(room, '필터에서 빠지는 디자인')
+  await db.issue.update({ where: { id: design.id }, data: { category: 'DESIGN' } })
+  await loginAs(room.client.id)
+  await page.goto(`/app/projects/${room.project.id}`)
+  const list = issueList(page)
+  const filter = list.getByRole('combobox', { name: '분류', exact: true })
+  await filter.selectOption('BUG')
+  await expect(list.getByRole('heading', { name: '쪽지 1개 / 전체 2개', exact: true })).toBeVisible()
+  await expect(list.getByRole('button', { name: new RegExp(bug.title) })).toBeVisible()
+  await expect(list.getByRole('button', { name: new RegExp(design.title), includeHidden: true })).toHaveCount(0)
+
+  await list.getByRole('button', { name: '쪽지 쓰기', exact: true }).click()
+  const composer = page.locator('form').filter({ has: page.getByLabel('제목 (필수)', { exact: true }) })
+  await expect(composer).toBeVisible()
+  await expect(page.getByRole('region', { name: '쪽지 목록', exact: true, includeHidden: true })).toHaveCount(0)
+  await composer.getByRole('button', { name: '취소', exact: true }).click()
+  await expect(filter).toHaveValue('BUG')
+  await expect(list.getByRole('heading', { name: '쪽지 1개 / 전체 2개', exact: true })).toBeVisible()
+  await expect(list.getByRole('listitem')).toHaveCount(1)
+
+  await list.getByRole('button', { name: '쪽지 쓰기', exact: true }).click()
+  await composer.getByRole('combobox', { name: '분류', exact: true }).selectOption('COPY')
+  const title = '필터와 다른 새 문구 요청'
+  const body = '버튼 문구를 짧게 바꿔 주세요'
+  await composer.getByLabel('제목 (필수)', { exact: true }).fill(title)
+  await composer.getByLabel('내용', { exact: true }).fill(body)
+  const response = page.waitForResponse((item) => item.request().method() === 'POST'
+    && new URL(item.url()).pathname === `/api/projects/${room.project.id}/issues`)
+  await composer.getByRole('button', { name: '쪽지 남기기', exact: true }).click()
+  const received = await response
+  expect(received.status()).toBe(201)
+  const created = await received.json()
+
+  await expect(filter).toHaveValue('BUG')
+  await expect(list.getByRole('heading', { name: '쪽지 1개 / 전체 3개', exact: true })).toBeVisible()
+  await expect(list.getByRole('listitem')).toHaveCount(1)
+  await expect(list.getByRole('button', { name: new RegExp(title), includeHidden: true })).toHaveCount(0)
+  const detail = detailFor(page, created.number)
+  await expect(detail.getByRole('heading', { name: title, exact: true })).toBeVisible()
+  await expect(detailValue(detail, '분류')).toHaveText('문구')
+  expect(await db.issue.findUniqueOrThrow({ where: { id: created.id } })).toMatchObject({
+    projectId: room.project.id, authorId: room.client.id, title, body, category: 'COPY',
+  })
+  expect(await db.issue.count({ where: { projectId: room.project.id } })).toBe(3)
+
+  await list.getByRole('button', { name: '필터 지우기', exact: true }).click()
+  await expect(filter).toHaveValue('')
+  await expect(list.getByRole('heading', { name: '쪽지 3개', exact: true })).toBeVisible()
+  await expect(list.getByRole('listitem')).toHaveCount(3)
+  await expect(list.getByRole('button', { name: new RegExp(title), pressed: true })).toBeVisible()
+  await expect(detail.getByRole('heading', { name: title, exact: true })).toBeVisible()
+})
+
 test('필터로 목록에서 빠진 쪽지의 핀은 사진에 그대로 보인다', async ({ page, loginAs }) => {
   const room = await prepareRoom()
   const first = await seedIssue(room, '버그 핀')

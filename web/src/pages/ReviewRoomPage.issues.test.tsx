@@ -4029,9 +4029,12 @@ describe('ReviewRoomPage 쪽지 정리와 상세 조회 확인', () => {
   }
   const changeScope = async () => {
     await act(async () => {
-      fireEvent.change(within(screen.getByRole('region', { name: '쪽지 정리' })).getByRole('combobox', { name: '범위' }), {
-        target: { value: 'OUT_OF_SCOPE' },
-      })
+      fireEvent.change(
+        within(screen.getByRole('region', { name: '쪽지 정리' })).getByRole('combobox', { name: '범위' }),
+        {
+          target: { value: 'OUT_OF_SCOPE' },
+        },
+      )
     })
   }
   const scopeInput = () =>
@@ -4265,5 +4268,171 @@ describe('ReviewRoomPage 쪽지 정리와 상세 조회 확인', () => {
     expect(screen.getByText(savedComment.body, { selector: 'p' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '댓글 2개' })).toBeTruthy()
     expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+  })
+})
+
+describe('ReviewRoomPage 목록 필터 유지', () => {
+  const filteredIssues = [{ ...productIssue, dueDate: '2026-11-11' }, cartIssue, oldIssue, unpinnedIssue]
+  const list = () => within(screen.getByRole('region', { name: '쪽지 목록' }))
+  const chooseFilters = async () => {
+    await act(async () => {
+      fireEvent.change(list().getByRole('combobox', { name: '상태' }), { target: { value: 'OPEN' } })
+      fireEvent.change(list().getByRole('combobox', { name: '화면' }), {
+        target: { value: current.screens[0].screenId },
+      })
+      fireEvent.change(list().getByRole('combobox', { name: '분류' }), { target: { value: 'BUG' } })
+      fireEvent.change(list().getByRole('combobox', { name: '범위' }), { target: { value: 'IN_SCOPE' } })
+      fireEvent.click(list().getByRole('checkbox', { name: '마감 지남만' }))
+    })
+  }
+  const expectFilters = (total = 4) => {
+    expect(list().getByRole<HTMLSelectElement>('combobox', { name: '상태' }).value).toBe('OPEN')
+    expect(list().getByRole<HTMLSelectElement>('combobox', { name: '화면' }).value).toBe(current.screens[0].screenId)
+    expect(list().getByRole<HTMLSelectElement>('combobox', { name: '분류' }).value).toBe('BUG')
+    expect(list().getByRole<HTMLSelectElement>('combobox', { name: '범위' }).value).toBe('IN_SCOPE')
+    expect(list().getByRole<HTMLInputElement>('checkbox', { name: '마감 지남만' }).checked).toBe(true)
+    expect(list().getByRole('heading', { name: `쪽지 1개 / 전체 ${total}개` })).toBeTruthy()
+    expect(list().getAllByRole('listitem')).toHaveLength(1)
+    expect(list().getByRole('button', { name: new RegExp(productIssue.title) })).toBeTruthy()
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 10, 12, 12))
+    vi.mocked(listIssues).mockResolvedValue(filteredIssues)
+  })
+
+  it.each(['쪽지 쓰기 버튼', '사진'] as const)(
+    '%s으로 쓰기 칸을 열었다 취소해도 고른 필터와 개수가 남는다',
+    async (entry) => {
+      await renderRoom()
+      await chooseFilters()
+      expectFilters()
+
+      if (entry === '사진') await placePin()
+      if (entry === '쪽지 쓰기 버튼') await click('쪽지 쓰기')
+
+      expect(screen.getByRole('textbox', { name: '제목 (필수)' })).toBeTruthy()
+      expect(screen.queryByRole('region', { name: '쪽지 목록', hidden: true })).toBeNull()
+      await advance()
+      expect(listIssues).toHaveBeenCalledTimes(2)
+      await click('취소')
+
+      expect(screen.queryByRole('textbox', { name: '제목 (필수)', hidden: true })).toBeNull()
+      expectFilters()
+      expect(createIssue).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['쪽지 쓰기 버튼', '사진'] as const)(
+    '%s으로 조건에 맞지 않는 쪽지를 남겨도 필터가 남고 새 쪽지 상세는 열린다',
+    async (entry) => {
+      const created: IssueDetail = {
+        ...savedIssue,
+        category: 'COPY',
+        origin: entry === '사진' ? savedIssue.origin : null,
+      }
+      vi.mocked(createIssue).mockResolvedValue(created)
+      vi.mocked(getIssue).mockResolvedValue(created)
+      await renderRoom()
+      await chooseFilters()
+      expectFilters()
+
+      if (entry === '사진') await placePin()
+      if (entry === '쪽지 쓰기 버튼') await click('쪽지 쓰기')
+
+      expect(screen.queryByRole('region', { name: '쪽지 목록', hidden: true })).toBeNull()
+      fillDraft()
+      fireEvent.change(screen.getByRole('combobox', { name: '분류' }), { target: { value: 'COPY' } })
+      vi.mocked(listIssues).mockResolvedValue([created, ...filteredIssues])
+      await click('쪽지 남기기')
+
+      expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+        requestId: expect.any(String),
+        versionId: current.id,
+        title: savedIssue.title,
+        body: savedIssue.body,
+        category: 'COPY',
+        pin: entry === '사진' ? { screenId: current.screens[0].screenId, xRatio: 0.25, yRatio: 0.75 } : undefined,
+      })
+      expectFilters(5)
+      expect(list().queryByRole('button', { name: new RegExp(created.title), hidden: true })).toBeNull()
+      expect(
+        within(screen.getByRole('article', { name: '쪽지 #5' })).getByRole('heading', { name: created.title }),
+      ).toBeTruthy()
+      expect(queryParams().get('issue')).toBe(created.id)
+      await advance()
+      expectFilters(5)
+      expect(screen.getByRole('article', { name: '쪽지 #5' })).toBeTruthy()
+
+      await click('필터 지우기')
+
+      expect(list().getByRole('heading', { name: '쪽지 5개' })).toBeTruthy()
+      expect(list().getByRole('button', { name: new RegExp(created.title), pressed: true })).toBeTruthy()
+      expect(screen.getByRole('article', { name: '쪽지 #5' })).toBeTruthy()
+    },
+  )
+
+  it('15초 뒤 새 목록을 받아도 쪽지를 열고 닫아도 필터가 남는다', async () => {
+    await renderRoom()
+    await chooseFilters()
+    expectFilters()
+    await chooseIssue(productIssue)
+    expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+    expectFilters()
+    vi.mocked(listIssues).mockResolvedValue([savedIssue, ...filteredIssues])
+
+    await advance()
+
+    expect(listIssues).toHaveBeenCalledTimes(2)
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    expectFilters(5)
+    expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+    await click('쪽지 닫기')
+    expect(screen.queryByRole('article', { name: '쪽지 #1', hidden: true })).toBeNull()
+    expectFilters(5)
+  })
+
+  it('주소의 프로젝트 id가 바뀌면 모든 필터가 풀리고 다른 프로젝트의 전체 목록이 보인다', async () => {
+    const otherProject: ProjectDetail = {
+      ...project,
+      id: 'a6666666-6666-4666-8666-666666666666',
+      name: '다른 필터 검수실',
+      currentVersion: { id: 'b6666666-6666-4666-8666-666666666666', number: 1 },
+    }
+    const otherVersion = { ...current, id: otherProject.currentVersion!.id, projectId: otherProject.id }
+    const otherIssue: IssueDetail = {
+      ...savedIssue,
+      title: '다른 프로젝트의 문구 요청',
+      category: 'COPY',
+      origin: null,
+      originVersion: { id: otherVersion.id, number: 1 },
+    }
+    vi.mocked(getProject).mockImplementation(async (id) => (id === otherProject.id ? otherProject : project))
+    vi.mocked(listVersions).mockImplementation(async (id) =>
+      id === otherProject.id ? [otherVersion] : [current, initial],
+    )
+    vi.mocked(getVersion).mockImplementation(async (id) => (id === otherVersion.id ? otherVersion : current))
+    vi.mocked(listIssues).mockImplementation(async (id) => (id === otherProject.id ? [otherIssue] : filteredIssues))
+    await renderRoom('', `/projects/${otherProject.id}`)
+    await chooseFilters()
+    expectFilters()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('link', { name: '다른 페이지로 이동' }))
+    })
+
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${otherProject.id}`)
+    expect(listIssues).toHaveBeenLastCalledWith(otherProject.id)
+    expect(
+      list()
+        .getAllByRole<HTMLSelectElement>('combobox')
+        .map((select) => select.value),
+    ).toEqual(['', '', '', ''])
+    expect(list().getByRole<HTMLInputElement>('checkbox', { name: '마감 지남만' }).checked).toBe(false)
+    expect(list().queryByRole('button', { name: '필터 지우기', hidden: true })).toBeNull()
+    expect(list().getByRole('heading', { name: '쪽지 1개' })).toBeTruthy()
+    expect(list().getAllByRole('listitem')).toHaveLength(1)
+    expect(list().getByRole('button', { name: new RegExp(otherIssue.title) })).toBeTruthy()
   })
 })

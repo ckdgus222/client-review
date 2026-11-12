@@ -87,7 +87,8 @@ export const dueDateLabel = (dueDate: string) => {
   return year === new Date().getFullYear() ? monthDay : `${year}년 ${monthDay}`
 }
 
-// 쪽지 목록을 골라 보는 조건(검수실의 필터).
+// 쪽지 목록을 골라 보는 조건(검수실의 필터). 서버를 부르지 않지만 여기에 둔다. 필터 부품 파일(IssueFilters.tsx)이
+// 부품이 아닌 것을 함께 내보내면, 개발 서버가 그 파일을 고칠 때 화면을 통째로 새로 불러온다(린트 경고).
 // 화면 필터에서 "위치 없음"을 고른 값. 화면 id(UUID)와 겹치지 않는다.
 export const NO_PLACE = 'none'
 

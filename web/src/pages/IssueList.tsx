@@ -1,10 +1,10 @@
-import { useState } from 'react'
 import {
   countFilters,
   dueDateLabel,
   filterIssues,
   ISSUE_CATEGORY_LABELS,
   ISSUE_SCOPE_LABELS,
+  type IssueFilter,
   type IssueSummary,
   isOverdue,
   isUnresolved,
@@ -19,6 +19,9 @@ import styles from './IssueList.module.css'
 type IssueListProps = {
   // 서버가 준 순서(번호 큰 순) 그대로 보여 준다.
   issues: IssueSummary[]
+  // 고른 필터. 검수실이 들고 있다. 쪽지 쓰기 칸이 열리면 이 목록은 화면에서 빠지는데, 그때도 고른 조건이 남아야 한다.
+  filter: IssueFilter
+  onFilterChange: (filter: IssueFilter) => void
   selectedId?: string
   onSelect: (issueId: string) => void
   // 없으면 쪽지 쓰기 버튼을 그리지 않는다(지난 버전이나 승인된 버전을 보는 중).
@@ -33,9 +36,7 @@ const tagLine = (issue: IssueSummary) => {
   return tags.join(' · ')
 }
 
-export const IssueList = ({ issues, selectedId, onSelect, onCompose }: IssueListProps) => {
-  // 필터는 화면 상태로만 둔다. 목록이 새로 와도(15초마다) 쪽지를 열고 닫아도 남고, 화면을 새로 고치면 풀린다.
-  const [filter, setFilter] = useState(NO_FILTER)
+export const IssueList = ({ issues, filter, onFilterChange, selectedId, onSelect, onCompose }: IssueListProps) => {
   const shown = filterIssues(issues, filter)
   const isFiltering = countFilters(filter) > 0
   const unresolved = issues.filter((issue) => isUnresolved(issue.status)).length
@@ -78,7 +79,7 @@ export const IssueList = ({ issues, selectedId, onSelect, onCompose }: IssueList
           <h2>{isFiltering ? `쪽지 ${shown.length}개 / 전체 ${issues.length}개` : `쪽지 ${issues.length}개`}</h2>
           <span className={styles.hint}>미해결 {unresolved}개</span>
           {isFiltering && (
-            <button type="button" className={styles.link} onClick={() => setFilter(NO_FILTER)}>
+            <button type="button" className={styles.link} onClick={() => onFilterChange(NO_FILTER)}>
               필터 지우기
             </button>
           )}
@@ -89,7 +90,7 @@ export const IssueList = ({ issues, selectedId, onSelect, onCompose }: IssueList
           </Button>
         )}
       </div>
-      {issues.length > 0 && <IssueFilters issues={issues} filter={filter} onChange={setFilter} />}
+      {issues.length > 0 && <IssueFilters issues={issues} filter={filter} onChange={onFilterChange} />}
       {renderRows()}
     </section>
   )

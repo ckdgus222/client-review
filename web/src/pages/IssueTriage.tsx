@@ -59,6 +59,8 @@ export const IssueTriage = ({
   // 날짜 칸에 치던 날짜. 치지 않았으면(undefined) 지금 마감일을 보여 준다.
   const [dueDraft, setDueDraft] = useState<string>()
 
+  // 받은 횟수(fetchCount)가 올랐으면 안내를 거둔다. 받은 값이 바뀐 것을 그리는 중에 알아채 상태를 맞추는,
+  // React 문서가 effect 대신 권하는 방식이다(바로 다시 그려서 안내가 한 번도 잘못 보이지 않는다).
   // 쪽지 내용이 달라졌는지로 판단하지 않는다. 저장된 댓글은 서버에 다시 묻지 않고 화면에 바로 붙어서,
   // 새로 받아 오지 못했는데도 내용은 달라질 수 있다.
   if (seenFetchCount !== fetchCount) {

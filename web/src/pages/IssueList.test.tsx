@@ -1,7 +1,13 @@
+import { useState, type ComponentProps } from 'react'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import type { IssuePin, IssueSummary } from '../api/issues.ts'
-import { originLabel } from '../api/issues.ts'
+import { NO_FILTER, originLabel } from '../api/issues.ts'
 import { IssueList } from './IssueList.tsx'
+
+const StatefulIssueList = (props: Omit<ComponentProps<typeof IssueList>, 'filter' | 'onFilterChange'>) => {
+  const [filter, setFilter] = useState(NO_FILTER)
+  return <IssueList {...props} filter={filter} onFilterChange={setFilter} />
+}
 
 const origin: IssuePin = {
   screenId: 'product-screen',
@@ -52,7 +58,7 @@ describe('IssueList', () => {
     ['수정 중만', [unpinnedIssue], 1],
     ['접수와 수정 중', issues, 3],
   ] as const)('%s인 목록의 전체 수와 미해결 수를 머리에 보여 준다', (_label, items, count) => {
-    render(<IssueList issues={[...items]} onSelect={vi.fn()} />)
+    render(<StatefulIssueList issues={[...items]} onSelect={vi.fn()} />)
 
     const list = within(screen.getByRole('region', { name: '쪽지 목록' }))
     expect(list.getByRole('heading', { name: `쪽지 ${count}개` })).toBeTruthy()
@@ -60,7 +66,7 @@ describe('IssueList', () => {
   })
 
   it('줄마다 번호·제목·상태·처음 위치·댓글 수를 보여 준다', () => {
-    render(<IssueList issues={issues} onSelect={vi.fn()} />)
+    render(<StatefulIssueList issues={issues} onSelect={vi.fn()} />)
 
     const rows = screen.getAllByRole('listitem')
     expect(rows).toHaveLength(3)
@@ -86,7 +92,7 @@ describe('IssueList', () => {
 
   it('번호나 버전으로 다시 정렬하지 않고 받은 순서 그대로 보여 준다', () => {
     const received = [draftIssue, mobileIssue, unpinnedIssue]
-    render(<IssueList issues={received} onSelect={vi.fn()} />)
+    render(<StatefulIssueList issues={received} onSelect={vi.fn()} />)
 
     const rows = screen.getAllByRole('listitem')
     expect(rows.map((row) => within(row).getByText(/^#\d+$/).textContent)).toEqual(['#14', '#16', '#15'])
@@ -96,7 +102,7 @@ describe('IssueList', () => {
   it.each([true, false])('쓰기 가능이 %s여도 각 줄을 누르면 그 쪽지 id만 onSelect에 보낸다', (writable) => {
     const onSelect = vi.fn()
     const onCompose = vi.fn()
-    render(<IssueList issues={issues} onSelect={onSelect} onCompose={writable ? onCompose : undefined} />)
+    render(<StatefulIssueList issues={issues} onSelect={onSelect} onCompose={writable ? onCompose : undefined} />)
 
     const buttons = within(screen.getByRole('list')).getAllByRole('button')
     buttons.forEach((button) => fireEvent.click(button))
@@ -110,17 +116,17 @@ describe('IssueList', () => {
 
   it('selectedId와 같은 줄만 선택되고 선택을 바꾸거나 없애면 표시도 바뀐다', () => {
     const onSelect = vi.fn()
-    const { rerender } = render(<IssueList issues={issues} selectedId="draft-issue" onSelect={onSelect} />)
+    const { rerender } = render(<StatefulIssueList issues={issues} selectedId="draft-issue" onSelect={onSelect} />)
 
     expect(screen.getAllByRole('button', { pressed: true })).toEqual([screen.getByRole('button', { name: /#14/ })])
     expect(screen.getAllByRole('button', { pressed: false })).toHaveLength(2)
 
-    rerender(<IssueList issues={issues} selectedId="unpinned-issue" onSelect={onSelect} />)
+    rerender(<StatefulIssueList issues={issues} selectedId="unpinned-issue" onSelect={onSelect} />)
 
     expect(screen.getAllByRole('button', { pressed: true })).toEqual([screen.getByRole('button', { name: /#15/ })])
     expect(screen.getAllByRole('button', { pressed: false })).toHaveLength(2)
 
-    rerender(<IssueList issues={issues} onSelect={onSelect} />)
+    rerender(<StatefulIssueList issues={issues} onSelect={onSelect} />)
 
     expect(screen.queryByRole('button', { pressed: true })).toBeNull()
     expect(screen.getAllByRole('button', { pressed: false })).toHaveLength(3)
@@ -128,7 +134,7 @@ describe('IssueList', () => {
   })
 
   it('목록에 없는 selectedId는 어느 줄도 선택하지 않는다', () => {
-    render(<IssueList issues={issues} selectedId="missing-issue" onSelect={vi.fn()} />)
+    render(<StatefulIssueList issues={issues} selectedId="missing-issue" onSelect={vi.fn()} />)
 
     expect(screen.queryByRole('button', { pressed: true })).toBeNull()
     expect(screen.getAllByRole('button', { pressed: false })).toHaveLength(3)
@@ -137,7 +143,7 @@ describe('IssueList', () => {
   it('onCompose가 있으면 쪽지 쓰기를 누를 때 한 번 부르고 쪽지를 선택하지 않는다', () => {
     const onSelect = vi.fn()
     const onCompose = vi.fn()
-    render(<IssueList issues={issues} onSelect={onSelect} onCompose={onCompose} />)
+    render(<StatefulIssueList issues={issues} onSelect={onSelect} onCompose={onCompose} />)
 
     expect(onCompose).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '쪽지 쓰기' }))
@@ -149,21 +155,21 @@ describe('IssueList', () => {
   it('onCompose가 없으면 쪽지 쓰기 버튼이 없고 권한이 바뀌면 버튼도 바뀐다', () => {
     const onSelect = vi.fn()
     const onCompose = vi.fn()
-    const { rerender } = render(<IssueList issues={issues} onSelect={onSelect} />)
+    const { rerender } = render(<StatefulIssueList issues={issues} onSelect={onSelect} />)
 
     expect(screen.queryByRole('button', { name: '쪽지 쓰기' })).toBeNull()
 
-    rerender(<IssueList issues={issues} onSelect={onSelect} onCompose={onCompose} />)
+    rerender(<StatefulIssueList issues={issues} onSelect={onSelect} onCompose={onCompose} />)
     expect(screen.getByRole('button', { name: '쪽지 쓰기' })).toBeTruthy()
 
-    rerender(<IssueList issues={issues} onSelect={onSelect} />)
+    rerender(<StatefulIssueList issues={issues} onSelect={onSelect} />)
     expect(screen.queryByRole('button', { name: '쪽지 쓰기' })).toBeNull()
     expect(onCompose).not.toHaveBeenCalled()
   })
 
   it('빈 목록에서 쓸 수 있으면 첫 쪽지 안내와 쓰기 버튼만 있고 ul은 없다', () => {
     const onCompose = vi.fn()
-    const { container } = render(<IssueList issues={[]} onSelect={vi.fn()} onCompose={onCompose} />)
+    const { container } = render(<StatefulIssueList issues={[]} onSelect={vi.fn()} onCompose={onCompose} />)
 
     expect(screen.getByRole('heading', { name: '쪽지 0개' })).toBeTruthy()
     expect(screen.getByText('미해결 0개')).toBeTruthy()
@@ -175,7 +181,7 @@ describe('IssueList', () => {
   })
 
   it('빈 목록이 읽기 전용이면 빈 안내만 있고 쓰기 안내·버튼·ul은 없다', () => {
-    const { container } = render(<IssueList issues={[]} onSelect={vi.fn()} />)
+    const { container } = render(<StatefulIssueList issues={[]} onSelect={vi.fn()} />)
 
     expect(screen.getByRole('heading', { name: '쪽지 0개' })).toBeTruthy()
     expect(screen.getByText('미해결 0개')).toBeTruthy()
@@ -188,10 +194,12 @@ describe('IssueList', () => {
 
   it('목록을 새로 받으면 개수·상태·댓글 수를 갱신하고 고른 쪽지를 유지한다', () => {
     const onSelect = vi.fn()
-    const { rerender } = render(<IssueList issues={[draftIssue]} selectedId="draft-issue" onSelect={onSelect} />)
+    const { rerender } = render(
+      <StatefulIssueList issues={[draftIssue]} selectedId="draft-issue" onSelect={onSelect} />,
+    )
 
     rerender(
-      <IssueList
+      <StatefulIssueList
         issues={[mobileIssue, { ...draftIssue, status: 'IN_PROGRESS', commentCount: 3 }]}
         selectedId="draft-issue"
         onSelect={onSelect}
@@ -207,7 +215,7 @@ describe('IssueList', () => {
     expect(screen.queryByText('초안 · 상품 상세 · PC · 댓글 2개')).toBeNull()
     expect(onSelect).not.toHaveBeenCalled()
 
-    rerender(<IssueList issues={[]} selectedId="draft-issue" onSelect={onSelect} />)
+    rerender(<StatefulIssueList issues={[]} selectedId="draft-issue" onSelect={onSelect} />)
 
     expect(screen.getByRole('heading', { name: '쪽지 0개' })).toBeTruthy()
     expect(screen.getByText('미해결 0개')).toBeTruthy()
@@ -218,7 +226,7 @@ describe('IssueList', () => {
   it.each(['<script>alert(1)</script>', '<img src=x onerror=alert(1)>'])(
     '제목 %s는 글자 그대로 보이고 HTML 요소로 만들어지지 않는다',
     (title) => {
-      const { container } = render(<IssueList issues={[{ ...draftIssue, title }]} onSelect={vi.fn()} />)
+      const { container } = render(<StatefulIssueList issues={[{ ...draftIssue, title }]} onSelect={vi.fn()} />)
 
       expect(screen.getByText(title).textContent).toBe(title)
       expect(container.querySelector('script, img, [onerror]')).toBeNull()
@@ -270,7 +278,7 @@ describe('IssueList 쪽지 정리', () => {
     ['COPY', '문구'],
     ['OTHER', '기타'],
   ] as const)('분류 %s의 꼬리표 %s를 상태 아래에 보여 주고 처음 위치와 댓글 수를 유지한다', (category, label) => {
-    render(<IssueList issues={[{ ...draftIssue, category }]} onSelect={vi.fn()} />)
+    render(<StatefulIssueList issues={[{ ...draftIssue, category }]} onSelect={vi.fn()} />)
 
     const row = within(screen.getByRole('listitem'))
     const status = row.getByText('접수')
@@ -290,7 +298,7 @@ describe('IssueList 쪽지 정리', () => {
     ['IN_SCOPE', '2027-01-05', '버그 · 마감 2027년 1월 5일'],
     ['IN_SCOPE', '2025-12-31', '버그 · 마감 2025년 12월 31일 · 마감 지남'],
   ] as const)('범위 %s와 마감일 %s의 꼬리표는 %s다', (scope, dueDate, expected) => {
-    render(<IssueList issues={[{ ...draftIssue, scope, dueDate }]} onSelect={vi.fn()} />)
+    render(<StatefulIssueList issues={[{ ...draftIssue, scope, dueDate }]} onSelect={vi.fn()} />)
 
     const row = within(screen.getByRole('listitem'))
     expect(row.getByText('접수').nextElementSibling!.textContent).toBe(expected)
@@ -309,7 +317,10 @@ describe('IssueList 쪽지 정리', () => {
   ] as const)('상태 %s, 마감일 %s일 때 마감 지남 표시는 %s다', (status, dueDate, overdue) => {
     // 끝난 상태는 6번에서 타입에 들어온다. 접수·수정 중에만 지남을 표시해야 한다.
     render(
-      <IssueList issues={[{ ...draftIssue, status: status as IssueSummary['status'], dueDate }]} onSelect={vi.fn()} />,
+      <StatefulIssueList
+        issues={[{ ...draftIssue, status: status as IssueSummary['status'], dueDate }]}
+        onSelect={vi.fn()}
+      />,
     )
 
     expect(screen.getByRole('listitem').textContent!.includes(' · 마감 지남')).toBe(overdue)
@@ -329,7 +340,7 @@ describe('IssueList 쪽지 정리', () => {
     ['범위', 'OUT_OF_SCOPE', ['#15', '#16']],
   ] as const)('%s에서 %s를 고르면 맞는 줄만 받은 순서로 보이고 전체로 되돌릴 수 있다', (label, value, numbers) => {
     const onSelect = vi.fn()
-    render(<IssueList issues={triageIssues} onSelect={onSelect} />)
+    render(<StatefulIssueList issues={triageIssues} onSelect={onSelect} />)
 
     expect(screen.getByRole('heading', { name: '쪽지 4개' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '필터 지우기' })).toBeNull()
@@ -356,7 +367,7 @@ describe('IssueList 쪽지 정리', () => {
       { ...draftIssue, id: 'future', number: 19, dueDate: '2026-11-13' },
       { ...draftIssue, id: 'done', number: 20, status: 'VERIFIED' as IssueSummary['status'], dueDate: '2026-11-11' },
     ]
-    render(<IssueList issues={items} onSelect={vi.fn()} />)
+    render(<StatefulIssueList issues={items} onSelect={vi.fn()} />)
     const checkbox = screen.getByRole<HTMLInputElement>('checkbox', { name: '마감 지남만' })
 
     fireEvent.click(checkbox)
@@ -385,7 +396,7 @@ describe('IssueList 쪽지 정리', () => {
       { ...match, id: 'different-scope', number: 23, scope: 'IN_SCOPE' },
       { ...match, id: 'different-date', number: 24, dueDate: '2026-11-12' },
     ]
-    render(<IssueList issues={items} onSelect={vi.fn()} />)
+    render(<StatefulIssueList issues={items} onSelect={vi.fn()} />)
 
     fireEvent.change(selectFor('상태'), { target: { value: 'OPEN' } })
     fireEvent.change(selectFor('화면'), { target: { value: 'product-screen' } })
@@ -411,7 +422,7 @@ describe('IssueList 쪽지 정리', () => {
   })
 
   it('맞는 쪽지가 없으면 빈 결과 안내와 전체 미해결 수를 보여 주고 지우면 제목과 모든 줄이 돌아온다', () => {
-    render(<IssueList issues={triageIssues.slice(0, 3)} onSelect={vi.fn()} />)
+    render(<StatefulIssueList issues={triageIssues.slice(0, 3)} onSelect={vi.fn()} />)
     fireEvent.change(selectFor('분류'), { target: { value: 'DESIGN' } })
     expect(screen.getByRole('heading', { name: '쪽지 1개 / 전체 3개' })).toBeTruthy()
 
@@ -434,7 +445,7 @@ describe('IssueList 쪽지 정리', () => {
 
   it('새 목록을 받으면 고른 조건을 유지하고 바뀐 쪽지와 새 쪽지에 다시 적용한다', () => {
     const onSelect = vi.fn()
-    const { rerender } = render(<IssueList issues={triageIssues} onSelect={onSelect} />)
+    const { rerender } = render(<StatefulIssueList issues={triageIssues} onSelect={onSelect} />)
     fireEvent.change(selectFor('분류'), { target: { value: 'DESIGN' } })
     fireEvent.change(selectFor('범위'), { target: { value: 'OUT_OF_SCOPE' } })
     expect(shownNumbers()).toEqual(['#16'])
@@ -444,7 +455,7 @@ describe('IssueList 쪽지 정리', () => {
       { ...draftIssue, category: 'DESIGN', scope: 'OUT_OF_SCOPE' },
       { ...unpinnedIssue, id: 'new-issue', number: 18, category: 'DESIGN', scope: 'OUT_OF_SCOPE' },
     ]
-    rerender(<IssueList issues={refreshed} onSelect={onSelect} />)
+    rerender(<StatefulIssueList issues={refreshed} onSelect={onSelect} />)
 
     expect(selectFor('분류').value).toBe('DESIGN')
     expect(selectFor('범위').value).toBe('OUT_OF_SCOPE')
@@ -456,10 +467,10 @@ describe('IssueList 쪽지 정리', () => {
 
   it('고른 화면의 쪽지가 모두 사라져도 조건이 남고 그 화면이 다시 오면 같은 조건으로 보인다', () => {
     const onSelect = vi.fn()
-    const { rerender } = render(<IssueList issues={triageIssues} onSelect={onSelect} />)
+    const { rerender } = render(<StatefulIssueList issues={triageIssues} onSelect={onSelect} />)
     fireEvent.change(selectFor('화면'), { target: { value: 'mobile-screen' } })
 
-    rerender(<IssueList issues={[draftIssue, unpinnedIssue]} onSelect={onSelect} />)
+    rerender(<StatefulIssueList issues={[draftIssue, unpinnedIssue]} onSelect={onSelect} />)
 
     expect(screen.getByText('조건에 맞는 쪽지가 없어요')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '쪽지 0개 / 전체 2개' })).toBeTruthy()
@@ -467,7 +478,7 @@ describe('IssueList 쪽지 정리', () => {
     fireEvent.change(selectFor('분류'), { target: { value: 'DESIGN' } })
     expect(shownNumbers()).toEqual([])
 
-    rerender(<IssueList issues={triageIssues} onSelect={onSelect} />)
+    rerender(<StatefulIssueList issues={triageIssues} onSelect={onSelect} />)
 
     expect(selectFor('화면').value).toBe('mobile-screen')
     expect(selectFor('분류').value).toBe('DESIGN')
@@ -477,21 +488,21 @@ describe('IssueList 쪽지 정리', () => {
 
   it('쪽지를 열고 닫아도 필터가 남고 고른 쪽지가 조건에서 빠져도 다른 쪽지를 자동 선택하지 않는다', () => {
     const onSelect = vi.fn()
-    const { rerender } = render(<IssueList issues={triageIssues} onSelect={onSelect} />)
+    const { rerender } = render(<StatefulIssueList issues={triageIssues} onSelect={onSelect} />)
     fireEvent.change(selectFor('분류'), { target: { value: 'DESIGN' } })
     fireEvent.click(screen.getByRole('button', { name: /#16/ }))
     expect(onSelect).toHaveBeenCalledExactlyOnceWith('mobile-issue')
 
-    rerender(<IssueList issues={triageIssues} selectedId="mobile-issue" onSelect={onSelect} />)
+    rerender(<StatefulIssueList issues={triageIssues} selectedId="mobile-issue" onSelect={onSelect} />)
     expect(shownNumbers()).toEqual(['#16'])
     expect(screen.getByRole('button', { name: /#16/, pressed: true })).toBeTruthy()
 
-    rerender(<IssueList issues={triageIssues} onSelect={onSelect} />)
+    rerender(<StatefulIssueList issues={triageIssues} onSelect={onSelect} />)
     expect(selectFor('분류').value).toBe('DESIGN')
     expect(shownNumbers()).toEqual(['#16'])
     expect(screen.queryByRole('button', { pressed: true })).toBeNull()
 
-    rerender(<IssueList issues={triageIssues} selectedId="mobile-issue" onSelect={onSelect} />)
+    rerender(<StatefulIssueList issues={triageIssues} selectedId="mobile-issue" onSelect={onSelect} />)
     fireEvent.change(selectFor('분류'), { target: { value: 'COPY' } })
     expect(shownNumbers()).toEqual(['#15'])
     expect(screen.queryByRole('button', { pressed: true })).toBeNull()
@@ -505,7 +516,7 @@ describe('IssueList 쪽지 정리', () => {
   it.each([true, false])('쓰기 가능이 %s여도 쪽지가 있으면 필터가 있고 빈 목록에는 필터가 없다', (writable) => {
     const onCompose = writable ? vi.fn() : undefined
     const onSelect = vi.fn()
-    const { rerender } = render(<IssueList issues={[]} onSelect={onSelect} onCompose={onCompose} />)
+    const { rerender } = render(<StatefulIssueList issues={[]} onSelect={onSelect} onCompose={onCompose} />)
 
     expect(screen.queryByRole('combobox')).toBeNull()
     expect(screen.queryByRole('checkbox')).toBeNull()
@@ -516,7 +527,7 @@ describe('IssueList 쪽지 정리', () => {
       ),
     ).toBeTruthy()
 
-    rerender(<IssueList issues={[draftIssue]} onSelect={onSelect} onCompose={onCompose} />)
+    rerender(<StatefulIssueList issues={[draftIssue]} onSelect={onSelect} onCompose={onCompose} />)
 
     expect(screen.getAllByRole('combobox')).toHaveLength(4)
     expect(screen.getByRole('checkbox', { name: '마감 지남만' })).toBeTruthy()
@@ -525,16 +536,105 @@ describe('IssueList 쪽지 정리', () => {
   })
 
   it('목록을 새로 열면 이전에 고른 조건이 풀린다', () => {
-    const { unmount } = render(<IssueList issues={triageIssues} onSelect={vi.fn()} />)
+    const { unmount } = render(<StatefulIssueList issues={triageIssues} onSelect={vi.fn()} />)
     fireEvent.change(selectFor('분류'), { target: { value: 'COPY' } })
     expect(shownNumbers()).toEqual(['#15'])
     unmount()
 
-    render(<IssueList issues={triageIssues} onSelect={vi.fn()} />)
+    render(<StatefulIssueList issues={triageIssues} onSelect={vi.fn()} />)
 
     expect(selectFor('분류').value).toBe('')
     expect(shownNumbers()).toEqual(['#14', '#15', '#16', '#17'])
     expect(screen.getByRole('heading', { name: '쪽지 4개' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '필터 지우기' })).toBeNull()
+  })
+})
+
+describe('IssueList 필터 prop', () => {
+  it('받은 filter대로 거르고 새 prop을 받으면 입력과 목록을 함께 바꾼다', () => {
+    const onFilterChange = vi.fn()
+    const onSelect = vi.fn()
+    const { rerender } = render(
+      <IssueList
+        issues={issues}
+        filter={{ ...NO_FILTER, status: 'IN_PROGRESS' }}
+        onFilterChange={onFilterChange}
+        onSelect={onSelect}
+      />,
+    )
+
+    expect(screen.getByRole('heading', { name: '쪽지 1개 / 전체 3개' })).toBeTruthy()
+    expect(screen.getAllByRole('listitem').map((row) => within(row).getByText(/^#\d+$/).textContent)).toEqual(['#15'])
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '상태' }).value).toBe('IN_PROGRESS')
+
+    rerender(
+      <IssueList
+        issues={issues}
+        filter={{ ...NO_FILTER, status: 'OPEN' }}
+        onFilterChange={onFilterChange}
+        onSelect={onSelect}
+      />,
+    )
+
+    expect(screen.getByRole('heading', { name: '쪽지 2개 / 전체 3개' })).toBeTruthy()
+    expect(screen.getAllByRole('listitem').map((row) => within(row).getByText(/^#\d+$/).textContent)).toEqual([
+      '#16',
+      '#14',
+    ])
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '상태' }).value).toBe('OPEN')
+    expect(onFilterChange).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['상태', 'status', 'OPEN'],
+    ['화면', 'screenId', 'mobile-screen'],
+    ['분류', 'category', 'DESIGN'],
+    ['범위', 'scope', 'OUT_OF_SCOPE'],
+    ['마감 지남만', 'overdueOnly', true],
+  ] as const)('%s를 바꾸면 다음 조건을 알리지만 prop이 그대로면 입력과 줄도 그대로다', (label, field, value) => {
+    const filter = { ...NO_FILTER, status: 'IN_PROGRESS' as const, category: 'BUG' as const }
+    const onFilterChange = vi.fn()
+    render(<IssueList issues={issues} filter={filter} onFilterChange={onFilterChange} onSelect={vi.fn()} />)
+
+    if (field === 'overdueOnly') {
+      fireEvent.click(screen.getByRole('checkbox', { name: label }))
+    } else {
+      fireEvent.change(screen.getByRole('combobox', { name: label }), { target: { value } })
+    }
+
+    expect(onFilterChange).toHaveBeenCalledExactlyOnceWith({ ...filter, [field]: value })
+    expect(screen.getAllByRole<HTMLSelectElement>('combobox').map((select) => select.value)).toEqual([
+      'IN_PROGRESS',
+      '',
+      'BUG',
+      '',
+    ])
+    expect(screen.getByRole<HTMLInputElement>('checkbox', { name: '마감 지남만' }).checked).toBe(false)
+    expect(screen.getByRole('heading', { name: '쪽지 1개 / 전체 3개' })).toBeTruthy()
+    expect(screen.getAllByRole('listitem').map((row) => within(row).getByText(/^#\d+$/).textContent)).toEqual(['#15'])
+  })
+
+  it('필터 지우기는 NO_FILTER를 알리고 부모가 prop을 바꿀 때까지 기존 줄을 유지한다', () => {
+    const filter = { ...NO_FILTER, status: 'IN_PROGRESS' as const }
+    const onFilterChange = vi.fn()
+    const onSelect = vi.fn()
+    const { rerender } = render(
+      <IssueList issues={issues} filter={filter} onFilterChange={onFilterChange} onSelect={onSelect} />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '필터 지우기' }))
+
+    expect(onFilterChange).toHaveBeenCalledExactlyOnceWith(NO_FILTER)
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '상태' }).value).toBe('IN_PROGRESS')
+    expect(screen.getByRole('heading', { name: '쪽지 1개 / 전체 3개' })).toBeTruthy()
+    expect(screen.getAllByRole('listitem')).toHaveLength(1)
+    expect(within(screen.getByRole('listitem')).getByText(unpinnedIssue.title)).toBeTruthy()
+
+    rerender(<IssueList issues={issues} filter={NO_FILTER} onFilterChange={onFilterChange} onSelect={onSelect} />)
+
+    expect(screen.getByRole('heading', { name: '쪽지 3개' })).toBeTruthy()
+    expect(screen.getAllByRole('listitem')).toHaveLength(3)
+    expect(screen.queryByRole('button', { name: '필터 지우기' })).toBeNull()
+    expect(onFilterChange).toHaveBeenCalledTimes(1)
   })
 })
