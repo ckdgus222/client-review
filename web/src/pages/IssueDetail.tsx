@@ -3,6 +3,7 @@ import { ApiError } from '../api/client.ts'
 import {
   attachIssuePhoto,
   createComment,
+  type IssueComment,
   type IssueDetail as Issue,
   type NewComment,
   originLabel,
@@ -30,6 +31,8 @@ type IssueDetailProps = {
   isDeveloper: boolean
   // 수정 시작·참고 사진처럼 서버가 바뀐 쪽지를 돌려준 경우.
   onChanged: (issue: Issue) => void
+  // 댓글이 저장된 경우. 서버는 저장한 댓글만 돌려준다. 바로 뒤에 onRefresh도 부른다.
+  onCommented: (comment: IssueComment) => void
   // 댓글을 썼거나 화면이 아는 것과 서버가 달라져서, 쪽지를 다시 불러와야 하는 경우.
   onRefresh: () => void
   onGoLatest: () => void
@@ -132,9 +135,12 @@ const Actions = ({ issue, versionId, canWrite, isDeveloper, onChanged, onRefresh
   )
 }
 
-type CommentFormProps = Pick<IssueDetailProps, 'issue' | 'versionId' | 'canWrite' | 'onRefresh' | 'onGoLatest'>
+type CommentFormProps = Pick<
+  IssueDetailProps,
+  'issue' | 'versionId' | 'canWrite' | 'onCommented' | 'onRefresh' | 'onGoLatest'
+>
 
-const CommentForm = ({ issue, versionId, canWrite, onRefresh, onGoLatest }: CommentFormProps) => {
+const CommentForm = ({ issue, versionId, canWrite, onCommented, onRefresh, onGoLatest }: CommentFormProps) => {
   const bodyId = useId()
   const [body, setBody] = useState('')
   const [bodyError, setBodyError] = useState<string>()
@@ -143,9 +149,10 @@ const CommentForm = ({ issue, versionId, canWrite, onRefresh, onGoLatest }: Comm
   // 요청에 대상 쪽지도 함께 담는다. 잠긴 뒤에는 처음 보낸 대상과 글이 그대로 다시 간다.
   const { sending, locked, error, submit, retry, cancel } = useLockedSubmit(
     (request: { issueId: string; comment: NewComment }) => createComment(request.issueId, request.comment),
-    () => {
+    (comment) => {
       setBody('')
       setRequestId(crypto.randomUUID())
+      onCommented(comment)
       onRefresh()
     },
   )
@@ -216,6 +223,7 @@ export const IssueDetail = ({
   canWrite,
   isDeveloper,
   onChanged,
+  onCommented,
   onRefresh,
   onGoLatest,
   onClose,
@@ -267,6 +275,7 @@ export const IssueDetail = ({
         issue={issue}
         versionId={versionId}
         canWrite={canWrite}
+        onCommented={onCommented}
         onRefresh={onRefresh}
         onGoLatest={onGoLatest}
       />

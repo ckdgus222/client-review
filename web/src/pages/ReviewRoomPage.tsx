@@ -4,6 +4,7 @@ import { ApiError } from '../api/client.ts'
 import { isUuid } from '../api/ids.ts'
 import {
   getIssue,
+  type IssueComment,
   type IssueDetail as IssueDetailData,
   type IssueSummary,
   listIssues,
@@ -21,6 +22,7 @@ import {
   type VersionScreen,
   type VersionSummary,
 } from '../api/versions.ts'
+import { Button } from '../components/Button.tsx'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { ProjectNotFound } from '../components/ProjectNotFound.tsx'
 import { useMe } from '../hooks/useMe.ts'
@@ -177,12 +179,23 @@ const ReviewRoom = ({ id }: { id: string }) => {
     }
   }, [searchParams])
 
-  // 쪽지 목록과 상세를 부를 때마다 번호를 매겨, 가장 나중에 시작한 요청의 응답만 받는다. 쪽지를 만들거나 바꾼 뒤에도
+  // 쪽지 목록과 상세를 부를 때마다 번호를 매겨, 가장 나중에 시작한 요청의 응답만 받는다. 쪽지를 만들거나 바꾸거나 닫은 뒤에도
   // 번호를 올려서, 그보다 먼저 시작한 요청의 응답(방금 만든 쪽지나 방금 바뀐 내용이 빠져 있다)이 늦게 와도 버린다.
   // 상세는 가장 나중에 연 쪽지가 무엇인지도 함께 적는다. 늦게 끝난 요청의 콜백은 그 요청을 시작한 때의 쪽지를
   // 기억하고 있어서, 그사이 다른 쪽지를 열었는지는 화면 상태가 아니라 이 값으로 확인한다.
   const listRequest = useRef(0)
   const detailRequest = useRef({ issueId: '', number: 0 })
+  // 상세 요청의 번호를 화면 상태로도 둔다. 수정 시작·참고 사진 버튼을 누른 때의 번호를 그 요청의 콜백이 기억하게
+  // 하려는 것이다(applyChange). ref는 늘 지금 값이라서, 콜백이 읽으면 누른 때가 아니라 응답이 온 때의 번호가 나온다.
+  const [detailNumber, setDetailNumber] = useState(0)
+
+  // 상세 요청을 새로 시작한다고 적는다. 이보다 먼저 시작한 요청의 응답은 이제 받지 않는다.
+  const startDetailRequest = useCallback((issueId: string) => {
+    const number = detailRequest.current.number + 1
+    detailRequest.current = { issueId, number }
+    setDetailNumber(number)
+    return number
+  }, [])
 
   // 로그인 확인을 기다리지 않고 같이 부른다. 하나라도 실패하면 오류 하나로 보여 준다.
   // 쪽지 목록에는 위의 번호를 함께 쓴다. 안 그러면 먼저 시작한 15초 새로 부르기의 늦은 응답이 여기서 받은 목록을
@@ -211,18 +224,25 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 참여자 목록은 개발자만 부를 수 있어서(클라이언트는 403) 개발자이고 승인자가 없을 때만 부른다.
   useEffect(() => {
     if (project?.myRole !== 'DEVELOPER' || project.approver) return
+    // "최신 버전 보기"가 프로젝트를 다시 불러오면 한 번 더 부른다. 정리 함수가 먼저 부른 요청의 늦은 응답을 버린다.
+    let ignore = false
     listMembers(id)
-      .then(({ members }) => setNeedsApprover(members.some((member) => member.role === 'CLIENT')))
+      .then(({ members }) => {
+        if (!ignore) setNeedsApprover(members.some((member) => member.role === 'CLIENT'))
+      })
       // 알림은 도움말이라, 목록을 못 불러와도 검수실은 그대로 보여 준다.
       .catch(() => {})
+    return () => {
+      ignore = true
+    }
   }, [id, project])
 
   // 주소에 고른 버전이 없으면 현재 버전을 본다. 빈 값(?version=)은 고른 것으로 보고 아래에서 틀린 id로 거른다.
   const versionId = requestedVersionId ?? project?.currentVersion?.id
 
-  // "최신 버전 보기"(goLatest)가 프로젝트를 다시 불러오는 데 성공할 때마다 올린다. 보던 버전과 같은 버전이어도 상세를 다시 부르게 한다.
-  // 지난번에 최신 버전의 사진을 불러오지 못했으면, 이것 없이는 같은 버전이라 다시 부르지 않아서 사진도 버전 고르기도
-  // 없는 화면에서 새로 고침 말고는 빠져나올 길이 없다(쓰던 글이 사라진다).
+  // 올리면 보던 버전과 같은 버전이어도 상세를 다시 부른다. "최신 버전 보기"(goLatest)가 프로젝트를 다시 불러오는 데
+  // 성공할 때와, 사진을 못 불러온 화면의 "다시 시도"가 올린다. 이것 없이는 같은 버전이라 다시 부르지 않아서, 사진도
+  // 버전 고르기도 없는 화면에서 새로 고침 말고는 빠져나올 길이 없다(쓰던 글이 사라진다).
   const [versionReloads, setVersionReloads] = useState(0)
   // goLatest가 프로젝트를 다시 불러오는 중인가.
   const loadingLatest = useRef(false)
@@ -258,28 +278,32 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const openIssue = issues.find((issue) => issue.id === requestedIssueId?.toLowerCase())
   const openIssueId = openIssue?.id
 
-  // 쪽지를 처음 열 때와 새로 부를 때(15초마다, 댓글을 남긴 뒤, 쪽지 상태가 달라져 있을 때) 함께 쓴다.
-  const loadIssue = useCallback((issueId: string) => {
-    const number = detailRequest.current.number + 1
-    detailRequest.current = { issueId, number }
-    getIssue(issueId).then(
-      (detail) => {
-        if (detailRequest.current.number === number) setLoadedIssue({ id: issueId, detail })
-      },
-      (caught) => {
-        if (detailRequest.current.number !== number) return
-        // 보여 주던 상세가 있으면 그대로 둔다. 새로 부르기는 도움 기능이라, 실패했다고 보던 쪽지와 쓰던 댓글을 치우지 않는다.
-        // 보여 줄 상세가 없을 때만 오류를 알린다.
-        setLoadedIssue((shown) =>
-          shown?.id === issueId && shown.detail ? shown : { id: issueId, error: toMessage(caught) },
-        )
-      },
-    )
-  }, [])
+  // 쪽지를 처음 열 때와 새로 부를 때(15초마다, 댓글을 남긴 뒤, 쪽지 상태가 달라져 있을 때, 쓰기 응답을 버렸을 때) 함께 쓴다.
+  const loadIssue = useCallback(
+    (issueId: string) => {
+      const number = startDetailRequest(issueId)
+      getIssue(issueId).then(
+        (detail) => {
+          if (detailRequest.current.number === number) setLoadedIssue({ id: issueId, detail })
+        },
+        (caught) => {
+          if (detailRequest.current.number !== number) return
+          // 보여 주던 상세가 있으면 그대로 둔다. 새로 부르기는 도움 기능이라, 실패했다고 보던 쪽지와 쓰던 댓글을 치우지 않는다.
+          // 보여 줄 상세가 없을 때만 오류를 알린다.
+          setLoadedIssue((shown) =>
+            shown?.id === issueId && shown.detail ? shown : { id: issueId, error: toMessage(caught) },
+          )
+        },
+      )
+    },
+    [startDetailRequest],
+  )
 
   useEffect(() => {
     if (openIssueId) loadIssue(openIssueId)
-  }, [openIssueId, loadIssue])
+    // 쪽지를 닫으면 번호만 올려서, 닫기 전에 시작한 요청의 응답을 버린다. 그 응답이 늦게 오면 그사이 새로 만든 쪽지의 상세를 덮어쓴다.
+    else startDetailRequest('')
+  }, [openIssueId, loadIssue, startDetailRequest])
 
   // 다른 사람이 쓴 쪽지와 댓글이 새로고침 없이 보이게 한다. 쪽지 목록과 열어 둔 쪽지만 다시 부르고,
   // 프로젝트와 버전은 부르지 않는다. 보던 버전이 저절로 바뀌면 쓰던 글과 핀이 흔들리기 때문이다.
@@ -302,9 +326,35 @@ const ReviewRoom = ({ id }: { id: string }) => {
     if (issueId && detailRequest.current.issueId === issueId) loadIssue(issueId)
   }
 
+  // 수정 시작·참고 사진의 응답(서버가 돌려준 바뀐 쪽지)을 화면에 쓴다. startedAt은 그 버튼을 누른 때의 상세 요청 번호다.
+  const applyChange = (issue: IssueDetailData, startedAt: number) => {
+    // 목록에 보이는 상태도 바뀌었으니 목록은 늘 새로 부른다.
+    refreshList()
+    const open = detailRequest.current
+    // 응답을 기다리는 사이 다른 쪽지를 열었으면 그 쪽지의 상세도, 그 쪽지를 부르는 요청도 건드리지 않는다.
+    // 건드리면 지금 보는 쪽지와 쓰던 댓글이 화면에서 사라진다.
+    if (open.issueId !== issue.id) return
+    // 누른 뒤에 이 쪽지를 새로 부른 적이 있으면(댓글을 남긴 뒤, 15초마다 등) 이 응답을 버리고 다시 부른다.
+    // 서버가 이 요청을 그 새로 부르기보다 먼저 처리했을 수 있어서, 그대로 쓰면 방금 보이던 댓글이 화면에서 사라진다.
+    if (open.number !== startedAt) return loadIssue(issue.id)
+    // 누르기 전에 시작한 요청의 응답(바뀌기 전 내용)이 아직 안 왔으면, 번호를 올려서 버린다.
+    startDetailRequest(issue.id)
+    setLoadedIssue({ id: issue.id, detail: issue })
+  }
+
+  // 저장된 댓글을 보이는 상세에 바로 붙인다. 뒤따르는 새로 부르기가 실패해도 댓글이 보여서, 저장이 안 된 줄 알고
+  // 한 번 더 쓰지 않는다(댓글은 지울 수 없다). 새로 부르기가 이 댓글을 먼저 받아 왔으면 붙이지 않는다.
+  const addComment = (issueId: string, comment: IssueComment) =>
+    setLoadedIssue((shown) => {
+      if (shown?.id !== issueId || !shown.detail) return shown
+      if (shown.detail.comments.some((item) => item.id === comment.id)) return shown
+      return { ...shown, detail: { ...shown.detail, comments: [...shown.detail.comments, comment] } }
+    })
+
   // 타이머는 한 번만 걸고, 울릴 때마다 그때의 쪽지(openIssueId)로 새로 부른다.
+  // 처음 불러오기가 끝나기 전에는 부르지 않는다. 먼저 부르면 목록 요청 번호가 올라가서, 처음 불러오기가 받아 온 쪽지 목록이 버려진다.
   const refreshIfVisible = useEffectEvent(() => {
-    if (document.visibilityState === 'visible') refreshIssues(openIssueId)
+    if (project && document.visibilityState === 'visible') refreshIssues(openIssueId)
   })
 
   useEffect(() => {
@@ -407,13 +457,16 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 새 버전으로 가면 저절로 빠진다.
   // 불러오는 중에 한 번 더 누르면 받지 않는다. 요청이 둘이면 먼저 보낸 요청의 응답이 나중에 와서,
   // 더 새 버전을 보여 주던 화면을 그 전 버전으로 되돌릴 수 있다.
+  // 기다리는 사이 사용자가 버전을 직접 골랐으면 그 선택을 둔다. 나중에 한 선택을 먼저 누른 버튼이 뒤집지 않는다.
   const goLatest = () => {
     if (loadingLatest.current) return
     loadingLatest.current = true
+    const versionAtPress = latestParams.current?.get('version')
     loadRoom()
       .then(
         () => {
           setVersionReloads((count) => count + 1)
+          if (latestParams.current?.get('version') !== versionAtPress) return
           setShowIssuePlace(false)
           setParam('version')
         },
@@ -516,9 +569,6 @@ const ReviewRoom = ({ id }: { id: string }) => {
             <ErrorText message={shownIssue.error} />
           </div>
         )}
-        {openIssue && shownIssue && !shownIssue.detail && !shownIssue.error && (
-          <p className={styles.panelMessage}>쪽지를 불러오는 중이에요.</p>
-        )}
         {shownIssue?.detail && (
           <IssueDetail
             // 쪽지를 바꾸면 쓰던 댓글과 잠금이 다음 쪽지로 넘어가지 않게 새로 시작한다. 버전만 바꾸면 그대로 남는다.
@@ -527,17 +577,9 @@ const ReviewRoom = ({ id }: { id: string }) => {
             versionId={shownVersionId}
             canWrite={canWrite}
             isDeveloper={isDeveloper}
-            // 서버가 바뀐 쪽지를 이미 돌려줬으니 상세는 다시 부르지 않고, 목록(상태·댓글 수)만 새로 부른다.
-            onChanged={(issue) => {
-              // 응답을 기다리는 사이 다른 쪽지를 열었으면 그 쪽지의 상세도, 그 쪽지를 부르는 요청도 건드리지 않는다.
-              // 건드리면 지금 보는 쪽지와 쓰던 댓글이 화면에서 사라진다.
-              // 같은 쪽지면 먼저 시작한 상세 요청의 응답(바뀌기 전 내용)을 버린다.
-              if (detailRequest.current.issueId === issue.id) {
-                detailRequest.current = { issueId: issue.id, number: detailRequest.current.number + 1 }
-                setLoadedIssue({ id: issue.id, detail: issue })
-              }
-              refreshList()
-            }}
+            // 누른 때의 번호를 넘긴다(applyChange).
+            onChanged={(issue) => applyChange(issue, detailNumber)}
+            onCommented={(comment) => addComment(shownIssue.id, comment)}
             onRefresh={() => refreshIssues(shownIssue.id)}
             onGoLatest={goLatest}
             onClose={() => setParam('issue')}
@@ -578,6 +620,10 @@ const ReviewRoom = ({ id }: { id: string }) => {
       return (
         <div className={styles.message}>
           <ErrorText message={current.error} />
+          {/* 사진을 못 불러와도 쪽지 칸에는 쓰던 글이 남아 있다. 새로 고침 없이 다시 불러올 길을 둔다. */}
+          <Button variant="secondary" onClick={() => setVersionReloads((count) => count + 1)}>
+            다시 시도
+          </Button>
         </div>
       )
     }
@@ -618,7 +664,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
           {isDeveloper && <Link to={`/projects/${id}/settings`}>설정</Link>}
         </nav>
       </div>
-      {needsApprover && (
+      {/* 프로젝트를 다시 불러와 승인자가 생겼으면 알리지 않는다. */}
+      {needsApprover && !project.approver && (
         <p className={styles.notice}>
           승인자를 정해 주세요. <Link to={`/projects/${id}/settings`}>설정으로 가기</Link>
         </p>

@@ -74,6 +74,7 @@ const renderDetail = (overrides: Partial<ComponentProps<typeof IssueDetail>> = {
     canWrite: true,
     isDeveloper: true,
     onChanged: vi.fn(),
+    onCommented: vi.fn(),
     onRefresh: vi.fn(),
     onGoLatest: vi.fn(),
     onClose: vi.fn(),
@@ -758,5 +759,66 @@ describe('IssueDetail', () => {
     expect(commentInput().value).toBe('  새 댓글\n둘째 줄  ')
     await click('댓글 남기기')
     expect(vi.mocked(createComment).mock.calls[1]).toEqual(firstRequest)
+  })
+})
+
+describe('IssueDetail 댓글 저장 알림', () => {
+  it.each(['처음 보내기', '잠긴 댓글 다시 보내기'])(
+    '%s가 성공하면 저장된 댓글을 한 번 알린 뒤 상세 갱신을 요청한다',
+    async (sending) => {
+      const { props } = renderDetail()
+      fillComment(savedComment.body)
+      if (sending === '잠긴 댓글 다시 보내기') {
+        vi.mocked(createComment).mockRejectedValueOnce(new TypeError('연결 끊김'))
+        await click('댓글 남기기')
+        expect(props.onCommented).not.toHaveBeenCalled()
+        expect(props.onRefresh).not.toHaveBeenCalled()
+        expect(commentInput().readOnly).toBe(true)
+      }
+
+      await click(sending === '처음 보내기' ? '댓글 남기기' : '다시 보내기')
+
+      expect(props.onCommented).toHaveBeenCalledExactlyOnceWith(savedComment)
+      expect(vi.mocked(props.onCommented).mock.calls[0][0]).toBe(savedComment)
+      expect(props.onRefresh).toHaveBeenCalledExactlyOnceWith()
+      expect(vi.mocked(props.onCommented).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(props.onRefresh).mock.invocationCallOrder[0],
+      )
+      expect(commentInput().value).toBe('')
+      expect(commentInput().readOnly).toBe(false)
+    },
+  )
+
+  it.each([
+    { reason: '401', error: new ApiError(401) },
+    { reason: '403', error: new ApiError(403) },
+    { reason: '404', error: new ApiError(404) },
+    { reason: '409', error: new ApiError(409, 'VERSION_CHANGED') },
+    { reason: '422', error: new ApiError(422) },
+    { reason: '500', error: new ApiError(500) },
+    { reason: '연결 끊김', error: new TypeError('연결 끊김') },
+  ])('처음 보내기와 잠긴 댓글 다시 보내기가 $reason이면 저장을 알리지 않는다', async ({ error }) => {
+    const { props } = renderDetail()
+    fillComment(savedComment.body)
+    vi.mocked(createComment).mockRejectedValueOnce(error)
+    await click('댓글 남기기')
+    expect(createComment).toHaveBeenCalledTimes(1)
+    expect(props.onCommented).not.toHaveBeenCalled()
+    expect(props.onRefresh).not.toHaveBeenCalled()
+    expect(commentInput().value).toBe(savedComment.body)
+
+    // 처음 실패가 확정된 거절이면, 연결 실패를 한 번 거쳐 잠긴 상태도 확인한다.
+    if (!commentInput().readOnly) {
+      vi.mocked(createComment).mockRejectedValueOnce(new TypeError('연결 끊김'))
+      await click('댓글 남기기')
+    }
+    expect(commentInput().readOnly).toBe(true)
+    const attempts = vi.mocked(createComment).mock.calls.length
+    vi.mocked(createComment).mockRejectedValueOnce(error)
+    await click('다시 보내기')
+    expect(createComment).toHaveBeenCalledTimes(attempts + 1)
+    expect(props.onCommented).not.toHaveBeenCalled()
+    expect(props.onRefresh).not.toHaveBeenCalled()
+    expect(commentInput().value).toBe(savedComment.body)
   })
 })
