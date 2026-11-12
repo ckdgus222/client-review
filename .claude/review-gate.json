@@ -1,5 +1,6 @@
 {
   "testCommand": "npm --prefix api test && npm --prefix web test && npm --prefix e2e test",
+  "sliceTestCommand": "npm --prefix api test -- --changed --passWithNoTests && npm --prefix web test -- --changed --passWithNoTests && npm --prefix e2e test -- --only-changed --pass-with-no-tests",
   "securityPaths": ["api/src/"],
   "e2eGate": {
     "testPattern": "^(api/test|e2e/tests)/[^/]+\\.e2e\\.spec\\.ts$",
