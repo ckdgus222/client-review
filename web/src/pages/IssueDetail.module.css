@@ -47,6 +47,11 @@
   color: var(--color-text-muted);
 }
 
+/* 색만으로 알리지 않는다. "마감 지남" 글자가 함께 보인다. */
+.overdue {
+  color: var(--color-danger);
+}
+
 /* 쓴 사람이 줄을 나눠 쓴 글을 그대로 보여 준다. */
 .body {
   white-space: pre-wrap;

@@ -3,8 +3,12 @@ import { ApiError } from '../api/client.ts'
 import {
   attachIssuePhoto,
   createComment,
+  dueDateLabel,
+  ISSUE_CATEGORY_LABELS,
+  ISSUE_SCOPE_LABELS,
   type IssueComment,
   type IssueDetail as Issue,
+  isOverdue,
   type NewComment,
   originLabel,
   removeIssuePhoto,
@@ -16,6 +20,7 @@ import { ErrorText } from '../components/ErrorText.tsx'
 import { StatusBadge } from '../components/StatusBadge.tsx'
 import { type SubmitError, toSubmitError, useLockedSubmit } from '../hooks/useLockedSubmit.ts'
 import styles from './IssueDetail.module.css'
+import { IssueTriage } from './IssueTriage.tsx'
 import { SubmitErrorText } from './SubmitErrorText.tsx'
 
 // 서버의 한도와 같다(쪽지마다 참고 사진 3장, 댓글 2,000자). 바꾸면 서버도 함께 바꾼다.
@@ -32,7 +37,9 @@ type IssueDetailProps = {
   // 그때는 "읽기 전용"이 아니라 아직 불러오지 못했다고 알린다.
   versionLoaded: boolean
   isDeveloper: boolean
-  // 수정 시작·참고 사진처럼 서버가 바뀐 쪽지를 돌려준 경우.
+  // 이 쪽지의 상세를 서버에서 새로 받아 화면에 쓴 횟수. 쪽지 정리 칸이 저장 여부를 다시 확인했는지 아는 데 쓴다.
+  fetchCount: number
+  // 수정 시작·참고 사진·쪽지 정리처럼 서버가 바뀐 쪽지를 돌려준 경우.
   onChanged: (issue: Issue) => void
   // 댓글이 저장된 경우. 서버는 저장한 댓글만 돌려준다. 바로 뒤에 onRefresh도 부른다.
   onCommented: (comment: IssueComment) => void
@@ -245,6 +252,7 @@ export const IssueDetail = ({
   canWrite,
   versionLoaded,
   isDeveloper,
+  fetchCount,
   onChanged,
   onCommented,
   onRefresh,
@@ -268,9 +276,29 @@ export const IssueDetail = ({
       <dd>{issue.authorName}</dd>
       <dt>쓴 시각</dt>
       <dd>{timeFormat.format(new Date(issue.createdAt))}</dd>
+      <dt>분류</dt>
+      <dd>{ISSUE_CATEGORY_LABELS[issue.category]}</dd>
+      <dt>범위</dt>
+      <dd>{ISSUE_SCOPE_LABELS[issue.scope]}</dd>
+      <dt>마감일</dt>
+      <dd>
+        {issue.dueDate ? dueDateLabel(issue.dueDate) : '없음'}
+        {isOverdue(issue) && <strong className={styles.overdue}> · 마감 지남</strong>}
+      </dd>
     </dl>
     {/* 글은 일반 글자로만 보여 준다. 줄바꿈은 CSS(pre-wrap)가 살린다. */}
     {issue.body && <p className={styles.body}>{issue.body}</p>}
+    {/* 쓸 수 없는 동안에도 늘 둔다. 입력은 이 부품이 감추고, 치던 날짜는 버전을 옮겨 다녀도 남는다. */}
+    <IssueTriage
+      issue={issue}
+      versionId={versionId}
+      canWrite={canWrite}
+      isDeveloper={isDeveloper}
+      fetchCount={fetchCount}
+      onChanged={onChanged}
+      onRefresh={onRefresh}
+      onGoLatest={onGoLatest}
+    />
     <Actions
       issue={issue}
       versionId={versionId}

@@ -8,6 +8,7 @@ import {
   type IssueDetail as Issue,
   removeIssuePhoto,
   startIssue,
+  updateIssue,
 } from '../api/issues.ts'
 import { timeFormat } from '../api/versions.ts'
 import { IssueDetail } from './IssueDetail.tsx'
@@ -18,6 +19,7 @@ vi.mock('../api/issues.ts', async (importOriginal) => ({
   createComment: vi.fn(),
   removeIssuePhoto: vi.fn(),
   startIssue: vi.fn(),
+  updateIssue: vi.fn(),
 }))
 
 const versionId = '22222222-2222-4222-8222-222222222222'
@@ -77,6 +79,7 @@ const renderDetail = (overrides: Partial<ComponentProps<typeof IssueDetail>> = {
     canWrite: true,
     versionLoaded: true,
     isDeveloper: true,
+    fetchCount: 1,
     onChanged: vi.fn(),
     onCommented: vi.fn(),
     onDraftChange: vi.fn(),
@@ -114,10 +117,12 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ ...issue, attachments: [photos[0]] })
   vi.mocked(createComment).mockReset().mockResolvedValue(savedComment)
+  vi.mocked(updateIssue).mockReset().mockResolvedValue(issue)
   vi.spyOn(window, 'confirm').mockReturnValue(true)
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -1000,5 +1005,181 @@ describe('IssueDetail 댓글 초안 알림', () => {
     rerender(<IssueDetail {...props} canWrite />)
     expect(commentInput().value).toBe(savedComment.body)
     expect(props.onDraftChange).not.toHaveBeenCalledWith(false)
+  })
+})
+
+describe('IssueDetail 쪽지 정리', () => {
+  const metadata = (label: string) => screen.getByText(label, { selector: 'dt' }).nextElementSibling!
+  const dueDateInput = () => screen.getByLabelText<HTMLInputElement>('마감일')
+  const select = async (label: string, value: string) => {
+    await act(async () => {
+      fireEvent.change(screen.getByRole('combobox', { name: label }), { target: { value } })
+    })
+  }
+  const unconfirmedMessage = '저장됐는지 확인하지 못했어요. 쪽지에 바뀐 값이 보이지 않으면 다시 눌러 주세요.'
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 10, 12, 12))
+  })
+
+  it.each([
+    ['BUG', '버그'],
+    ['DESIGN', '디자인'],
+    ['COPY', '문구'],
+    ['OTHER', '기타'],
+  ] as const)('분류 %s를 %s로 쓴 시각 아래에 보여 준다', (category, label) => {
+    const { container } = renderDetail({ issue: { ...issue, category } })
+
+    expect(Array.from(container.querySelectorAll('dt'), (term) => term.textContent)).toEqual([
+      '처음 위치',
+      '쓴 사람',
+      '쓴 시각',
+      '분류',
+      '범위',
+      '마감일',
+    ])
+    expect(metadata('분류').textContent).toBe(label)
+    expect(metadata('범위').textContent).toBe('하자 수정')
+    expect(metadata('마감일').textContent).toBe('없음')
+  })
+
+  it.each([
+    ['IN_SCOPE', '하자 수정'],
+    ['OUT_OF_SCOPE', '추가 요청'],
+  ] as const)('범위 %s를 %s로 보여 준다', (scope, label) => {
+    renderDetail({ issue: { ...issue, scope } })
+    expect(metadata('범위').textContent).toBe(label)
+  })
+
+  it.each([
+    [null, '없음'],
+    ['2026-11-15', '11월 15일'],
+    ['2027-01-05', '2027년 1월 5일'],
+    ['2025-12-31', '2025년 12월 31일 · 마감 지남'],
+  ])('마감일 %s를 %s로 보여 준다', (dueDate, label) => {
+    renderDetail({ issue: { ...issue, dueDate } })
+    expect(metadata('마감일').textContent).toBe(label)
+  })
+
+  it.each([
+    ['OPEN', '2026-11-11', true],
+    ['IN_PROGRESS', '2026-11-11', true],
+    ['OPEN', '2026-11-12', false],
+    ['IN_PROGRESS', '2026-11-12', false],
+    ['OPEN', '2026-11-13', false],
+    ['IN_PROGRESS', null, false],
+    ['VERIFIED', '2026-11-11', false],
+    ['WITHDRAWN', '2026-11-11', false],
+  ] as const)('상태 %s, 마감일 %s일 때 마감 지남 표시는 %s다', (status, dueDate, overdue) => {
+    // 끝난 상태는 6번 기능에서 타입에 들어온다. 지금도 접수·수정 중에만 지남을 표시해야 한다.
+    renderDetail({ issue: { ...issue, status: status as Issue['status'], dueDate } })
+    expect(metadata('마감일').textContent!.includes(' · 마감 지남')).toBe(overdue)
+  })
+
+  it.each([true, false])('읽기 전용이고 사진 로딩 완료가 %s여도 값은 보이고 정리 입력은 없다', (versionLoaded) => {
+    renderDetail({
+      canWrite: false,
+      versionLoaded,
+      issue: { ...issue, category: 'COPY', scope: 'OUT_OF_SCOPE', dueDate: '2026-11-11' },
+    })
+
+    expect(metadata('분류').textContent).toBe('문구')
+    expect(metadata('범위').textContent).toBe('추가 요청')
+    expect(metadata('마감일').textContent).toBe('11월 11일 · 마감 지남')
+    expect(screen.queryByRole('combobox', { name: '분류' })).toBeNull()
+    expect(screen.queryByRole('combobox', { name: '범위' })).toBeNull()
+    expect(screen.queryByLabelText('마감일')).toBeNull()
+    expect(screen.queryByRole('button', { name: '마감일 저장' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '마감일 지우기' })).toBeNull()
+  })
+
+  it.each([
+    [true, true, true, true],
+    [true, false, true, true],
+    [false, true, true, false],
+    [false, false, false, false],
+  ])('개발자=%s, 작성자=%s이면 분류 입력=%s, 범위·날짜 입력=%s다', (isDeveloper, isMine, category, scope) => {
+    renderDetail({ isDeveloper, issue: { ...issue, isMine } })
+
+    expect(screen.queryByRole('combobox', { name: '분류' }) !== null).toBe(category)
+    expect(screen.queryByRole('combobox', { name: '범위' }) !== null).toBe(scope)
+    expect(screen.queryByLabelText('마감일') !== null).toBe(scope)
+    expect(screen.queryByRole('button', { name: '마감일 저장' }) !== null).toBe(scope)
+  })
+
+  it('본문 아래의 분류를 바꾸면 선택한 버전으로 보내고 응답을 onChanged로 넘긴다', async () => {
+    const changed: Issue = { ...issue, category: 'DESIGN' }
+    vi.mocked(updateIssue).mockResolvedValueOnce(changed)
+    const { props } = renderDetail({ versionId: latestVersionId, isDeveloper: false })
+    const body = screen.getByText(issue.body, { collapseWhitespace: false })
+    const category = screen.getByRole('combobox', { name: '분류' })
+    expect(body.compareDocumentPosition(category) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+
+    await select('분류', 'DESIGN')
+
+    expect(updateIssue).toHaveBeenCalledExactlyOnceWith(issue.id, latestVersionId, { category: 'DESIGN' })
+    expect(props.onChanged).toHaveBeenCalledExactlyOnceWith(changed)
+    expect(props.onRefresh).not.toHaveBeenCalled()
+    expect(window.confirm).not.toHaveBeenCalled()
+  })
+
+  it.each(['2026-11-20', ''])('새 상세로 바뀌어도 직접 친 날짜 "%s"는 남는다', (draft) => {
+    const { props, rerender } = renderDetail({ issue: { ...issue, dueDate: '2026-11-15' } })
+    fireEvent.change(dueDateInput(), { target: { value: draft } })
+
+    rerender(<IssueDetail {...props} issue={{ ...issue, dueDate: '2026-12-01' }} fetchCount={2} />)
+
+    expect(metadata('마감일').textContent).toBe('12월 1일')
+    expect(dueDateInput().value).toBe(draft)
+    expect(updateIssue).not.toHaveBeenCalled()
+  })
+
+  it.each([true, false])(
+    '쓰기 불가와 사진 로딩 완료=%s를 거쳐 다시 쓸 수 있어도 날짜 초안이 남는다',
+    (versionLoaded) => {
+      const { props, rerender } = renderDetail()
+      fireEvent.change(dueDateInput(), { target: { value: '2026-11-20' } })
+
+      rerender(<IssueDetail {...props} canWrite={false} versionLoaded={versionLoaded} />)
+      expect(screen.queryByLabelText('마감일')).toBeNull()
+      rerender(<IssueDetail {...props} versionId={latestVersionId} />)
+
+      expect(dueDateInput().value).toBe('2026-11-20')
+      expect(updateIssue).not.toHaveBeenCalled()
+    },
+  )
+
+  it('연결 실패 뒤 issue만 바뀌면 안내가 남고 fetchCount가 오르면 사라진다', async () => {
+    vi.mocked(updateIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const { props, rerender } = renderDetail()
+
+    await select('범위', 'OUT_OF_SCOPE')
+
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+    expect(props.onRefresh).toHaveBeenCalledExactlyOnceWith()
+    const commented = { ...issue, comments: [...issue.comments, savedComment], commentCount: 3 }
+    rerender(<IssueDetail {...props} issue={commented} />)
+    expect(screen.getByText(savedComment.body)).toBeTruthy()
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+    rerender(<IssueDetail {...props} issue={commented} fetchCount={2} />)
+    expect(screen.queryByText(unconfirmedMessage)).toBeNull()
+  })
+
+  it('마감일 저장의 새 버전 안내에서 최신 버전 보기를 누르면 치던 날짜를 새 버전으로 보낸다', async () => {
+    vi.mocked(updateIssue).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    const { props, rerender } = renderDetail()
+    fireEvent.change(dueDateInput(), { target: { value: '2026-11-20' } })
+    await click('마감일 저장')
+    expect(screen.getByText(/새 버전이 올라왔어요/)).toBeTruthy()
+    rerender(<IssueDetail {...props} canWrite={false} versionLoaded={false} />)
+    expect(screen.queryByLabelText('마감일')).toBeNull()
+    await click('최신 버전 보기')
+    expect(props.onGoLatest).toHaveBeenCalledTimes(1)
+    rerender(<IssueDetail {...props} versionId={latestVersionId} />)
+
+    expect(dueDateInput().value).toBe('2026-11-20')
+    await click('마감일 저장')
+    expect(updateIssue).toHaveBeenLastCalledWith(issue.id, latestVersionId, { dueDate: '2026-11-20' })
   })
 })
