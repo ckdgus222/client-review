@@ -1,0 +1,43 @@
+.triage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+}
+
+.triage :where(p) {
+  margin: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.field label {
+  font-weight: 600;
+}
+
+/* 값은 TextField.module.css의 입력칸과 같다. 그쪽을 바꾸면 함께 바꾼다. 높이는 손가락으로 누르기 쉽게 44px이다. */
+.field :is(select, input) {
+  min-height: 44px;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+/* 보내는 동안에는 바꿀 수 없다는 것이 보이게 바탕을 회색으로 바꾼다. */
+.field :is(select, input):disabled {
+  background: var(--color-disabled-bg);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
