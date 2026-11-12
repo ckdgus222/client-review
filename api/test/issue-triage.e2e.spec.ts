@@ -166,7 +166,7 @@ describe('쪽지 정리 API (e2e)', () => {
     const own = await update({ category: 'DESIGN' }, clientCookie).expect(200);
     expect(own.body).toMatchObject({ id: issueId, category: 'DESIGN', scope: 'IN_SCOPE', dueDate: null, isMine: true });
     const developer = await update({ category: 'COPY' }).expect(200);
-    expect(developer.body).toEqual({ ...own.body, category: 'COPY', isMine: false });
+    expect(developer.body).toEqual({ ...own.body, category: 'COPY', isMine: false, canReview: false });
     await get(`/api/issues/${issueId}`).expect(200).expect(developer.body);
     const list = await get(`/api/projects/${projectId}/issues`).expect(200);
     expect(list.body).toEqual([

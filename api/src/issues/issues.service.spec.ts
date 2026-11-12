@@ -177,12 +177,22 @@ describe('IssuesService', () => {
         originVersion: { id: current.id, number: 0 },
         origin: null,
       };
-      expect(detail).toEqual({ ...summary, body: request.body, isMine: true, attachments: [], comments: [] });
+      expect(detail).toEqual({
+        ...summary,
+        body: request.body,
+        isMine: true,
+        attachments: [],
+        comments: [],
+        attempts: [],
+        canReview: role !== '개발자',
+        projectId,
+      });
       expect(await service.list(projectId, client.id)).toEqual([summary]);
       expect(await service.getDetail(detail.id, author.id)).toEqual(detail);
       expect(await service.getDetail(detail.id, author.id === client.id ? developer.id : client.id)).toEqual({
         ...detail,
         isMine: false,
+        canReview: false,
       });
       expect(await prisma.issue.findUniqueOrThrow({ where: { id: detail.id } })).toEqual({
         id: detail.id,
@@ -304,7 +314,16 @@ describe('IssuesService', () => {
         yRatio,
       },
     };
-    expect(detail).toEqual({ ...summary, body: request.body, isMine: true, attachments: [], comments: [] });
+    expect(detail).toEqual({
+      ...summary,
+      body: request.body,
+      isMine: true,
+      attachments: [],
+      comments: [],
+      attempts: [],
+      canReview: true,
+      projectId,
+    });
     expect(await service.list(projectId, client.id)).toEqual([summary]);
     expect(await service.getDetail(detail.id, client.id)).toEqual(detail);
     expect(await prisma.issue.findUniqueOrThrow({ where: { id: detail.id } })).toMatchObject({
@@ -706,6 +725,7 @@ describe('IssuesService', () => {
     expect(await service.getDetail(issue.id, developer.id)).toEqual({
       ...issue,
       isMine: false,
+      canReview: false,
       commentCount: 3,
       comments: [
         {
@@ -761,6 +781,7 @@ describe('IssuesService', () => {
     expect(await service.getDetail(issue.id, developer.id)).toEqual({
       ...issue,
       isMine: false,
+      canReview: false,
       attachments: [{ id: attachment.id, assetId: attachment.assetId, width: 400, height: 300 }],
     });
   });
@@ -784,7 +805,7 @@ describe('IssuesService', () => {
       ],
     };
     await prisma.projectMember.update({ where: { id: clientMember.id }, data: { revokedAt: new Date() } });
-    expect(await service.getDetail(issue.id, developer.id)).toEqual({ ...expected, isMine: false });
+    expect(await service.getDetail(issue.id, developer.id)).toEqual({ ...expected, isMine: false, canReview: false });
     expect(await service.list(projectId, developer.id)).toEqual([
       expect.objectContaining({ id: issue.id, authorName: client.name, commentCount: 1 }),
     ]);
@@ -794,6 +815,223 @@ describe('IssuesService', () => {
     expect(await service.getDetail(issue.id, client.id)).toEqual(expected);
     expect(await prisma.issue.count()).toBe(1);
     expect(await prisma.comment.count()).toBe(1);
+  });
+
+  // HTTP의 같은 시나리오는 조각 4에서 확인한다. 여기서는 실제 DB에 저장한 줄과 서비스 응답을 비교한다.
+  it('쪽지 상세에 고쳤어요 이력이 오래된 순으로 오고 canReview는 쓴 클라이언트와 승인자에게만 참이다', async () => {
+    const issue = await service.create(projectId, client.id, input());
+    const next = await publishVersion();
+    const fixed = await prisma.versionScreen.create({
+      data: {
+        version: { connect: { id: next.id } },
+        screen: { create: { projectId, name: '고친 모바일 화면', viewport: 'MOBILE' } },
+        asset: {
+          create: {
+            projectId,
+            storageKey: `${projectId}/${randomUUID()}.png`,
+            mime: 'image/png',
+            bytes: 100,
+            width: 390,
+            height: 844,
+          },
+        },
+      },
+      include: { screen: true, asset: true },
+    });
+
+    // 저장 순서와 시각 순서를 다르게 둔다. 결과 없는 옛 줄도 빠지면 안 된다.
+    const latest = await prisma.resolutionAttempt.create({
+      data: {
+        issueId: issue.id,
+        versionId: next.id,
+        versionScreenId: fixed.id,
+        summary: '모바일 버튼을 고쳤어요',
+        submittedById: developer.id,
+        createdAt: new Date('2026-03-03T00:00:00Z'),
+        result: 'VERIFIED',
+        reviewedById: approver.id,
+        reviewedAt: new Date('2026-03-03T01:00:00Z'),
+      },
+    });
+    const earliest = await prisma.resolutionAttempt.create({
+      data: {
+        issueId: issue.id,
+        versionId: current.id,
+        versionScreenId: versionScreen.id,
+        summary: '처음 고친 내용\n다시 확인해 주세요',
+        submittedById: developer.id,
+        createdAt: new Date('2026-03-01T00:00:00Z'),
+        result: 'REOPENED',
+        reviewedById: client.id,
+        reviewedAt: new Date('2026-03-01T01:00:00Z'),
+      },
+    });
+    const unanswered = await prisma.resolutionAttempt.create({
+      data: {
+        issueId: issue.id,
+        versionId: current.id,
+        summary: '화면 없이 보낸 설명',
+        submittedById: developer.id,
+        createdAt: new Date('2026-03-02T00:00:00Z'),
+      },
+    });
+    const otherIssue = await service.create(projectId, client.id, input({ versionId: next.id }));
+    const foreignIssue = await service.create(otherProjectId, outsider.id, input({ versionId: otherCurrent.id }));
+    const foreignScreen = await prisma.versionScreen.findUniqueOrThrow({
+      where: { versionId_screenId: { versionId: otherCurrent.id, screenId: otherScreen.id } },
+    });
+    await prisma.resolutionAttempt.createMany({
+      data: [
+        {
+          issueId: otherIssue.id,
+          versionId: next.id,
+          versionScreenId: fixed.id,
+          summary: '같은 프로젝트의 다른 쪽지',
+          submittedById: developer.id,
+        },
+        {
+          issueId: foreignIssue.id,
+          versionId: otherCurrent.id,
+          versionScreenId: foreignScreen.id,
+          summary: '다른 프로젝트의 쪽지',
+          submittedById: outsider.id,
+        },
+      ],
+    });
+    await prisma.projectMember.create({ data: { projectId, userId: outsider.id, role: 'CLIENT' } });
+    const before = await prisma.resolutionAttempt.findMany({ orderBy: { id: 'asc' } });
+    const attempts = [
+      {
+        id: earliest.id,
+        versionId: current.id,
+        versionNumber: 0,
+        screen: {
+          screenId: screen.id,
+          screenName: '상품 상세',
+          viewport: 'PC',
+          asset: { id: asset.id, width: 1200, height: 800 },
+        },
+        summary: '처음 고친 내용\n다시 확인해 주세요',
+        submittedByName: developer.name,
+        createdAt: new Date('2026-03-01T00:00:00Z'),
+        result: 'REOPENED',
+        reviewedByName: client.name,
+        reviewedAt: new Date('2026-03-01T01:00:00Z'),
+      },
+      {
+        id: unanswered.id,
+        versionId: current.id,
+        versionNumber: 0,
+        screen: null,
+        summary: '화면 없이 보낸 설명',
+        submittedByName: developer.name,
+        createdAt: new Date('2026-03-02T00:00:00Z'),
+        result: null,
+        reviewedByName: null,
+        reviewedAt: null,
+      },
+      {
+        id: latest.id,
+        versionId: next.id,
+        versionNumber: 1,
+        screen: {
+          screenId: fixed.screen.id,
+          screenName: '고친 모바일 화면',
+          viewport: 'MOBILE',
+          asset: { id: fixed.asset.id, width: 390, height: 844 },
+        },
+        summary: '모바일 버튼을 고쳤어요',
+        submittedByName: developer.name,
+        createdAt: new Date('2026-03-03T00:00:00Z'),
+        result: 'VERIFIED',
+        reviewedByName: approver.name,
+        reviewedAt: new Date('2026-03-03T01:00:00Z'),
+      },
+    ];
+    for (const [reader, canReview] of [[client, true], [approver, true], [developer, false], [outsider, false]] as const) {
+      const detail = await service.getDetail(issue.id, reader.id);
+      expect(detail).toEqual({ ...issue, attempts, canReview, projectId, isMine: reader.id === client.id });
+    }
+    expect(await prisma.resolutionAttempt.findMany({ orderBy: { id: 'asc' } })).toEqual(before);
+  });
+
+  it('고쳤어요가 없는 쪽지는 남의 이력이 있어도 빈 배열과 자기 프로젝트 id를 준다', async () => {
+    const own = await service.create(projectId, client.id, input());
+    const foreign = await service.create(otherProjectId, developer.id, input({ versionId: otherCurrent.id }));
+    await prisma.resolutionAttempt.create({
+      data: { issueId: own.id, versionId: current.id, summary: '다른 프로젝트의 이력', submittedById: developer.id },
+    });
+    const detail = await service.getDetail(foreign.id, developer.id);
+    expect(detail.attempts).toEqual([]);
+    expect(detail.projectId).toBe(otherProjectId);
+    // 이 사람은 첫 프로젝트에서는 개발자지만, 이 프로젝트에서는 쪽지를 쓴 클라이언트다.
+    expect(detail.canReview).toBe(true);
+  });
+
+  it.each(['OPEN', 'IN_PROGRESS', 'READY_FOR_REVIEW', 'VERIFIED', 'WITHDRAWN'] as const)(
+    '쪽지 상태가 %s여도 canReview는 쓴 클라이언트와 승인자에게만 참이고 개발자는 자기 쪽지도 거짓이다',
+    async (status) => {
+      for (const author of [client, approver, developer]) {
+        const detail = await service.create(projectId, author.id, input());
+        const issue = await prisma.issue.update({ where: { id: detail.id }, data: { status } });
+        expect(await service.canReview(prisma, issue, client.id)).toBe(author.id === client.id);
+        expect(await service.canReview(prisma, issue, approver.id)).toBe(true);
+        expect(await service.canReview(prisma, issue, developer.id)).toBe(false);
+        expect((await service.getDetail(issue.id, client.id)).canReview).toBe(author.id === client.id);
+        expect((await service.getDetail(issue.id, approver.id)).canReview).toBe(true);
+        expect((await service.getDetail(issue.id, developer.id)).canReview).toBe(false);
+      }
+    },
+  );
+
+  it('개발자가 쓴 쪽지는 승인자만 확인하고 승인자가 없으면 누구도 확인할 수 없다', async () => {
+    const detail = await service.create(projectId, developer.id, input());
+    const issue = { projectId, authorId: developer.id };
+    expect(await service.canReview(prisma, issue, approver.id)).toBe(true);
+    await prisma.project.update({ where: { id: projectId }, data: { approverMemberId: null } });
+    for (const reader of [developer, client, approver]) {
+      expect(await service.canReview(prisma, issue, reader.id)).toBe(false);
+      expect((await service.getDetail(detail.id, reader.id)).canReview).toBe(false);
+    }
+    expect(await service.canReview(prisma, issue, outsider.id)).toBe(false);
+    const own = await service.create(projectId, client.id, input());
+    expect((await service.getDetail(own.id, client.id)).canReview).toBe(true);
+    expect((await service.getDetail(own.id, approver.id)).canReview).toBe(false);
+  });
+
+  it.each(['철회된 승인자', '철회된 작성자', '멤버 아님'] as const)(
+    'canReview는 %s에게 자기 쪽지든 남의 쪽지든 거짓이다',
+    async (scenario) => {
+      const reader = { '철회된 승인자': approver, '철회된 작성자': client, '멤버 아님': outsider }[scenario];
+      if (scenario !== '멤버 아님') {
+        await prisma.projectMember.update({
+          where: { projectId_userId: { projectId, userId: reader.id } },
+          data: { revokedAt: new Date() },
+        });
+      }
+      expect(await service.canReview(prisma, { projectId, authorId: reader.id }, reader.id)).toBe(false);
+      expect(await service.canReview(prisma, { projectId, authorId: developer.id }, reader.id)).toBe(false);
+    },
+  );
+
+  it('다른 프로젝트의 승인자인 클라이언트는 이 프로젝트에서 남의 쪽지를 확인할 수 없다', async () => {
+    const member = await prisma.projectMember.create({
+      data: { projectId: otherProjectId, userId: client.id, role: 'CLIENT' },
+    });
+    await prisma.project.update({ where: { id: otherProjectId }, data: { approverMemberId: member.id } });
+    const detail = await service.create(projectId, developer.id, input());
+    expect(await service.canReview(prisma, { projectId, authorId: developer.id }, client.id)).toBe(false);
+    expect((await service.getDetail(detail.id, client.id)).canReview).toBe(false);
+    const foreign = await service.create(otherProjectId, outsider.id, input({ versionId: otherCurrent.id }));
+    expect((await service.getDetail(foreign.id, client.id)).canReview).toBe(true);
+  });
+
+  it('승인자가 바뀌면 이전 승인자는 남의 쪽지 확인 권한을 잃고 새 승인자는 얻는다', async () => {
+    const detail = await service.create(projectId, developer.id, input());
+    expect((await service.getDetail(detail.id, approver.id)).canReview).toBe(true);
+    await prisma.project.update({ where: { id: projectId }, data: { approverMemberId: clientMember.id } });
+    expect((await service.getDetail(detail.id, approver.id)).canReview).toBe(false);
+    expect((await service.getDetail(detail.id, client.id)).canReview).toBe(true);
   });
 
   it('requireVersionInReview는 버전 id를 생략해도 검수 중인 현재 버전 id를 돌려준다', async () => {
@@ -914,7 +1152,7 @@ describe('IssuesService', () => {
         );
         const untouched = await service.create(projectId, client.id, input());
         const before = await readState();
-        const expected = { ...issue, status: 'IN_PROGRESS', isMine: authorId === developer.id };
+        const expected = { ...issue, status: 'IN_PROGRESS', isMine: authorId === developer.id, canReview: false };
         expect(await service.start(issue.id, developer.id, current.id)).toEqual(expected);
         expect(await service.getDetail(issue.id, developer.id)).toEqual(expected);
         const after = await readState();
@@ -1030,6 +1268,7 @@ describe('IssuesService', () => {
         ...issue,
         status: 'IN_PROGRESS',
         isMine: false,
+        canReview: false,
       });
     });
 
@@ -1061,7 +1300,7 @@ describe('IssuesService', () => {
         service.start(issue.id, developer.id, current.id),
       ]);
       expect(results.filter(({ status }) => status === 'fulfilled')).toEqual([
-        { status: 'fulfilled', value: { ...issue, status: 'IN_PROGRESS', isMine: false } },
+        { status: 'fulfilled', value: { ...issue, status: 'IN_PROGRESS', isMine: false, canReview: false } },
       ]);
       expect(results.filter(({ status }) => status === 'rejected')).toEqual([
         { status: 'rejected', reason: expect.objectContaining(issueNotOpen) },
@@ -1191,6 +1430,7 @@ describe('IssuesService', () => {
         ...issue,
         status: 'IN_PROGRESS',
         isMine: false,
+        canReview: false,
       });
       expect(await prisma.activityEvent.count({ where: { issueId: issue.id, type: 'ISSUE_STARTED' } })).toBe(1);
     });

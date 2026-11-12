@@ -372,6 +372,9 @@ describe('IssueTriageService', () => {
       originVersion: { id: current.id, number: 0 },
       origin: null,
       isMine: false,
+      attempts: [],
+      canReview: false,
+      projectId,
       attachments: [],
       comments: [
         {
