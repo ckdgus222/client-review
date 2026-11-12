@@ -1646,7 +1646,10 @@ describe('ReviewRoomPage 쪽지 갱신', () => {
     expect(listIssues).toHaveBeenCalledTimes(2)
     expect(getIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id)
     expect(within(screen.getByRole('article', { name: '쪽지 #1' })).getByText('수정 중')).toBeTruthy()
-    expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getByText('수정 중')).toBeTruthy()
+    const row = within(screen.getByRole('region', { name: '쪽지 목록' })).getByRole('button', {
+      name: new RegExp(productIssue.title),
+    })
+    expect(within(row).getByText('수정 중')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '수정 시작' })).toBeNull()
   })
 
@@ -1819,7 +1822,10 @@ describe('ReviewRoomPage 응답 순서와 작성 화면 유지', () => {
       expect(commentInput.value).toBe(savedComment.body)
       expect(photo('장바구니 · 모바일').getAttribute('src')).toBe('/api/assets/current-cart')
       if (action === '수정 시작') {
-        expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getByText('수정 중')).toBeTruthy()
+        const row = within(screen.getByRole('region', { name: '쪽지 목록' })).getByRole('button', {
+          name: new RegExp(productIssue.title),
+        })
+        expect(within(row).getByText('수정 중')).toBeTruthy()
       }
 
       vi.mocked(getIssue).mockResolvedValueOnce({ ...cartIssue, body: 'B의 새로 불러온 내용' })
@@ -4023,10 +4029,13 @@ describe('ReviewRoomPage 쪽지 정리와 상세 조회 확인', () => {
   }
   const changeScope = async () => {
     await act(async () => {
-      fireEvent.change(screen.getByRole('combobox', { name: '범위' }), { target: { value: 'OUT_OF_SCOPE' } })
+      fireEvent.change(within(screen.getByRole('region', { name: '쪽지 정리' })).getByRole('combobox', { name: '범위' }), {
+        target: { value: 'OUT_OF_SCOPE' },
+      })
     })
   }
-  const scopeInput = () => screen.getByRole<HTMLSelectElement>('combobox', { name: '범위' })
+  const scopeInput = () =>
+    within(screen.getByRole('region', { name: '쪽지 정리' })).getByRole<HTMLSelectElement>('combobox', { name: '범위' })
 
   it.each([
     ['연결 실패', new TypeError('Failed to fetch')],
