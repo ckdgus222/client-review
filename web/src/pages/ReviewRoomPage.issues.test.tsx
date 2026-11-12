@@ -3111,3 +3111,124 @@ describe('ReviewRoomPage 승인자 알림 갱신', () => {
     expect(screen.queryByRole('link', { name: '설정으로 가기' })).toBeNull()
   })
 })
+
+describe('ReviewRoomPage 댓글 초안을 남기고 새 쪽지 쓰기', () => {
+  it.each([
+    { action: '사진 누르기', compose: () => placePin(), pinned: true },
+    { action: '쪽지 쓰기 버튼', compose: () => click('쪽지 쓰기'), pinned: false },
+  ])('$action은 쓰던 댓글이 있으면 묻고 취소하면 그대로 두며 확인하면 쓰기 칸을 연다', async ({ compose, pinned }) => {
+    await renderRoom(`?version=${current.id}&issue=${productIssue.id}`)
+    fillComment()
+    const address = screen.getByLabelText('현재 주소').textContent
+    vi.mocked(window.confirm).mockReturnValueOnce(false)
+
+    await compose()
+    expect(window.confirm).toHaveBeenCalledExactlyOnceWith('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')
+    expect(screen.queryByRole('textbox', { name: '제목 (필수)' })).toBeNull()
+    expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(address)
+    expect(screen.queryByRole('img', { name: '새 쪽지 위치' })).toBeNull()
+    expect(createComment).not.toHaveBeenCalled()
+    expect(createIssue).not.toHaveBeenCalled()
+
+    await compose()
+    expect(window.confirm).toHaveBeenCalledTimes(2)
+    expect(window.confirm).toHaveBeenLastCalledWith('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')
+    expect(screen.getByRole('textbox', { name: '제목 (필수)' })).toBeTruthy()
+    expect(screen.queryByRole('article', { name: '쪽지 #1' })).toBeNull()
+    expect(queryParams().has('issue')).toBe(false)
+    expect(queryParams().get('version')).toBe(current.id)
+    expect(screen.queryByRole('img', { name: '새 쪽지 위치' }) !== null).toBe(pinned)
+  })
+
+  it.each([
+    { action: '사진 누르기', compose: () => placePin(), body: '' },
+    { action: '사진 누르기', compose: () => placePin(), body: ' \n\t ' },
+    { action: '쪽지 쓰기 버튼', compose: () => click('쪽지 쓰기'), body: '' },
+    { action: '쪽지 쓰기 버튼', compose: () => click('쪽지 쓰기'), body: ' \n\t ' },
+  ])('$action은 댓글이 "$body"이면 묻지 않고 쓰기 칸을 연다', async ({ compose, body }) => {
+    await renderRoom(`?issue=${productIssue.id}`)
+    fireEvent.change(screen.getByRole('textbox', { name: '댓글' }), { target: { value: body } })
+    await compose()
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: '제목 (필수)' })).toBeTruthy()
+    expect(queryParams().has('issue')).toBe(false)
+  })
+
+  it.each([
+    { state: '보내는 중', action: '사진 누르기', compose: () => placePin() },
+    { state: '보내는 중', action: '쪽지 쓰기 버튼', compose: () => click('쪽지 쓰기') },
+    { state: '연결 실패로 잠김', action: '사진 누르기', compose: () => placePin() },
+    { state: '연결 실패로 잠김', action: '쪽지 쓰기 버튼', compose: () => click('쪽지 쓰기') },
+  ])('$state 댓글도 $action에서 묻고 취소하면 글과 잠금을 유지한다', async ({ state, compose }) => {
+    const pending = deferred<typeof savedComment>()
+    vi.mocked(createComment).mockReturnValueOnce(pending.promise)
+    await renderRoom(`?issue=${productIssue.id}`)
+    fillComment()
+    await click('댓글 남기기')
+    expect(createComment).toHaveBeenCalledTimes(1)
+    if (state === '연결 실패로 잠김') {
+      await act(async () => pending.reject(new TypeError('Failed to fetch')))
+      expect(screen.getByRole('button', { name: '다시 보내기' })).toBeTruthy()
+    }
+    const address = screen.getByLabelText('현재 주소').textContent
+    vi.mocked(window.confirm).mockReturnValueOnce(false)
+
+    await compose()
+    expect(window.confirm).toHaveBeenCalledExactlyOnceWith('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')
+    expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).readOnly).toBe(true)
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(address)
+    expect(screen.queryByRole('textbox', { name: '제목 (필수)' })).toBeNull()
+    expect(screen.queryByRole('img', { name: '새 쪽지 위치' })).toBeNull()
+    expect(createComment).toHaveBeenCalledTimes(1)
+
+    if (state === '보내는 중') {
+      await act(async () => pending.resolve(savedComment))
+    }
+  })
+
+  it.each(['처음 보내기', '다시 보내기'])('댓글이 %s로 저장된 뒤 사진을 누르면 묻지 않는다', async (sending) => {
+    await renderRoom(`?issue=${productIssue.id}`)
+    fillComment()
+    if (sending === '다시 보내기') {
+      vi.mocked(createComment).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      await click('댓글 남기기')
+    }
+    vi.mocked(getIssue).mockResolvedValueOnce({ ...productIssue, comments: [savedComment], commentCount: 1 })
+    await click(sending === '처음 보내기' ? '댓글 남기기' : '다시 보내기')
+    expect(screen.getByText(savedComment.body)).toBeTruthy()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe('')
+
+    await placePin()
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: '제목 (필수)' })).toBeTruthy()
+    expect(queryParams().has('issue')).toBe(false)
+  })
+
+  it.each(['쪽지 닫기', '다른 쪽지 열기'])(
+    '댓글을 쓰다 %s를 하면 묻지 않고 이후 사진을 눌러도 묻지 않는다',
+    async (action) => {
+      await renderRoom(`?issue=${productIssue.id}`)
+      fillComment()
+      if (action === '쪽지 닫기') {
+        await click('쪽지 닫기')
+        expect(screen.queryByRole('article', { name: '쪽지 #1' })).toBeNull()
+        expect(queryParams().has('issue')).toBe(false)
+      } else {
+        await chooseIssue(unpinnedIssue)
+        expect(screen.getByRole('article', { name: '쪽지 #4' })).toBeTruthy()
+        expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe('')
+        expect(queryParams().get('issue')).toBe(unpinnedIssue.id)
+      }
+      expect(window.confirm).not.toHaveBeenCalled()
+
+      await placePin()
+      expect(window.confirm).not.toHaveBeenCalled()
+      expect(screen.getByRole('textbox', { name: '제목 (필수)' })).toBeTruthy()
+      expect(queryParams().has('issue')).toBe(false)
+    },
+  )
+})

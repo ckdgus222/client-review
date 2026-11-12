@@ -1,4 +1,4 @@
-import { type ChangeEvent, type FormEvent, useId, useState } from 'react'
+import { type ChangeEvent, type FormEvent, useEffect, useId, useState } from 'react'
 import { ApiError } from '../api/client.ts'
 import {
   attachIssuePhoto,
@@ -35,6 +35,8 @@ type IssueDetailProps = {
   onCommented: (comment: IssueComment) => void
   // 댓글을 썼거나 화면이 아는 것과 서버가 달라져서, 쪽지를 다시 불러와야 하는 경우.
   onRefresh: () => void
+  // 아직 저장되지 않은 댓글 글이 있는지 알린다(쓰는 중, 보내는 중, 잠김). 검수실이 새 쪽지 쓰기로 넘어가기 전에 묻는 데 쓴다.
+  onDraftChange: (hasDraft: boolean) => void
   onGoLatest: () => void
   onClose: () => void
 }
@@ -137,10 +139,18 @@ const Actions = ({ issue, versionId, canWrite, isDeveloper, onChanged, onRefresh
 
 type CommentFormProps = Pick<
   IssueDetailProps,
-  'issue' | 'versionId' | 'canWrite' | 'onCommented' | 'onRefresh' | 'onGoLatest'
+  'issue' | 'versionId' | 'canWrite' | 'onCommented' | 'onRefresh' | 'onDraftChange' | 'onGoLatest'
 >
 
-const CommentForm = ({ issue, versionId, canWrite, onCommented, onRefresh, onGoLatest }: CommentFormProps) => {
+const CommentForm = ({
+  issue,
+  versionId,
+  canWrite,
+  onCommented,
+  onRefresh,
+  onDraftChange,
+  onGoLatest,
+}: CommentFormProps) => {
   const bodyId = useId()
   const [body, setBody] = useState('')
   const [bodyError, setBodyError] = useState<string>()
@@ -157,6 +167,15 @@ const CommentForm = ({ issue, versionId, canWrite, onCommented, onRefresh, onGoL
     },
   )
   const isLocked = locked !== undefined
+
+  // 보내는 중이거나 잠긴 댓글도 글이 칸에 남아 있어서, 글이 있는지만 보면 된다. 저장되면 칸이 비워진다.
+  const hasDraft = body.trim() !== ''
+
+  useEffect(() => {
+    onDraftChange(hasDraft)
+    // 쪽지를 닫거나 다른 쪽지를 열어서 이 칸이 사라지면 쓰던 댓글도 함께 사라진다.
+    return () => onDraftChange(false)
+  }, [hasDraft, onDraftChange])
 
   // 취소한 뒤에는 새 번호로 보낸다. 처음 것이 저장돼 있었다면, 같은 번호로 고친 글을 보냈을 때
   // 서버가 처음 댓글을 돌려줘서 고친 글이 저장되지 않는다. 글은 지우지 않고 남긴다.
@@ -225,6 +244,7 @@ export const IssueDetail = ({
   onChanged,
   onCommented,
   onRefresh,
+  onDraftChange,
   onGoLatest,
   onClose,
 }: IssueDetailProps) => (
@@ -277,6 +297,7 @@ export const IssueDetail = ({
         canWrite={canWrite}
         onCommented={onCommented}
         onRefresh={onRefresh}
+        onDraftChange={onDraftChange}
         onGoLatest={onGoLatest}
       />
     </section>

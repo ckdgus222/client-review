@@ -75,6 +75,7 @@ const renderDetail = (overrides: Partial<ComponentProps<typeof IssueDetail>> = {
     isDeveloper: true,
     onChanged: vi.fn(),
     onCommented: vi.fn(),
+    onDraftChange: vi.fn(),
     onRefresh: vi.fn(),
     onGoLatest: vi.fn(),
     onClose: vi.fn(),
@@ -820,5 +821,98 @@ describe('IssueDetail 댓글 저장 알림', () => {
     expect(props.onCommented).not.toHaveBeenCalled()
     expect(props.onRefresh).not.toHaveBeenCalled()
     expect(commentInput().value).toBe(savedComment.body)
+  })
+})
+
+describe('IssueDetail 댓글 초안 알림', () => {
+  it('처음 그리면 저장되지 않은 댓글이 없다고 알린다', () => {
+    const { props } = renderDetail()
+    expect(props.onDraftChange).toHaveBeenCalledWith(false)
+    expect(props.onDraftChange).not.toHaveBeenCalledWith(true)
+  })
+
+  it('댓글 글을 쓰면 초안이 있다고 알리고 모두 지우면 없다고 알린다', () => {
+    const { props } = renderDetail()
+    fillComment()
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+
+    fillComment('')
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('공백만 쓴 댓글은 초안으로 알리지 않는다', () => {
+    const { props } = renderDetail()
+    fillComment(' \n\t ')
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+    expect(props.onDraftChange).not.toHaveBeenCalledWith(true)
+
+    fillComment('쓰던 댓글')
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    fillComment(' \n\t ')
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it.each(['처음 보내기', '다시 보내기'])('%s로 댓글이 저장되면 초안이 없다고 알린다', async (sending) => {
+    const { props } = renderDetail()
+    fillComment(savedComment.body)
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    if (sending === '다시 보내기') {
+      vi.mocked(createComment).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      await click('댓글 남기기')
+      expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    }
+
+    await click(sending === '처음 보내기' ? '댓글 남기기' : '다시 보내기')
+    expect(props.onCommented).toHaveBeenCalledExactlyOnceWith(savedComment)
+    expect(commentInput().value).toBe('')
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('댓글을 보내는 중과 연결 실패로 잠긴 동안 초안이 있다는 알림을 유지한다', async () => {
+    let reject!: (reason: unknown) => void
+    vi.mocked(createComment).mockReturnValueOnce(
+      new Promise((_resolve, fail) => {
+        reject = fail
+      }),
+    )
+    const { props } = renderDetail()
+    fillComment(savedComment.body)
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    vi.mocked(props.onDraftChange).mockClear()
+
+    await click('댓글 남기기')
+    expect(createComment).toHaveBeenCalledTimes(1)
+    expect(commentInput().readOnly).toBe(true)
+    expect(commentInput().value).toBe(savedComment.body)
+    expect(props.onDraftChange).not.toHaveBeenCalledWith(false)
+
+    await act(async () => reject(new TypeError('Failed to fetch')))
+    expect(screen.getByRole('button', { name: '다시 보내기' })).toBeTruthy()
+    expect(commentInput().readOnly).toBe(true)
+    expect(commentInput().value).toBe(savedComment.body)
+    expect(props.onDraftChange).not.toHaveBeenCalledWith(false)
+  })
+
+  it('쓰던 댓글이 있는 상세를 없애면 마지막으로 초안이 없다고 알린다', () => {
+    const { props, unmount } = renderDetail()
+    fillComment()
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    unmount()
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('canWrite가 false여서 댓글 칸을 감춰도 쓰던 초안이 있다는 알림을 유지한다', () => {
+    const { props, rerender } = renderDetail()
+    fillComment(savedComment.body)
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    vi.mocked(props.onDraftChange).mockClear()
+
+    rerender(<IssueDetail {...props} canWrite={false} />)
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+    expect(props.onDraftChange).not.toHaveBeenCalledWith(false)
+
+    rerender(<IssueDetail {...props} canWrite />)
+    expect(commentInput().value).toBe(savedComment.body)
+    expect(props.onDraftChange).not.toHaveBeenCalledWith(false)
   })
 })

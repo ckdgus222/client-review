@@ -933,3 +933,44 @@ test('잠긴 쪽지와 댓글을 취소한 뒤 새 글은 새 요청 번호로 �
   expect(comments.map((comment) => comment.body)).toEqual(['취소할 댓글', '취소 뒤 새 댓글'])
   await expect(page.getByRole('region', { name: '댓글', exact: true })).toContainText('댓글 2개')
 })
+
+test('댓글을 쓰다가 사진을 누르면 확인 창이 뜨고 취소하면 쓰던 댓글이 남으며 확인하면 새 쪽지 쓰기로 넘어간다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  await loginAs(room.client.id)
+  await page.goto(`/app/projects/${room.project.id}?issue=${issue.id}`)
+  const detail = page.getByRole('article', { name: '쪽지 #1', exact: true })
+  const comment = page.getByRole('textbox', { name: '댓글', exact: true })
+  await expect(detail).toBeVisible()
+  await comment.fill('아직 저장하지 않은 댓글')
+  const address = page.url()
+
+  await Promise.all([
+    page.waitForEvent('dialog').then(async (dialog) => {
+      expect(dialog.type()).toBe('confirm')
+      expect(dialog.message()).toBe('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')
+      await dialog.dismiss()
+    }),
+    clickPhoto(page, 0.65, 0.65),
+  ])
+  await expect(detail).toBeVisible()
+  await expect(detail.getByRole('heading', { name: issue.title, exact: true })).toBeVisible()
+  await expect(comment).toHaveValue('아직 저장하지 않은 댓글')
+  await expect(page).toHaveURL(address)
+  await expect(page.getByLabel('제목 (필수)', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('img', { name: '새 쪽지 위치', exact: true })).toHaveCount(0)
+
+  await Promise.all([
+    page.waitForEvent('dialog').then(async (dialog) => {
+      expect(dialog.type()).toBe('confirm')
+      expect(dialog.message()).toBe('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')
+      await dialog.accept()
+    }),
+    clickPhoto(page, 0.65, 0.65),
+  ])
+  await expect(page.getByLabel('제목 (필수)', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '쪽지 남기기', exact: true })).toBeVisible()
+  await expect(page.getByRole('img', { name: '새 쪽지 위치', exact: true })).toBeVisible()
+  await expect(detail).toHaveCount(0)
+  expect(new URL(page.url()).searchParams.has('issue')).toBe(false)
+})

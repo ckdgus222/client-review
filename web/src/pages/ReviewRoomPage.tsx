@@ -166,6 +166,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const [draftPin, setDraftPin] = useState<DraftPin>()
   // 쪽지를 보내는 중이거나, 보낸 쪽지가 저장됐는지 몰라 잠긴 동안이다. 이때는 임시 핀을 옮기지도 지우지도 않는다(기획 정할 것 12).
   const [composerLocked, setComposerLocked] = useState(false)
+  // 열어 둔 쪽지에 아직 저장되지 않은 댓글 글이 있는가(쓰는 중, 보내는 중, 잠김). 새 쪽지 쓰기로 넘어가기 전에 묻는 데 쓴다.
+  const [hasCommentDraft, setHasCommentDraft] = useState(false)
 
   // 주소의 지금 값. 늦게 끝난 요청의 콜백(쪽지를 만든 뒤 그 쪽지 열기, 최신 버전으로 가기)이 주소를 바꿀 때 쓴다.
   // 그런 콜백은 요청을 시작한 때의 주소를 기억하고 있어서(setSearchParams에 함수를 넘겨도 같다), 그대로 쓰면
@@ -435,6 +437,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
   }
 
   const startComposing = (pin?: DraftPin) => {
+    // 새 쪽지를 쓰면 열어 둔 쪽지가 닫혀서 쓰던 댓글이 사라진다. 사진을 잘못 눌러도 글을 잃지 않게 먼저 묻는다(기획 정할 것 13).
+    if (hasCommentDraft && !window.confirm('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')) return
     // 쪽지를 열어서 그 쪽지의 화면을 보던 중이면, 그 화면을 "고른 화면"으로 붙잡아 둔다. 주소에서 쪽지를 지우면
     // 화면을 고른 근거도 사라져서 첫 화면으로 돌아가고, 방금 찍은 핀이 다른 사진의 쪽지로 보내진다.
     if (selected) setSelectedScreenId(selected.screenId)
@@ -581,6 +585,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
             onChanged={(issue) => applyChange(issue, detailNumber)}
             onCommented={(comment) => addComment(shownIssue.id, comment)}
             onRefresh={() => refreshIssues(shownIssue.id)}
+            onDraftChange={setHasCommentDraft}
             onGoLatest={goLatest}
             onClose={() => setParam('issue')}
           />
