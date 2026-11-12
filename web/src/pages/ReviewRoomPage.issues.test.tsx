@@ -1074,6 +1074,7 @@ describe('ReviewRoomPage 쪽지 작성과 재시도', () => {
     fillDraft()
     await click('쪽지 남기기')
     expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+      category: 'BUG',
       requestId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
       versionId: current.id,
       title: savedIssue.title,
@@ -1113,6 +1114,7 @@ describe('ReviewRoomPage 쪽지 작성과 재시도', () => {
     fillDraft()
     await click('쪽지 남기기')
     expect(vi.mocked(createIssue).mock.calls[1][1]).toEqual({
+      category: 'BUG',
       requestId: expect.any(String),
       versionId: current.id,
       title: savedIssue.title,
@@ -1134,6 +1136,7 @@ describe('ReviewRoomPage 쪽지 작성과 재시도', () => {
     expect(screen.queryByRole('img', { name: '새 쪽지 위치' })).toBeNull()
     await click('쪽지 남기기')
     expect(createIssue).toHaveBeenCalledWith(project.id, {
+      category: 'BUG',
       requestId: expect.any(String),
       versionId: current.id,
       title: savedIssue.title,
@@ -1152,6 +1155,7 @@ describe('ReviewRoomPage 쪽지 작성과 재시도', () => {
     expectDraft()
     await click('쪽지 남기기')
     expect(createIssue).toHaveBeenCalledWith(project.id, {
+      category: 'BUG',
       requestId: expect.any(String),
       versionId: current.id,
       title: savedIssue.title,
@@ -1300,6 +1304,7 @@ describe('ReviewRoomPage 쪽지 작성과 재시도', () => {
     await placePin('상품 상세 · PC', 420, 90)
     await click('쪽지 남기기')
     expect(vi.mocked(createIssue).mock.calls[1][1]).toEqual({
+      category: 'BUG',
       requestId: vi.mocked(createIssue).mock.calls[0][1].requestId,
       versionId: latest.id,
       title: savedIssue.title,
@@ -1406,6 +1411,7 @@ describe('ReviewRoomPage 쪽지 작성과 재시도', () => {
       expectDraft()
       await click('쪽지 남기기')
       expect(vi.mocked(createIssue).mock.calls[1][1]).toEqual({
+        category: 'BUG',
         requestId: vi.mocked(createIssue).mock.calls[0][1].requestId,
         versionId: latest.id,
         title: savedIssue.title,
@@ -1846,6 +1852,7 @@ describe('ReviewRoomPage 응답 순서와 작성 화면 유지', () => {
       fillDraft()
       await click('쪽지 남기기')
       expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+        category: 'BUG',
         requestId: expect.any(String),
         versionId: current.id,
         title: savedIssue.title,
@@ -1866,6 +1873,7 @@ describe('ReviewRoomPage 응답 순서와 작성 화면 유지', () => {
     fillDraft()
     await click('쪽지 남기기')
     expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+      category: 'BUG',
       requestId: expect.any(String),
       versionId: current.id,
       title: savedIssue.title,
@@ -2428,6 +2436,7 @@ describe('ReviewRoomPage 처음 상세 응답과 보내는 중 핀 잠금', () =
       await click('쪽지 남기기')
       const firstRequest = structuredClone(vi.mocked(createIssue).mock.calls[0])
       expect(firstRequest[1]).toEqual({
+        category: 'BUG',
         requestId: expect.any(String),
         versionId: current.id,
         title: savedIssue.title,
@@ -2639,6 +2648,7 @@ describe('ReviewRoomPage 최신 버전 이동과 늦은 목록 응답', () => {
     fillDraft()
     await click('쪽지 남기기')
     expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+      category: 'BUG',
       requestId: expect.any(String),
       versionId: current.id,
       title: savedIssue.title,
@@ -2803,6 +2813,7 @@ describe('ReviewRoomPage 검수실을 떠난 뒤 응답과 버전 재시도', ()
       fillDraft()
       await click('쪽지 남기기')
       expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+        category: 'BUG',
         requestId: expect.any(String),
         versionId: current.id,
         title: savedIssue.title,
@@ -3125,6 +3136,7 @@ describe('ReviewRoomPage 작성 상태 경계', () => {
     expectDraft()
     await click('쪽지 남기기')
     expect(vi.mocked(createIssue).mock.calls[1][1]).toEqual({
+      category: 'BUG',
       requestId: vi.mocked(createIssue).mock.calls[0][1].requestId,
       versionId: latest.id,
       title: savedIssue.title,

@@ -1,5 +1,11 @@
 import { type FormEvent, useEffect, useId, useState } from 'react'
-import { createIssue, type IssueDetail, type NewIssue } from '../api/issues.ts'
+import {
+  createIssue,
+  ISSUE_CATEGORY_LABELS,
+  type IssueCategory,
+  type IssueDetail,
+  type NewIssue,
+} from '../api/issues.ts'
 import { Button } from '../components/Button.tsx'
 import { TextField } from '../components/TextField.tsx'
 import { useLockedSubmit } from '../hooks/useLockedSubmit.ts'
@@ -8,6 +14,7 @@ import { SubmitErrorText } from './SubmitErrorText.tsx'
 
 const TITLE_MAX = 120
 const BODY_MAX = 4000
+const CATEGORIES = Object.keys(ISSUE_CATEGORY_LABELS) as IssueCategory[]
 
 type IssueComposerProps = {
   projectId: string
@@ -40,6 +47,8 @@ export const IssueComposer = ({
   onGoLatest,
 }: IssueComposerProps) => {
   const bodyId = useId()
+  const categoryId = useId()
+  const [category, setCategory] = useState<IssueCategory>('BUG')
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [titleError, setTitleError] = useState<string>()
@@ -85,6 +94,7 @@ export const IssueComposer = ({
         versionId,
         title: trimmed,
         body,
+        category,
         pin: pin && { screenId: pin.screenId, xRatio: pin.xRatio, yRatio: pin.yRatio },
       },
     })
@@ -110,6 +120,22 @@ export const IssueComposer = ({
       ) : (
         <p className={styles.place}>위치를 정하지 않은 쪽지예요. 사진을 누르면 그 자리에 남길 수 있어요.</p>
       )}
+      <div className={styles.field}>
+        <label htmlFor={categoryId}>분류</label>
+        {/* 보내는 중이거나 잠긴 동안에는 바꿀 수 없다. 다시 보내기는 처음 보낸 분류를 그대로 보낸다. */}
+        <select
+          id={categoryId}
+          value={category}
+          onChange={(event) => setCategory(event.target.value as IssueCategory)}
+          disabled={frozen}
+        >
+          {CATEGORIES.map((value) => (
+            <option key={value} value={value}>
+              {ISSUE_CATEGORY_LABELS[value]}
+            </option>
+          ))}
+        </select>
+      </div>
       <TextField
         label="제목 (필수)"
         value={title}
