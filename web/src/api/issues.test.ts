@@ -3,14 +3,23 @@ import {
   attachIssuePhoto,
   createComment,
   createIssue,
+  dueDateLabel,
   getIssue,
+  isOverdue,
+  isUnresolved,
+  ISSUE_CATEGORY_LABELS,
+  ISSUE_SCOPE_LABELS,
   ISSUE_STATUS_LABELS,
   listIssues,
   removeIssuePhoto,
   startIssue,
+  updateIssue,
+  type IssueCategory,
+  type IssueChange,
   type IssueComment,
   type IssueDetail,
   type IssueSummary,
+  type IssueStatus,
   type NewComment,
   type NewIssue,
 } from './issues.ts'
@@ -36,6 +45,9 @@ const summary: IssueSummary = {
   number: 14,
   title: '버튼 "색상"',
   status: 'OPEN',
+  category: 'BUG',
+  scope: 'IN_SCOPE',
+  dueDate: null,
   authorName: '김수정',
   createdAt: '2026-11-10T09:00:00.000Z',
   commentCount: 1,
@@ -69,6 +81,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllEnvs()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -109,6 +123,22 @@ describe('getIssue', () => {
 })
 
 describe('createIssue', () => {
+  it.each<IssueCategory>(['BUG', 'DESIGN', 'COPY', 'OTHER'])(
+    '고른 분류 %s를 쓰기 본문에 그대로 넣는다',
+    async (category) => {
+      const responseBody = { ...detail, category }
+      vi.mocked(fetch).mockResolvedValueOnce(Response.json(responseBody, { status: 201 }))
+
+      await expect(createIssue(projectId, { ...newIssue, category })).resolves.toEqual(responseBody)
+
+      expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/projects/${projectId}/issues`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newIssue, category }),
+      })
+    },
+  )
+
   it.each([
     { screenId, xRatio: 0.25, yRatio: 0.75 },
     { screenId, xRatio: 0, yRatio: 1 },
@@ -176,6 +206,45 @@ describe('startIssue', () => {
   })
 })
 
+describe('updateIssue', () => {
+  it.each<IssueChange>([
+    { category: 'DESIGN' },
+    { scope: 'OUT_OF_SCOPE' },
+    { dueDate: '2026-01-05' },
+    { dueDate: null },
+    { category: 'COPY', scope: 'OUT_OF_SCOPE', dueDate: '2027-01-05' },
+    { category: 'OTHER', scope: 'IN_SCOPE', dueDate: null },
+    { category: 'BUG', scope: undefined, dueDate: undefined },
+  ])('versionId와 보낸 칸만 JSON PATCH한다: %j', async (change) => {
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(detail))
+
+    await expect(updateIssue(issueId, versionId, change)).resolves.toEqual(detail)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/issues/${issueId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ versionId, ...change }),
+    })
+  })
+
+  it('바뀐 값과 자동 댓글이 든 서버 상세를 그대로 돌려준다', async () => {
+    const change: IssueChange = { scope: 'OUT_OF_SCOPE', dueDate: '2027-01-05' }
+    const responseBody = {
+      ...detail,
+      ...change,
+      commentCount: 3,
+      comments: [
+        comment,
+        { ...comment, id: 'scope-comment', body: '범위: 하자 수정 → 추가 요청' },
+        { ...comment, id: 'due-date-comment', body: '마감일: 없음 → 2027년 1월 5일' },
+      ],
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(responseBody))
+
+    await expect(updateIssue(issueId, versionId, change)).resolves.toEqual(responseBody)
+  })
+})
+
 describe('attachIssuePhoto', () => {
   it('file 칸에 받은 File 하나만 담아 POST하고 Content-Type을 직접 붙이지 않는다', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(Response.json(detail, { status: 201 }))
@@ -231,6 +300,12 @@ describe.each([
   },
   { name: 'startIssue', call: (id: string) => startIssue(id, versionId), prefix: '/api/issues/', suffix: '/start' },
   {
+    name: 'updateIssue',
+    call: (id: string) => updateIssue(id, versionId, { dueDate: null }),
+    prefix: '/api/issues/',
+    suffix: '',
+  },
+  {
     name: 'attachIssuePhoto',
     call: (id: string) => attachIssuePhoto(id, photo),
     prefix: '/api/issues/',
@@ -262,6 +337,12 @@ describe.each([
 describe.each([
   { name: 'listIssues', call: () => listIssues(projectId), statuses: [401, 404], codes: [] },
   { name: 'getIssue', call: () => getIssue(issueId), statuses: [401, 404], codes: [] },
+  {
+    name: 'updateIssue',
+    call: () => updateIssue(issueId, versionId, { scope: 'OUT_OF_SCOPE' }),
+    statuses: [401, 403, 404, 422, 500],
+    codes: ['VERSION_CHANGED', 'VERSION_NOT_IN_REVIEW'],
+  },
   {
     name: 'createIssue',
     call: () => createIssue(projectId, newIssue),
@@ -359,5 +440,134 @@ describe.each([
 describe('ISSUE_STATUS_LABELS', () => {
   it('접수와 수정 중 두 상태의 한국어 이름을 제공한다', () => {
     expect(ISSUE_STATUS_LABELS).toEqual({ OPEN: '접수', IN_PROGRESS: '수정 중' })
+  })
+})
+
+describe('쪽지 분류·범위 글자', () => {
+  it('분류 네 개의 한국어 이름을 제공한다', () => {
+    expect(ISSUE_CATEGORY_LABELS).toEqual({ BUG: '버그', DESIGN: '디자인', COPY: '문구', OTHER: '기타' })
+  })
+
+  it('범위 두 개의 한국어 이름을 제공한다', () => {
+    expect(ISSUE_SCOPE_LABELS).toEqual({ IN_SCOPE: '하자 수정', OUT_OF_SCOPE: '추가 요청' })
+  })
+})
+
+describe('분류·범위·마감일 응답', () => {
+  it('목록의 기본값이 아닌 분류·범위와 마감일 글자를 그대로 돌려준다', async () => {
+    const responseBody: IssueSummary[] = [
+      summary,
+      { ...summary, id: 'triaged-issue', category: 'OTHER', scope: 'OUT_OF_SCOPE', dueDate: '2027-01-05' },
+    ]
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(responseBody))
+
+    await expect(listIssues(projectId)).resolves.toEqual(responseBody)
+  })
+
+  it('상세의 기본값이 아닌 분류·범위와 마감일 글자를 그대로 돌려준다', async () => {
+    const responseBody: IssueDetail = { ...detail, category: 'COPY', scope: 'OUT_OF_SCOPE', dueDate: '2026-01-05' }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(responseBody))
+
+    await expect(getIssue(issueId)).resolves.toEqual(responseBody)
+  })
+})
+
+describe('isUnresolved', () => {
+  it.each<IssueStatus>(['OPEN', 'IN_PROGRESS'])('%s는 아직 끝나지 않은 상태다', (status) => {
+    expect(isUnresolved(status)).toBe(true)
+  })
+
+  // 끝난 상태는 6번에서 타입에 생긴다. 서버에서 그런 값을 받더라도 미해결로 세지 않는다.
+  it.each(['VERIFIED', 'WITHDRAWN'])('%s는 끝나지 않은 상태가 아니다', (status) => {
+    expect(isUnresolved(status as IssueStatus)).toBe(false)
+  })
+})
+
+describe('isOverdue', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 10, 15, 12))
+  })
+
+  it.each<IssueStatus>(['OPEN', 'IN_PROGRESS'])(
+    '%s 쪽지는 어제만 마감 지남이고 당일·내일·마감일 없음은 아니다',
+    (status) => {
+      expect(isOverdue({ status, dueDate: '2026-11-14' })).toBe(true)
+      expect(isOverdue({ status, dueDate: '2026-11-15' })).toBe(false)
+      expect(isOverdue({ status, dueDate: '2026-11-16' })).toBe(false)
+      expect(isOverdue({ status, dueDate: null })).toBe(false)
+    },
+  )
+
+  it.each(['VERIFIED', 'WITHDRAWN'])('끝난 상태 %s는 마감일이 지났어도 마감 지남이 아니다', (status) => {
+    expect(isOverdue({ status: status as IssueStatus, dueDate: '2026-11-14' })).toBe(false)
+  })
+
+  it.each([
+    { name: '보통 날', year: 2026, month: 11, day: 15, dueDate: '2026-11-15' },
+    { name: '월말', year: 2026, month: 11, day: 30, dueDate: '2026-11-30' },
+    { name: '연말', year: 2026, month: 12, day: 31, dueDate: '2026-12-31' },
+    { name: '윤년 2월 말', year: 2028, month: 2, day: 29, dueDate: '2028-02-29' },
+  ])('$name 자정 직전에는 당일이고 자정 직후에 마감 지남으로 바뀐다', ({ year, month, day, dueDate }) => {
+    vi.setSystemTime(new Date(year, month - 1, day, 23, 59, 59, 999))
+    expect(isOverdue({ status: 'OPEN', dueDate })).toBe(false)
+
+    vi.setSystemTime(new Date(year, month - 1, day + 1, 0, 0, 0, 0))
+    expect(isOverdue({ status: 'OPEN', dueDate })).toBe(true)
+  })
+
+  it.each([
+    { now: [2026, 1, 5], yesterday: '2026-01-04', today: '2026-01-05', tomorrow: '2026-01-06' },
+    { now: [2026, 9, 9], yesterday: '2026-09-08', today: '2026-09-09', tomorrow: '2026-09-10' },
+    { now: [2026, 9, 30], yesterday: '2026-09-29', today: '2026-09-30', tomorrow: '2026-10-01' },
+    { now: [2026, 10, 1], yesterday: '2026-09-30', today: '2026-10-01', tomorrow: '2026-10-02' },
+    { now: [2027, 1, 1], yesterday: '2026-12-31', today: '2027-01-01', tomorrow: '2027-01-02' },
+  ])('한 자리 월·일도 두 자리 날짜 글자로 비교한다: $today', ({ now, yesterday, today, tomorrow }) => {
+    vi.setSystemTime(new Date(now[0], now[1] - 1, now[2], 12))
+
+    expect(isOverdue({ status: 'OPEN', dueDate: yesterday })).toBe(true)
+    expect(isOverdue({ status: 'OPEN', dueDate: today })).toBe(false)
+    expect(isOverdue({ status: 'OPEN', dueDate: tomorrow })).toBe(false)
+  })
+
+  it('UTC로는 전날인 한국 새벽에도 보는 사람의 한국 날짜로 판단한다', () => {
+    vi.stubEnv('TZ', 'Asia/Seoul')
+    vi.setSystemTime(new Date('2026-11-15T00:30:00+09:00'))
+
+    expect(new Date().getHours()).toBe(0)
+    expect(new Date().getDate()).toBe(15)
+    expect(new Date().toISOString()).toBe('2026-11-14T15:30:00.000Z')
+    expect(isOverdue({ status: 'OPEN', dueDate: '2026-11-14' })).toBe(true)
+    expect(isOverdue({ status: 'OPEN', dueDate: '2026-11-15' })).toBe(false)
+  })
+})
+
+describe('dueDateLabel', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 10, 15, 12))
+  })
+
+  it.each([
+    ['2026-11-15', '11월 15일'],
+    ['2026-01-05', '1월 5일'],
+    ['2027-01-05', '2027년 1월 5일'],
+    ['2025-12-31', '2025년 12월 31일'],
+    ['2028-02-29', '2028년 2월 29일'],
+  ])('%s는 앞 0 없이 %s로 표시한다', (dueDate, expected) => {
+    expect(dueDateLabel(dueDate)).toBe(expected)
+  })
+
+  it('한국에서 해가 바뀌면 UTC 연도와 달라도 한국의 올해를 기준으로 해를 붙인다', () => {
+    vi.stubEnv('TZ', 'Asia/Seoul')
+    vi.setSystemTime(new Date('2026-12-31T23:59:59.999+09:00'))
+    expect(dueDateLabel('2026-12-31')).toBe('12월 31일')
+    expect(dueDateLabel('2027-01-05')).toBe('2027년 1월 5일')
+
+    vi.setSystemTime(new Date('2027-01-01T00:00:00+09:00'))
+    expect(new Date().getFullYear()).toBe(2027)
+    expect(new Date().getUTCFullYear()).toBe(2026)
+    expect(dueDateLabel('2026-12-31')).toBe('2026년 12월 31일')
+    expect(dueDateLabel('2027-01-05')).toBe('1월 5일')
   })
 })
