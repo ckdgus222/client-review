@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import type { BrowserContext, Locator, Page } from '@playwright/test'
+import type { BrowserContext, Locator, Page, Request } from '@playwright/test'
 import { createSessionToken, hashSessionToken } from '../../api/src/auth/token.ts'
 import { test, expect, db, resetDatabase, createUser, createProject } from './fixtures.ts'
 
@@ -1275,4 +1275,166 @@ test('댓글이 저장된 뒤 쪽지 다시 부르기가 실패해도 저장된 
   expect((await recovered).status()).toBe(200)
   await expect(detail.getByText(body, { exact: true })).toHaveCount(1)
   await expect(comment).toHaveValue('')
+})
+
+test('쪽지 상세 응답이 1분이 되도록 없으면 다시 불러 쪽지를 열고 늦게 온 앞 응답은 버린다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  await loginAs(room.client.id)
+  // 실제 실행 시간이 섞이지 않게 멈춰 두고, 요청 시작부터 정확히 45초·60초를 넘긴다.
+  await page.clock.install({ time: new Date('2026-11-12T00:00:00Z') })
+  await page.clock.pauseAt(new Date('2026-11-12T00:00:01Z'))
+  const detailPath = `/api/issues/${issue.id}`
+  const listPath = `/api/projects/${room.project.id}/issues`
+  let detailRequests = 0
+  page.on('request', (request) => {
+    if (request.method() === 'GET' && new URL(request.url()).pathname === detailPath) detailRequests += 1
+  })
+  await page.goto(`/app/projects/${room.project.id}`)
+  await loadedPhoto(page)
+  const loaded = detailRequests
+  const staleTitle = '늦게 도착한 다른 쪽지 제목'
+  let holdResponses = true
+  const heldRequests: Request[] = []
+  let release!: () => void
+  const responseGate = new Promise<void>((resolve) => { release = resolve })
+  let received!: () => void
+  const serverResponded = new Promise<void>((resolve) => { received = resolve })
+  await page.route(`**${detailPath}`, async (route) => {
+    // StrictMode로 처음 상세 요청이 두 번 가도, 재요청을 허용하기 전에 시작한 것은 모두 붙잡는다.
+    if (!holdResponses) return route.continue()
+    heldRequests.push(route.request())
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    const staleDetail = { ...await response.json(), title: staleTitle }
+    received()
+    await responseGate
+    await route.fulfill({ response, json: staleDetail })
+  })
+  try {
+    await page.getByRole('region', { name: '쪽지 목록', exact: true }).getByRole('button', { name: new RegExp(issue.title) }).click()
+    await serverResponded
+    const panel = page.getByRole('complementary', { name: '쪽지', exact: true })
+    await expect(panel.getByRole('status')).toHaveText('쪽지를 불러오는 중이에요')
+    const waiting = detailRequests
+    expect(waiting).toBeGreaterThan(loaded)
+    for (let tick = 0; tick < 3; tick += 1) {
+      const listResponse = page.waitForResponse((response) => new URL(response.url()).pathname === listPath)
+      await page.clock.fastForward(15_000)
+      expect((await listResponse).status()).toBe(200)
+      expect(detailRequests).toBe(waiting)
+      await expect(panel.getByRole('status')).toHaveText('쪽지를 불러오는 중이에요')
+      await expect(panel.getByRole('article')).toHaveCount(0)
+    }
+
+    holdResponses = false
+    const recovered = page.waitForResponse((response) => new URL(response.url()).pathname === detailPath)
+    await page.clock.fastForward(15_000)
+    expect((await recovered).status()).toBe(200)
+    const detail = panel.getByRole('article', { name: '쪽지 #1', exact: true })
+    await expect(detail.getByRole('heading', { name: issue.title, exact: true })).toBeVisible()
+    await expect(detail).toContainText(issue.body)
+    await expect(panel.getByRole('status')).toHaveCount(0)
+    expect(detailRequests).toBe(waiting + 1)
+
+    const lateResponses = Promise.all(heldRequests.map((request) =>
+      page.waitForResponse((response) => response.request() === request),
+    ))
+    release()
+    for (const response of await lateResponses) {
+      await response.finished()
+      expect(await response.json()).toMatchObject({ title: staleTitle })
+    }
+    // 늦은 응답 본문을 받은 뒤 화면에 반영할 시간도 준다. 다음 15초 갱신은 아직 오지 않는다.
+    await page.clock.runFor(100)
+    await expect(detail.getByRole('heading', { name: issue.title, exact: true })).toBeVisible()
+    await expect(detail).toContainText(issue.body)
+    await expect(panel.getByText(staleTitle, { exact: true })).toHaveCount(0)
+    await expect(panel.getByRole('status')).toHaveCount(0)
+    await expect(page).toHaveURL((url) => url.searchParams.get('issue') === issue.id)
+    expect(detailRequests).toBe(waiting + 1)
+  } finally {
+    release()
+  }
+})
+
+test('쪽지 목록 새로 부르기 응답이 1분이 되도록 없으면 다시 불러 새 쪽지를 보여 주고 늦게 온 앞 응답은 버린다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  await loginAs(room.client.id)
+  await page.clock.install({ time: new Date('2026-11-12T00:00:00Z') })
+  await page.clock.pauseAt(new Date('2026-11-12T00:00:01Z'))
+  const listPath = `/api/projects/${room.project.id}/issues`
+  const detailPath = `/api/issues/${issue.id}`
+  let listRequests = 0
+  page.on('request', (request) => {
+    if (request.method() === 'GET' && new URL(request.url()).pathname === listPath) listRequests += 1
+  })
+  await page.goto(`/app/projects/${room.project.id}?issue=${issue.id}`)
+  const detail = page.getByRole('article', { name: '쪽지 #1', exact: true })
+  const comment = detail.getByRole('textbox', { name: '댓글', exact: true })
+  await comment.fill('멈춘 목록을 기다리며 쓰던 댓글')
+  // 처음 불러오기의 StrictMode 중복 요청은 세지 않는다.
+  const loaded = listRequests
+  let holdResponses = true
+  const heldRequests: Request[] = []
+  let release!: () => void
+  const responseGate = new Promise<void>((resolve) => { release = resolve })
+  let received!: () => void
+  const serverResponded = new Promise<void>((resolve) => { received = resolve })
+  await page.route(`**${listPath}`, async (route) => {
+    if (!holdResponses) return route.continue()
+    heldRequests.push(route.request())
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    received()
+    await responseGate
+    await route.fulfill({ response })
+  })
+  try {
+    const firstDetail = page.waitForResponse((response) => new URL(response.url()).pathname === detailPath)
+    await page.clock.fastForward(15_000)
+    await serverResponded
+    expect((await firstDetail).status()).toBe(200)
+    expect(listRequests).toBe(loaded + 1)
+    // 앞 응답이 새 쪽지를 담지 않도록 서버 응답을 먼저 받아 둔 뒤 추가한다.
+    const other = await seedIssue(room, '연결이 돌아온 뒤 보일 새 쪽지', room.developer.id, false)
+    const list = page.getByRole('region', { name: '쪽지 목록', exact: true })
+    for (let tick = 0; tick < 3; tick += 1) {
+      const nextDetail = page.waitForResponse((response) => new URL(response.url()).pathname === detailPath)
+      await page.clock.fastForward(15_000)
+      expect((await nextDetail).status()).toBe(200)
+      expect(listRequests).toBe(loaded + 1)
+      await expect(list.getByText(other.title, { exact: true })).toHaveCount(0)
+      await expect(detail.getByRole('heading', { name: issue.title, exact: true })).toBeVisible()
+      await expect(comment).toHaveValue('멈춘 목록을 기다리며 쓰던 댓글')
+    }
+
+    // 첫 목록 갱신은 입장 15초 뒤 시작했다. 그 요청부터 60초(입장부터 75초)에 다시 부른다.
+    holdResponses = false
+    const recovered = page.waitForResponse((response) => new URL(response.url()).pathname === listPath)
+    await page.clock.fastForward(15_000)
+    expect((await recovered).status()).toBe(200)
+    await expect(list.getByText(other.title, { exact: true })).toBeVisible()
+    expect(listRequests).toBe(loaded + 2)
+    await expect(comment).toHaveValue('멈춘 목록을 기다리며 쓰던 댓글')
+
+    const lateResponses = Promise.all(heldRequests.map((request) =>
+      page.waitForResponse((response) => response.request() === request),
+    ))
+    release()
+    for (const response of await lateResponses) {
+      await response.finished()
+      expect(await response.json()).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: other.id })]))
+    }
+    await page.clock.runFor(100)
+    await expect(list.getByText(other.title, { exact: true })).toBeVisible()
+    await expect(detail.getByRole('heading', { name: issue.title, exact: true })).toBeVisible()
+    await expect(comment).toHaveValue('멈춘 목록을 기다리며 쓰던 댓글')
+    await expect(comment).toBeEditable()
+    await expect(page).toHaveURL((url) => url.searchParams.get('issue') === issue.id)
+    expect(listRequests).toBe(loaded + 2)
+  } finally {
+    release()
+  }
 })
