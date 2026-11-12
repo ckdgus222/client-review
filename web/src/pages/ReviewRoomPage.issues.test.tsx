@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { getMe } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
 import {
@@ -156,11 +156,15 @@ const savedComment = {
 
 const CurrentAddress = () => {
   const location = useLocation()
+  const navigate = useNavigate()
   return (
-    <output aria-label="현재 주소">
-      {location.pathname}
-      {location.search}
-    </output>
+    <>
+      <output aria-label="현재 주소">
+        {location.pathname}
+        {location.search}
+      </output>
+      <button onClick={() => navigate(-1)}>브라우저 뒤로 가기</button>
+    </>
   )
 }
 const renderRoom = async (query = '', destination?: string) => {
@@ -401,6 +405,122 @@ describe('ReviewRoomPage 버전 재시도와 초기 불러오기', () => {
     expect(photo().getAttribute('src')).toBe('/api/assets/new-current-product')
     expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
     expect(screen.getByRole('button', { name: '댓글 남기기' })).toBeTruthy()
+  })
+
+  it('409 뒤 최신 버전 응답을 기다리며 다른 버전을 골랐다가 원래 버전을 다시 고르면 마지막 선택을 유지한다', async () => {
+    vi.mocked(createComment).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    await renderRoom(`?version=${current.id}&issue=${productIssue.id}&keep=yes`)
+    fillComment()
+    await click('댓글 남기기')
+    expect(screen.getByText('새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.')).toBeTruthy()
+
+    publishLatest()
+    const pendingProject = deferred<ProjectDetail>()
+    vi.mocked(getProject).mockReturnValueOnce(pendingProject.promise)
+    await click('최신 버전 보기')
+    expect(getProject).toHaveBeenCalledTimes(2)
+    await chooseVersion(initial.id)
+    expect(queryParams().get('version')).toBe(initial.id)
+    expect(photo().getAttribute('src')).toBe('/api/assets/old-current-product')
+    await chooseVersion(current.id)
+    expect(queryParams().get('version')).toBe(current.id)
+    expect(photo().getAttribute('src')).toBe('/api/assets/current-product')
+
+    await act(async () => {
+      pendingProject.resolve({ ...project, currentVersion: { id: latest.id, number: 2 } })
+    })
+
+    expect(queryParams().get('version')).toBe(current.id)
+    expect(queryParams().get('issue')).toBe(productIssue.id)
+    expect(queryParams().get('keep')).toBe('yes')
+    expect(photo().getAttribute('src')).toBe('/api/assets/current-product')
+    const versions = screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' })
+    expect(versions.value).toBe(current.id)
+    expect(Array.from(versions.options, (option) => option.value)).toEqual([latest.id, current.id, initial.id])
+    // 프로젝트의 현재 버전도 갱신돼, 직접 고른 원래 버전에서는 새 댓글을 쓰지 못한다.
+    expect(screen.getByText(/지난 버전이에요/)).toBeTruthy()
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+    await chooseVersion(latest.id)
+    expect(photo().getAttribute('src')).toBe('/api/assets/new-current-product')
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+    expect(screen.getByRole('button', { name: '댓글 남기기' })).toBeTruthy()
+  })
+
+  it('409 뒤 최신 버전 응답을 기다리다 브라우저 뒤로 가기로 초안에 돌아가면 늦은 응답 뒤에도 초안 주소와 사진을 유지한다', async () => {
+    vi.mocked(createComment).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    await renderRoom(`?version=${initial.id}&issue=${productIssue.id}&keep=yes`)
+    await chooseVersion(current.id)
+    expect(queryParams().get('version')).toBe(current.id)
+    expect(photo().getAttribute('src')).toBe('/api/assets/current-product')
+    fillComment()
+    await click('댓글 남기기')
+    expect(screen.getByText('새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.')).toBeTruthy()
+
+    publishLatest()
+    const pendingProject = deferred<ProjectDetail>()
+    vi.mocked(getProject).mockReturnValueOnce(pendingProject.promise)
+    await click('최신 버전 보기')
+    expect(getProject).toHaveBeenCalledTimes(2)
+    // 버전 고르기를 거치지 않고 주소 기록만 되돌린다.
+    await click('브라우저 뒤로 가기')
+    expect(queryParams().get('version')).toBe(initial.id)
+    expect(photo().getAttribute('src')).toBe('/api/assets/old-current-product')
+
+    await act(async () => {
+      pendingProject.resolve({ ...project, currentVersion: { id: latest.id, number: 2 } })
+    })
+
+    expect(queryParams().get('version')).toBe(initial.id)
+    expect(queryParams().get('issue')).toBe(productIssue.id)
+    expect(queryParams().get('keep')).toBe('yes')
+    expect(photo().getAttribute('src')).toBe('/api/assets/old-current-product')
+    const versions = screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' })
+    expect(versions.value).toBe(initial.id)
+    expect(Array.from(versions.options, (option) => option.value)).toEqual([latest.id, current.id, initial.id])
+  })
+
+  it('409 뒤 지난 버전에서 최신 버전 응답을 기다리다 안내 링크로 이동하고 쪽지를 고르면 늦은 응답이 그 처음 사진을 바꾸지 않는다', async () => {
+    vi.mocked(createComment).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    await renderRoom(`?version=${current.id}&issue=${productIssue.id}&keep=yes`)
+    fillComment()
+    await click('댓글 남기기')
+    await chooseVersion(initial.id)
+    expect(photo().getAttribute('src')).toBe('/api/assets/old-current-product')
+    expect(screen.getByText('새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.')).toBeTruthy()
+
+    publishLatest()
+    const pendingProject = deferred<ProjectDetail>()
+    vi.mocked(getProject).mockReturnValueOnce(pendingProject.promise)
+    await click('최신 버전 보기')
+    expect(getProject).toHaveBeenCalledTimes(2)
+    // 요청을 시작한 뒤에는 버전 고르기를 쓰지 않고 안내 링크로만 버전을 바꾼다.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('link', { name: '최신 버전 보기' }))
+    })
+    expect(queryParams().has('version')).toBe(false)
+    expect(queryParams().get('issue')).toBe(productIssue.id)
+    expect(photo().getAttribute('src')).toBe('/api/assets/current-product')
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+    await chooseIssue(oldIssue)
+    fillComment()
+    expect(photo().getAttribute('src')).toBe('/api/assets/old-current-product')
+
+    await act(async () => {
+      pendingProject.resolve({ ...project, currentVersion: { id: latest.id, number: 2 } })
+    })
+
+    expect(queryParams().has('version')).toBe(false)
+    expect(queryParams().get('issue')).toBe(oldIssue.id)
+    expect(queryParams().get('keep')).toBe('yes')
+    // version 없는 주소는 새 최신 버전을 따르되, 사용자가 다시 연 쪽지의 처음 위치는 남는다.
+    const versions = screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' })
+    expect(versions.value).toBe(latest.id)
+    expect(Array.from(versions.options, (option) => option.value)).toEqual([latest.id, current.id, initial.id])
+    expect(photo().getAttribute('src')).toBe('/api/assets/old-current-product')
+    expect(screen.getByText('이 쪽지는 초안에 남긴 요청이에요. 처음 사진의 위치를 보여 드려요.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: pinName(oldIssue) }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('article', { name: '쪽지 #3' })).toBeTruthy()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
   })
 
   it('처음 불러오기가 15초보다 늦으면 목록을 중복 요청하지 않고 받은 목록과 주소의 쪽지를 연 뒤 다음 15초에 갱신한다', async () => {

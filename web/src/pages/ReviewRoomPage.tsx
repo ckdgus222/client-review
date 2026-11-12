@@ -248,6 +248,10 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const [versionReloads, setVersionReloads] = useState(0)
   // goLatest가 프로젝트를 다시 불러오는 중인가.
   const loadingLatest = useRef(false)
+  // 사용자가 버전을 직접 고른 횟수(버전 고르기, 지난 버전 안내의 "최신 버전 보기" 링크). goLatest가 기다리는 사이
+  // 사용자가 버전을 골랐는지 이것으로 안다. 주소의 버전 값만 비교하면, 다른 버전을 골랐다가 원래 버전을 다시 고른 것을 놓친다.
+  // 브라우저의 뒤로·앞으로 가기는 여기에 잡히지 않아서, goLatest는 주소의 버전 값도 함께 비교한다.
+  const versionChoices = useRef(0)
 
   useEffect(() => {
     if (!isValidId || !versionId || !isUuid(versionId)) return
@@ -420,6 +424,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
 
   // 보던 버전을 떠날 때 한다. 버전 고르기와 지난 버전의 "최신 버전 보기" 링크가 함께 쓴다.
   const leaveVersion = () => {
+    versionChoices.current += 1
     // 처음에 저절로 보인 첫 화면도 "보던 화면"으로 붙잡아 둔다. 안 그러면 새 버전의 첫 화면으로 바뀐다.
     if (selected) setSelectedScreenId(selected.screenId)
     setShowIssuePlace(false)
@@ -465,11 +470,13 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const goLatest = () => {
     if (loadingLatest.current) return
     loadingLatest.current = true
+    const choicesAtPress = versionChoices.current
     const versionAtPress = latestParams.current?.get('version')
     loadRoom()
       .then(
         () => {
           setVersionReloads((count) => count + 1)
+          if (versionChoices.current !== choicesAtPress) return
           if (latestParams.current?.get('version') !== versionAtPress) return
           setShowIssuePlace(false)
           setParam('version')
