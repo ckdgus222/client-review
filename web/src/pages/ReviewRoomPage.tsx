@@ -144,6 +144,16 @@ type DraftPin = PinPosition & { versionId: string; screenId: string }
 type LoadedIssue = { id: string; detail?: IssueDetailData; error?: ReactNode }
 
 const REFRESH_MS = 15_000
+// 받아 오는 중인 요청을 기다려 주는 시간. 이보다 오래 응답이 없으면 멈춘 연결로 보고, 15초 새로 부르기가 다시 부른다.
+// 없으면 응답이 끝내 오지 않는 요청 하나 때문에 새로 부르기가 계속 건너뛰어진다.
+const IN_FLIGHT_WAIT_MS = 60_000
+
+type InFlight = { number: number; since: number }
+const NOT_IN_FLIGHT: InFlight = { number: 0, since: 0 }
+
+// 가장 나중에 시작한 요청(latest)을 받아 오는 중이고, 아직 기다려 줄 시간 안인가.
+const isWaiting = (inFlight: InFlight, latest: number) =>
+  inFlight.number === latest && Date.now() - inFlight.since < IN_FLIGHT_WAIT_MS
 
 const ReviewRoom = ({ id }: { id: string }) => {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -196,6 +206,11 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 기억하고 있어서, 그사이 다른 쪽지를 열었는지는 화면 상태가 아니라 이 값으로 확인한다.
   const listRequest = useRef(0)
   const detailRequest = useRef({ issueId: '', number: 0 })
+  // 지금 받아 오는 중인 요청의 번호와 시작한 시각이다(없으면 NOT_IN_FLIGHT). 15초 새로 부르기는 가장 나중에 시작한 요청을
+  // 아직 받아 오는 중이면 건너뛴다(isWaiting). 건너뛰지 않으면 응답이 15초보다 느린 연결에서는 새 요청이 앞 요청의 응답을
+  // 번번이 버려서, 쪽지도 목록도 끝내 보이지 않는다.
+  const listInFlight = useRef(NOT_IN_FLIGHT)
+  const detailInFlight = useRef(NOT_IN_FLIGHT)
   // 상세 요청의 번호를 화면 상태로도 둔다. 수정 시작·참고 사진 버튼을 누른 때의 번호를 그 요청의 콜백이 기억하게
   // 하려는 것이다(applyChange). ref는 늘 지금 값이라서, 콜백이 읽으면 누른 때가 아니라 응답이 온 때의 번호가 나온다.
   const [detailNumber, setDetailNumber] = useState(0)
@@ -293,19 +308,24 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const loadIssue = useCallback(
     (issueId: string) => {
       const number = startDetailRequest(issueId)
-      getIssue(issueId).then(
-        (detail) => {
-          if (detailRequest.current.number === number) setLoadedIssue({ id: issueId, detail })
-        },
-        (caught) => {
-          if (detailRequest.current.number !== number) return
-          // 보여 주던 상세가 있으면 그대로 둔다. 새로 부르기는 도움 기능이라, 실패했다고 보던 쪽지와 쓰던 댓글을 치우지 않는다.
-          // 보여 줄 상세가 없을 때만 오류를 알린다.
-          setLoadedIssue((shown) =>
-            shown?.id === issueId && shown.detail ? shown : { id: issueId, error: toMessage(caught) },
-          )
-        },
-      )
+      detailInFlight.current = { number, since: Date.now() }
+      getIssue(issueId)
+        .then(
+          (detail) => {
+            if (detailRequest.current.number === number) setLoadedIssue({ id: issueId, detail })
+          },
+          (caught) => {
+            if (detailRequest.current.number !== number) return
+            // 보여 주던 상세가 있으면 그대로 둔다. 새로 부르기는 도움 기능이라, 실패했다고 보던 쪽지와 쓰던 댓글을 치우지 않는다.
+            // 보여 줄 상세가 없을 때만 오류를 알린다.
+            setLoadedIssue((shown) =>
+              shown?.id === issueId && shown.detail ? shown : { id: issueId, error: toMessage(caught) },
+            )
+          },
+        )
+        .finally(() => {
+          if (detailInFlight.current.number === number) detailInFlight.current = NOT_IN_FLIGHT
+        })
     },
     [startDetailRequest],
   )
@@ -320,15 +340,20 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 프로젝트와 버전은 부르지 않는다. 보던 버전이 저절로 바뀌면 쓰던 글과 핀이 흔들리기 때문이다.
   // 새 버전이 올라왔는지는 쓰기 요청의 409로 안다(기획 정할 것 4).
   // 도움 기능이라 실패해도 보던 내용을 그대로 둔다. 다음 차례에 다시 부른다.
-  const refreshList = () => {
+  const refreshList = useCallback(() => {
     const request = ++listRequest.current
-    listIssues(id).then(
-      (list) => {
-        if (listRequest.current === request) setIssues(list)
-      },
-      () => {},
-    )
-  }
+    listInFlight.current = { number: request, since: Date.now() }
+    listIssues(id)
+      .then(
+        (list) => {
+          if (listRequest.current === request) setIssues(list)
+        },
+        () => {},
+      )
+      .finally(() => {
+        if (listInFlight.current.number === request) listInFlight.current = NOT_IN_FLIGHT
+      })
+  }, [id])
 
   // issueId는 부르는 쪽이 보고 있던 쪽지다. 그사이 다른 쪽지를 열었으면 목록만 새로 부른다.
   // 그때 상세까지 부르면 지금 연 쪽지의 요청이 밀려나고, 그 쪽지의 상세와 쓰던 댓글이 화면에서 사라진다.
@@ -364,8 +389,16 @@ const ReviewRoom = ({ id }: { id: string }) => {
 
   // 타이머는 한 번만 걸고, 울릴 때마다 그때의 쪽지(openIssueId)로 새로 부른다.
   // 처음 불러오기가 끝나기 전에는 부르지 않는다. 먼저 부르면 목록 요청 번호가 올라가서, 처음 불러오기가 받아 온 쪽지 목록이 버려진다.
+  // 받아 오는 중인 것은 또 부르지 않는다(listInFlight, detailInFlight). 쪽지를 만들거나 바꾸거나 닫아서 번호만 올라간 뒤에는
+  // 받아 오는 중인 요청이 이미 버려질 요청이라, 건너뛰지 않고 새로 부른다. 댓글을 남긴 뒤처럼 사용자가 한 일 때문에 부르는
+  // 새로 부르기(refreshIssues)는 건너뛰지 않는다.
   const refreshIfVisible = useEffectEvent(() => {
-    if (project && document.visibilityState === 'visible') refreshIssues(openIssueId)
+    if (!project || document.visibilityState !== 'visible') return
+    if (!isWaiting(listInFlight.current, listRequest.current)) refreshList()
+    const open = detailRequest.current
+    if (openIssueId && open.issueId === openIssueId && !isWaiting(detailInFlight.current, open.number)) {
+      loadIssue(openIssueId)
+    }
   })
 
   useEffect(() => {

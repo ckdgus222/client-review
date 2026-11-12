@@ -1946,7 +1946,8 @@ describe('ReviewRoomPage 응답 순서와 작성 화면 유지', () => {
     const second = deferred<typeof issues>()
     vi.mocked(listIssues).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
     await advance()
-    await advance()
+    await click('댓글 남기기')
+    fillComment()
     expect(listIssues).toHaveBeenCalledTimes(3)
     await act(async () => {
       second.resolve([savedIssue, ...issues])
@@ -1969,7 +1970,8 @@ describe('ReviewRoomPage 응답 순서와 작성 화면 유지', () => {
     const second = deferred<IssueDetail>()
     vi.mocked(getIssue).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
     await advance()
-    await advance()
+    await click('댓글 남기기')
+    fillComment()
     expect(getIssue).toHaveBeenCalledTimes(3)
     await act(async () => {
       second.resolve({ ...productIssue, body: '나중 요청의 상세', comments: [savedComment], commentCount: 1 })
@@ -2312,73 +2314,77 @@ describe('ReviewRoomPage 처음 상세 응답과 보내는 중 핀 잠금', () =
   })
 
   it.each(['성공', '실패'] as const)(
-    '처음 여는 상세 요청 중 15초 갱신이 성공하면 그 상세를 보여 주고 늦은 처음 요청의 %s 결과는 버린다',
+    '주소로 처음 여는 상세 요청이 15초를 두 번 넘겨도 하나뿐이고 처음 요청의 %s 결과를 보여 준다',
     async (result) => {
       vi.useFakeTimers()
-      const first = deferred<IssueDetail>()
-      const second = deferred<IssueDetail>()
-      vi.mocked(getIssue).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+      const pending = deferred<IssueDetail>()
+      vi.mocked(getIssue).mockReturnValueOnce(pending.promise)
       await renderRoom(`?issue=${productIssue.id}`)
       expect(getIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id)
-      expect(screen.queryByRole('article')).toBeNull()
-      await advance()
-      expect(listIssues).toHaveBeenCalledTimes(2)
-      expect(getIssue).toHaveBeenCalledTimes(2)
-      expect(getIssue).toHaveBeenLastCalledWith(productIssue.id)
-      expect(screen.queryByRole('article')).toBeNull()
+      for (let tick = 1; tick <= 2; tick += 1) {
+        await advance()
+        expect(listIssues).toHaveBeenCalledTimes(tick + 1)
+        expect(getIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id)
+        expect(within(screen.getByRole('complementary', { name: '쪽지' })).getByRole('status').textContent).toBe(
+          '쪽지를 불러오는 중이에요',
+        )
+        expect(screen.queryByRole('article')).toBeNull()
+      }
 
       await act(async () => {
-        second.resolve({ ...productIssue, body: '15초 뒤 갱신한 상세' })
-      })
-      expect(within(screen.getByRole('article', { name: '쪽지 #1' })).getByText('15초 뒤 갱신한 상세')).toBeTruthy()
-      fillComment()
-      await act(async () => {
         if (result === '실패') {
-          first.reject(new TypeError('연결 실패'))
+          pending.reject(new TypeError('연결 실패'))
           return
         }
-        first.resolve({ ...productIssue, body: '처음 요청으로 받은 상세' })
+        pending.resolve({ ...productIssue, body: '처음 요청으로 받은 상세' })
       })
-      expect(getIssue).toHaveBeenCalledTimes(2)
-      expect(within(screen.getByRole('article', { name: '쪽지 #1' })).getByText('15초 뒤 갱신한 상세')).toBeTruthy()
-      expect(screen.queryByText('처음 요청으로 받은 상세')).toBeNull()
+      expect(getIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id)
+      expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+      if (result === '실패') {
+        expect(screen.getByText('연결을 확인하고 다시 시도해 주세요')).toBeTruthy()
+        expect(screen.queryByRole('article')).toBeNull()
+        return
+      }
+      expect(within(screen.getByRole('article', { name: '쪽지 #1' })).getByText('처음 요청으로 받은 상세')).toBeTruthy()
       expect(screen.queryByText('연결을 확인하고 다시 시도해 주세요')).toBeNull()
-      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
     },
   )
 
   it.each(['성공', '실패'] as const)(
-    '처음 여는 상세 요청 중 15초 갱신이 실패하면 오류를 보여 주고 늦은 처음 요청의 %s 결과는 버린다',
+    '목록에서 처음 여는 상세 요청이 15초를 두 번 넘겨도 하나뿐이고 처음 요청의 %s 결과를 보여 준다',
     async (result) => {
       vi.useFakeTimers()
-      const first = deferred<IssueDetail>()
-      const second = deferred<IssueDetail>()
-      vi.mocked(getIssue).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
-      await renderRoom(`?issue=${productIssue.id}`)
+      const pending = deferred<IssueDetail>()
+      vi.mocked(getIssue).mockReturnValueOnce(pending.promise)
+      await renderRoom()
+      await chooseIssue(productIssue)
       expect(getIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id)
-      await advance()
-      expect(listIssues).toHaveBeenCalledTimes(2)
-      expect(getIssue).toHaveBeenCalledTimes(2)
-      expect(getIssue).toHaveBeenLastCalledWith(productIssue.id)
-      expect(screen.queryByRole('article')).toBeNull()
+      for (let tick = 1; tick <= 2; tick += 1) {
+        await advance()
+        expect(listIssues).toHaveBeenCalledTimes(tick + 1)
+        expect(getIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id)
+        expect(within(screen.getByRole('complementary', { name: '쪽지' })).getByRole('status').textContent).toBe(
+          '쪽지를 불러오는 중이에요',
+        )
+        expect(screen.queryByRole('article')).toBeNull()
+      }
 
-      await act(async () => {
-        second.reject(new TypeError('연결 실패'))
-      })
-      expect(screen.getByText('연결을 확인하고 다시 시도해 주세요')).toBeTruthy()
-      expect(screen.queryByRole('article')).toBeNull()
       await act(async () => {
         if (result === '실패') {
-          first.reject(new ApiError(500))
+          pending.reject(new TypeError('연결 실패'))
           return
         }
-        first.resolve(productIssue)
+        pending.resolve({ ...productIssue, body: '처음 요청으로 받은 상세' })
       })
-
-      expect(screen.getByText('연결을 확인하고 다시 시도해 주세요')).toBeTruthy()
-      expect(screen.queryByText('잠시 뒤 다시 시도해 주세요')).toBeNull()
-      expect(screen.queryByRole('article')).toBeNull()
-      expect(getIssue).toHaveBeenCalledTimes(2)
+      expect(getIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id)
+      expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+      if (result === '실패') {
+        expect(screen.getByText('연결을 확인하고 다시 시도해 주세요')).toBeTruthy()
+        expect(screen.queryByRole('article')).toBeNull()
+        return
+      }
+      expect(within(screen.getByRole('article', { name: '쪽지 #1' })).getByText('처음 요청으로 받은 상세')).toBeTruthy()
+      expect(screen.queryByText('연결을 확인하고 다시 시도해 주세요')).toBeNull()
     },
   )
 
@@ -3630,4 +3636,360 @@ describe('ReviewRoomPage 댓글 초안을 남기고 새 쪽지 쓰기', () => {
       expect(queryParams().has('issue')).toBe(false)
     },
   )
+})
+
+describe('ReviewRoomPage 느린 요청 중 15초 새로 부르기', () => {
+  it.each(['성공', '실패'] as const)(
+    '느린 상세 갱신 중에는 목록만 갱신하고 상세가 %s한 뒤 다음 15초에 다시 부른다',
+    async (result) => {
+      vi.useFakeTimers()
+      await renderRoom(`?issue=${productIssue.id}`)
+      fillComment()
+      const pending = deferred<IssueDetail>()
+      vi.mocked(getIssue).mockReturnValueOnce(pending.promise)
+      await advance()
+      expect(getIssue).toHaveBeenCalledTimes(2)
+      await advance()
+      await advance()
+      expect(getIssue).toHaveBeenCalledTimes(2)
+      expect(listIssues).toHaveBeenCalledTimes(4)
+      expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+      expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+
+      await act(async () => {
+        if (result === '실패') {
+          pending.reject(new ApiError(500))
+          return
+        }
+        pending.resolve({ ...productIssue, body: '느리게 도착한 상세' })
+      })
+      expect(screen.getByText(result === '성공' ? '느리게 도착한 상세' : productIssue.body)).toBeTruthy()
+      expect(getIssue).toHaveBeenCalledTimes(2)
+      await advance()
+      expect(getIssue).toHaveBeenCalledTimes(3)
+      expect(getIssue).toHaveBeenLastCalledWith(productIssue.id)
+      expect(listIssues).toHaveBeenCalledTimes(5)
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+    },
+  )
+
+  it.each(['성공', '실패'] as const)(
+    '느린 목록 갱신 중에는 상세만 갱신하고 목록이 %s한 뒤 다음 15초에 다시 부른다',
+    async (result) => {
+      vi.useFakeTimers()
+      await renderRoom(`?issue=${productIssue.id}`)
+      fillComment()
+      const pending = deferred<typeof issues>()
+      vi.mocked(listIssues).mockReturnValueOnce(pending.promise)
+      await advance()
+      expect(listIssues).toHaveBeenCalledTimes(2)
+      await advance()
+      await advance()
+      expect(listIssues).toHaveBeenCalledTimes(2)
+      expect(getIssue).toHaveBeenCalledTimes(4)
+      expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+
+      await act(async () => {
+        if (result === '실패') {
+          pending.reject(new ApiError(500))
+          return
+        }
+        pending.resolve([savedIssue, ...issues])
+      })
+      const list = within(screen.getByRole('region', { name: '쪽지 목록' }))
+      expect(list.getAllByRole('listitem')).toHaveLength(result === '성공' ? 5 : 4)
+      expect(listIssues).toHaveBeenCalledTimes(2)
+      await advance()
+      expect(listIssues).toHaveBeenCalledTimes(3)
+      expect(listIssues).toHaveBeenLastCalledWith(project.id)
+      expect(getIssue).toHaveBeenCalledTimes(5)
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+    },
+  )
+
+  it('느린 목록 요청 중 쪽지를 만들면 그 요청이 끝나기 전에도 다음 15초에 목록을 부른다', async () => {
+    vi.useFakeTimers()
+    await renderRoom()
+    const pending = deferred<typeof issues>()
+    vi.mocked(listIssues).mockReturnValueOnce(pending.promise)
+    await advance()
+    await click('쪽지 쓰기')
+    fillDraft()
+    await click('쪽지 남기기')
+    expect(listIssues).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('article', { name: '쪽지 #5' })).toBeTruthy()
+    vi.mocked(listIssues).mockResolvedValue([savedIssue, ...issues])
+    await advance()
+    expect(listIssues).toHaveBeenCalledTimes(3)
+    await act(async () => {
+      pending.resolve(issues)
+    })
+    expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getByText(savedIssue.title)).toBeTruthy()
+    expect(screen.getByRole('article', { name: '쪽지 #5' })).toBeTruthy()
+  })
+
+  it.each(['성공', '실패'] as const)(
+    '느린 목록·상세 중 댓글 저장은 바로 새로 부르고 이전 요청이 %s해도 진행 중인 새 요청을 중복하지 않는다',
+    async (result) => {
+      vi.useFakeTimers()
+      await renderRoom(`?issue=${productIssue.id}`)
+      const oldList = deferred<typeof issues>()
+      const newList = deferred<typeof issues>()
+      const oldDetail = deferred<IssueDetail>()
+      const newDetail = deferred<IssueDetail>()
+      vi.mocked(listIssues).mockReturnValueOnce(oldList.promise).mockReturnValueOnce(newList.promise)
+      vi.mocked(getIssue).mockReturnValueOnce(oldDetail.promise).mockReturnValueOnce(newDetail.promise)
+      await advance()
+      fillComment()
+      await click('댓글 남기기')
+      expect(createComment).toHaveBeenCalledTimes(1)
+      expect(listIssues).toHaveBeenCalledTimes(3)
+      expect(getIssue).toHaveBeenCalledTimes(3)
+      expect(
+        within(screen.getByRole('region', { name: '댓글' })).getByText(savedComment.body, { selector: 'p' }),
+      ).toBeTruthy()
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe('')
+      fillComment()
+
+      await act(async () => {
+        if (result === '실패') {
+          oldList.reject(new ApiError(500))
+          oldDetail.reject(new ApiError(500))
+          return
+        }
+        oldList.resolve(issues)
+        oldDetail.resolve(productIssue)
+      })
+      await advance()
+      expect(listIssues).toHaveBeenCalledTimes(3)
+      expect(getIssue).toHaveBeenCalledTimes(3)
+      expect(
+        within(screen.getByRole('region', { name: '댓글' })).getByText(savedComment.body, { selector: 'p' }),
+      ).toBeTruthy()
+      await act(async () => {
+        newList.resolve(issues)
+        newDetail.resolve({ ...productIssue, comments: [savedComment], commentCount: 1 })
+      })
+      await advance()
+      expect(listIssues).toHaveBeenCalledTimes(4)
+      expect(getIssue).toHaveBeenCalledTimes(4)
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+    },
+  )
+
+  it('A 상세를 기다리는 중 B를 고르면 즉시 B를 부르고 늦은 A 응답은 B 요청의 대기를 풀지 않는다', async () => {
+    vi.useFakeTimers()
+    const first = deferred<IssueDetail>()
+    const second = deferred<IssueDetail>()
+    vi.mocked(getIssue).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    await renderRoom(`?issue=${productIssue.id}`)
+    await chooseIssue(cartIssue)
+    expect(vi.mocked(getIssue).mock.calls).toEqual([[productIssue.id], [cartIssue.id]])
+    await act(async () => {
+      first.resolve(productIssue)
+    })
+    await advance()
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    expect(within(screen.getByRole('complementary', { name: '쪽지' })).getByRole('status')).toBeTruthy()
+    await act(async () => {
+      second.resolve(cartIssue)
+    })
+    expect(screen.getByRole('article', { name: '쪽지 #2' })).toBeTruthy()
+    expect(screen.queryByRole('article', { name: '쪽지 #1' })).toBeNull()
+    expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+    await advance()
+    expect(getIssue).toHaveBeenCalledTimes(3)
+    expect(getIssue).toHaveBeenLastCalledWith(cartIssue.id)
+  })
+
+  it('느린 상세 갱신 중 수정 시작으로 이전 요청을 버리면 다음 15초에 상세를 다시 부른다', async () => {
+    vi.useFakeTimers()
+    await renderRoom(`?issue=${productIssue.id}`)
+    const pending = deferred<IssueDetail>()
+    vi.mocked(getIssue).mockReturnValueOnce(pending.promise)
+    await advance()
+    await click('수정 시작')
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    expect(within(screen.getByRole('article', { name: '쪽지 #1' })).getByText('수정 중')).toBeTruthy()
+    vi.mocked(getIssue).mockResolvedValue({ ...productIssue, status: 'IN_PROGRESS' })
+    await advance()
+    expect(getIssue).toHaveBeenCalledTimes(3)
+    await act(async () => {
+      pending.resolve(productIssue)
+    })
+    expect(within(screen.getByRole('article', { name: '쪽지 #1' })).getByText('수정 중')).toBeTruthy()
+  })
+})
+
+describe('ReviewRoomPage 응답 없는 요청의 60초 대기 제한', () => {
+  it.each(['성공', '실패'] as const)(
+    '상세는 45초까지 기다리고 60초에 다시 불러 새 응답을 보여 주며 늦은 앞 요청의 %s은 버린다',
+    async (result) => {
+      vi.useFakeTimers()
+      const first = deferred<IssueDetail>()
+      const replacement = deferred<IssueDetail>()
+      vi.mocked(getIssue).mockReturnValueOnce(first.promise).mockReturnValueOnce(replacement.promise)
+      await renderRoom(`?issue=${productIssue.id}`)
+      expect(getIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id)
+
+      for (let tick = 1; tick <= 3; tick += 1) {
+        await advance()
+        expect(getIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id)
+        expect(within(screen.getByRole('complementary', { name: '쪽지' })).getByRole('status').textContent).toBe(
+          '쪽지를 불러오는 중이에요',
+        )
+        expect(screen.queryByRole('article')).toBeNull()
+      }
+      await advance(14_999)
+      expect(getIssue).toHaveBeenCalledTimes(1)
+      await advance(1)
+      expect(vi.mocked(getIssue).mock.calls).toEqual([[productIssue.id], [productIssue.id]])
+
+      await act(async () => {
+        replacement.resolve({ ...productIssue, body: '60초 뒤 다시 받은 상세' })
+      })
+      expect(within(screen.getByRole('article', { name: '쪽지 #1' })).getByText('60초 뒤 다시 받은 상세')).toBeTruthy()
+      expect(within(screen.getByRole('complementary', { name: '쪽지' })).queryByRole('status')).toBeNull()
+      fillComment()
+
+      await act(async () => {
+        if (result === '실패') {
+          first.reject(new TypeError('연결 실패'))
+          return
+        }
+        first.resolve({ ...productIssue, body: '늦게 온 앞 요청의 상세' })
+      })
+      expect(within(screen.getByRole('article', { name: '쪽지 #1' })).getByText('60초 뒤 다시 받은 상세')).toBeTruthy()
+      expect(screen.queryByText('늦게 온 앞 요청의 상세')).toBeNull()
+      expect(screen.queryByText('연결을 확인하고 다시 시도해 주세요')).toBeNull()
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+      expect(getIssue).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it.each(['성공', '실패'] as const)(
+    '목록 갱신은 시작 뒤 45초까지 기다리고 60초에 다시 불러 새 응답을 보여 주며 늦은 앞 요청의 %s은 버린다',
+    async (result) => {
+      vi.useFakeTimers()
+      await renderRoom()
+      const first = deferred<typeof issues>()
+      const replacement = deferred<typeof issues>()
+      vi.mocked(listIssues).mockReturnValueOnce(first.promise).mockReturnValueOnce(replacement.promise)
+      await advance()
+      expect(listIssues).toHaveBeenCalledTimes(2)
+
+      for (let tick = 1; tick <= 3; tick += 1) {
+        await advance()
+        expect(listIssues).toHaveBeenCalledTimes(2)
+        expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getAllByRole('listitem')).toHaveLength(4)
+      }
+      await advance(14_999)
+      expect(listIssues).toHaveBeenCalledTimes(2)
+      await advance(1)
+      expect(listIssues).toHaveBeenCalledTimes(3)
+      expect(listIssues).toHaveBeenLastCalledWith(project.id)
+
+      await act(async () => {
+        replacement.resolve([savedIssue, ...issues])
+      })
+      expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getByText(savedIssue.title)).toBeTruthy()
+      expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getAllByRole('listitem')).toHaveLength(5)
+
+      await act(async () => {
+        if (result === '실패') {
+          first.reject(new TypeError('연결 실패'))
+          return
+        }
+        first.resolve(issues)
+      })
+      expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getByText(savedIssue.title)).toBeTruthy()
+      expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getAllByRole('listitem')).toHaveLength(5)
+      expect(screen.queryByText('연결을 확인하고 다시 시도해 주세요')).toBeNull()
+      expect(listIssues).toHaveBeenCalledTimes(3)
+    },
+  )
+
+  it('60초에 다시 부른 상세도 느리면 새 요청 시작부터 다시 60초를 기다린다', async () => {
+    vi.useFakeTimers()
+    const first = deferred<IssueDetail>()
+    const second = deferred<IssueDetail>()
+    const third = deferred<IssueDetail>()
+    vi.mocked(getIssue)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockReturnValueOnce(third.promise)
+    await renderRoom(`?issue=${productIssue.id}`)
+    await advance(60_000)
+    expect(getIssue).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      first.resolve({ ...productIssue, body: '만료된 첫 상세' })
+    })
+    for (let tick = 1; tick <= 3; tick += 1) {
+      await advance()
+      expect(getIssue).toHaveBeenCalledTimes(2)
+      expect(within(screen.getByRole('complementary', { name: '쪽지' })).getByRole('status')).toBeTruthy()
+      expect(screen.queryByRole('article')).toBeNull()
+    }
+    await advance(14_999)
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    await advance(1)
+    expect(vi.mocked(getIssue).mock.calls).toEqual([[productIssue.id], [productIssue.id], [productIssue.id]])
+
+    await act(async () => {
+      third.resolve({ ...productIssue, body: '두 번 기다린 뒤 받은 상세' })
+    })
+    expect(screen.getByText('두 번 기다린 뒤 받은 상세')).toBeTruthy()
+    await act(async () => {
+      second.resolve({ ...productIssue, body: '만료된 두 번째 상세' })
+    })
+    expect(screen.getByText('두 번 기다린 뒤 받은 상세')).toBeTruthy()
+    expect(screen.queryByText('만료된 첫 상세')).toBeNull()
+    expect(screen.queryByText('만료된 두 번째 상세')).toBeNull()
+    expect(getIssue).toHaveBeenCalledTimes(3)
+  })
+
+  it('60초에 다시 부른 목록도 느리면 새 요청 시작부터 다시 60초를 기다린다', async () => {
+    vi.useFakeTimers()
+    await renderRoom()
+    const first = deferred<typeof issues>()
+    const second = deferred<typeof issues>()
+    const third = deferred<typeof issues>()
+    vi.mocked(listIssues)
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockReturnValueOnce(third.promise)
+    await advance()
+    expect(listIssues).toHaveBeenCalledTimes(2)
+    await advance(60_000)
+    expect(listIssues).toHaveBeenCalledTimes(3)
+
+    await act(async () => {
+      first.reject(new TypeError('연결 실패'))
+    })
+    for (let tick = 1; tick <= 3; tick += 1) {
+      await advance()
+      expect(listIssues).toHaveBeenCalledTimes(3)
+      expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getAllByRole('listitem')).toHaveLength(4)
+    }
+    await advance(14_999)
+    expect(listIssues).toHaveBeenCalledTimes(3)
+    await advance(1)
+    expect(listIssues).toHaveBeenCalledTimes(4)
+    expect(listIssues).toHaveBeenLastCalledWith(project.id)
+
+    await act(async () => {
+      third.resolve([savedIssue, ...issues])
+    })
+    expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getByText(savedIssue.title)).toBeTruthy()
+    await act(async () => {
+      second.resolve(issues)
+    })
+    expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getByText(savedIssue.title)).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getAllByRole('listitem')).toHaveLength(5)
+    expect(screen.queryByText('연결을 확인하고 다시 시도해 주세요')).toBeNull()
+    expect(listIssues).toHaveBeenCalledTimes(4)
+  })
 })

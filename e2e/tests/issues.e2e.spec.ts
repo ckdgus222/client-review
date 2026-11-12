@@ -1086,3 +1086,193 @@ test('휴대폰 화면에서 쪽지를 열면 목록이 숨고 쪽지를 닫으�
   await detail.getByRole('button', { name: '쪽지 닫기', exact: true }).click()
   await expect(list).toBeVisible()
 })
+
+test('쪽지 상세 응답이 15초보다 늦어도 그사이 다시 부르지 않고 응답이 오면 쪽지가 열린다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  await loginAs(room.client.id)
+  await page.clock.install()
+  await page.goto(`/app/projects/${room.project.id}`)
+  await loadedPhoto(page)
+  const detailPath = `/api/issues/${issue.id}`
+  const listPath = `/api/projects/${room.project.id}/issues`
+  let detailRequests = 0
+  page.on('request', (request) => {
+    if (request.method() === 'GET' && new URL(request.url()).pathname === detailPath) detailRequests += 1
+  })
+  let release!: () => void
+  const responseGate = new Promise<void>((resolve) => { release = resolve })
+  let received!: () => void
+  const serverResponded = new Promise<void>((resolve) => { received = resolve })
+  await page.route(`**${detailPath}`, async (route) => {
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    received()
+    await responseGate
+    await route.fulfill({ response })
+  }, { times: 1 })
+  try {
+    await page.getByRole('region', { name: '쪽지 목록', exact: true }).getByRole('button', { name: new RegExp(issue.title) }).click()
+    await serverResponded
+    const panel = page.getByRole('complementary', { name: '쪽지', exact: true })
+    for (let tick = 0; tick < 2; tick += 1) {
+      const listResponse = page.waitForResponse((response) => new URL(response.url()).pathname === listPath)
+      await page.clock.fastForward(15_000)
+      expect((await listResponse).status()).toBe(200)
+      await expect(panel.getByRole('status')).toHaveText('쪽지를 불러오는 중이에요')
+      await expect(panel.getByRole('article')).toHaveCount(0)
+      expect(detailRequests).toBe(1)
+    }
+    release()
+    const detail = panel.getByRole('article', { name: '쪽지 #1', exact: true })
+    await expect(detail).toBeVisible()
+    await expect(detail.getByRole('heading', { name: issue.title, exact: true })).toBeVisible()
+    await expect(detail).toContainText(issue.body)
+    await expect(panel.getByRole('status')).toHaveCount(0)
+    expect(detailRequests).toBe(1)
+  } finally {
+    release()
+  }
+})
+
+test('쪽지 목록 새로 부르기 응답이 15초보다 늦어도 그사이 다시 부르지 않고 응답이 오면 다른 사람의 쪽지가 보인다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  await loginAs(room.client.id)
+  await page.clock.install()
+  const listPath = `/api/projects/${room.project.id}/issues`
+  const detailPath = `/api/issues/${issue.id}`
+  let listRequests = 0
+  page.on('request', (request) => {
+    if (request.method() === 'GET' && new URL(request.url()).pathname === listPath) listRequests += 1
+  })
+  await page.goto(`/app/projects/${room.project.id}?issue=${issue.id}`)
+  const comment = page.getByRole('textbox', { name: '댓글', exact: true })
+  await comment.fill('목록을 기다리며 쓰던 댓글')
+  // 개발 서버는 StrictMode라 처음 불러오기가 두 번 간다. 그래서 횟수는 처음 불러오기가 끝난 지금을 기준으로 센다.
+  const loaded = listRequests
+  const other = await seedIssue(room, '느린 목록에 담긴 새 쪽지', room.developer.id, false)
+  let release!: () => void
+  const responseGate = new Promise<void>((resolve) => { release = resolve })
+  let received!: () => void
+  const serverResponded = new Promise<void>((resolve) => { received = resolve })
+  await page.route(`**${listPath}`, async (route) => {
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    received()
+    await responseGate
+    await route.fulfill({ response })
+  }, { times: 1 })
+  try {
+    const firstDetail = page.waitForResponse((response) => new URL(response.url()).pathname === detailPath)
+    await page.clock.fastForward(15_000)
+    await serverResponded
+    expect((await firstDetail).status()).toBe(200)
+    expect(listRequests).toBe(loaded + 1)
+    const nextDetail = page.waitForResponse((response) => new URL(response.url()).pathname === detailPath)
+    await page.clock.fastForward(15_000)
+    expect((await nextDetail).status()).toBe(200)
+    const list = page.getByRole('region', { name: '쪽지 목록', exact: true })
+    await expect(list.getByText(other.title, { exact: true })).toHaveCount(0)
+    expect(listRequests).toBe(loaded + 1)
+    await expect(comment).toHaveValue('목록을 기다리며 쓰던 댓글')
+
+    release()
+    await expect(list.getByText(other.title, { exact: true })).toBeVisible()
+    expect(listRequests).toBe(loaded + 1)
+    const nextList = page.waitForResponse((response) => new URL(response.url()).pathname === listPath)
+    await page.clock.fastForward(15_000)
+    expect((await nextList).status()).toBe(200)
+    expect(listRequests).toBe(loaded + 2)
+    await expect(list.getByText(other.title, { exact: true })).toBeVisible()
+    await expect(comment).toHaveValue('목록을 기다리며 쓰던 댓글')
+    await expect(page).toHaveURL((url) => url.searchParams.get('issue') === issue.id)
+  } finally {
+    release()
+  }
+})
+
+test('댓글 응답을 기다리는 사이 다른 쪽지를 열어 쓰던 댓글은 늦은 응답이 와도 그대로 남는다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const first = await seedIssue(room, '댓글을 보낼 A 쪽지')
+  const second = await seedIssue(room, '계속 작성할 B 쪽지')
+  await loginAs(room.client.id)
+  await page.clock.install()
+  await page.goto(`/app/projects/${room.project.id}?issue=${first.id}`)
+  await page.getByRole('textbox', { name: '댓글', exact: true }).fill('A에 저장된 댓글')
+  const commentPath = `/api/issues/${first.id}/comments`
+  const listPath = `/api/projects/${room.project.id}/issues`
+  const detailRequests: string[] = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if (request.method() === 'GET' && /^\/api\/issues\/[^/]+$/.test(path)) detailRequests.push(path)
+  })
+  let release!: () => void
+  const responseGate = new Promise<void>((resolve) => { release = resolve })
+  let received!: () => void
+  const serverResponded = new Promise<void>((resolve) => { received = resolve })
+  await page.route(`**${commentPath}`, async (route) => {
+    const response = await route.fetch()
+    expect(response.status()).toBe(201)
+    received()
+    await responseGate
+    await route.fulfill({ response })
+  }, { times: 1 })
+  try {
+    await page.getByRole('button', { name: '댓글 남기기', exact: true }).click()
+    await serverResponded
+    await page.getByRole('region', { name: '쪽지 목록', exact: true }).getByRole('button', { name: new RegExp(second.title) }).click()
+    const detail = page.getByRole('article', { name: '쪽지 #2', exact: true })
+    const comment = detail.getByRole('textbox', { name: '댓글', exact: true })
+    await comment.fill('B에 아직 보내지 않은 댓글')
+    expect(detailRequests).toEqual([`/api/issues/${second.id}`])
+    const refreshedList = page.waitForResponse((response) => new URL(response.url()).pathname === listPath)
+    release()
+    expect((await refreshedList).status()).toBe(200)
+    await expect(detail.getByRole('heading', { name: second.title, exact: true })).toBeVisible()
+    await expect(comment).toHaveValue('B에 아직 보내지 않은 댓글')
+    await expect(page).toHaveURL((url) => url.searchParams.get('issue') === second.id)
+    expect(detailRequests).toEqual([`/api/issues/${second.id}`])
+    expect(await db.comment.count({ where: { issueId: first.id, body: 'A에 저장된 댓글' } })).toBe(1)
+    expect(await db.comment.count({ where: { issueId: second.id } })).toBe(0)
+
+    const nextDetail = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/issues/${second.id}`)
+    await page.clock.fastForward(15_000)
+    expect((await nextDetail).status()).toBe(200)
+    await expect(comment).toHaveValue('B에 아직 보내지 않은 댓글')
+    expect(detailRequests).toEqual([`/api/issues/${second.id}`, `/api/issues/${second.id}`])
+  } finally {
+    release()
+  }
+})
+
+test('댓글이 저장된 뒤 쪽지 다시 부르기가 실패해도 저장된 댓글이 보이고 입력칸이 비워진다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  await loginAs(room.client.id)
+  await page.clock.install()
+  await page.goto(`/app/projects/${room.project.id}?issue=${issue.id}`)
+  const detail = page.getByRole('article', { name: '쪽지 #1', exact: true })
+  const comment = detail.getByRole('textbox', { name: '댓글', exact: true })
+  const body = '다시 불러오기가 실패해도 보일 댓글'
+  await comment.fill(body)
+  const detailPath = `/api/issues/${issue.id}`
+  await page.route(`**${detailPath}`, (route) => route.fulfill({ status: 500, json: { message: 'test failure' } }), { times: 1 })
+  const refresh = page.waitForResponse((response) => new URL(response.url()).pathname === detailPath)
+  await submit(page, '댓글 남기기', `/api/issues/${issue.id}/comments`)
+  expect((await refresh).status()).toBe(500)
+  await expect(detail.getByRole('heading', { name: issue.title, exact: true })).toBeVisible()
+  await expect(detail.getByText(body, { exact: true })).toBeVisible()
+  await expect(detail.getByText(body, { exact: true })).toHaveCount(1)
+  await expect(comment).toHaveValue('')
+  await expect(comment).toBeEditable()
+  await expect(page.getByText('잠시 뒤 다시 시도해 주세요', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '다시 보내기', exact: true })).toHaveCount(0)
+  expect(await db.comment.count({ where: { issueId: issue.id, body } })).toBe(1)
+
+  const recovered = page.waitForResponse((response) => new URL(response.url()).pathname === detailPath)
+  await page.clock.fastForward(15_000)
+  expect((await recovered).status()).toBe(200)
+  await expect(detail.getByText(body, { exact: true })).toHaveCount(1)
+  await expect(comment).toHaveValue('')
+})
