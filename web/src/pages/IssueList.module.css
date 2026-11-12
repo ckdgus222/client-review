@@ -68,3 +68,16 @@
 .title {
   overflow-wrap: anywhere;
 }
+
+/* 색만으로 알리지 않는다. "마감 지남" 글자가 함께 보인다. */
+.overdue {
+  color: var(--color-danger);
+}
+
+/* 필터 지우기. 미해결 개수 옆에 둔다. */
+.link {
+  composes: linkButton from '../components/LinkButton.module.css';
+  min-height: 44px;
+  margin-left: var(--space-2);
+  font-size: var(--font-size-sm);
+}

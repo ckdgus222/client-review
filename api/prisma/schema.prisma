@@ -263,6 +263,23 @@ enum IssueStatus {
   @@map("issue_status")
 }
 
+enum IssueCategory {
+  BUG
+  DESIGN
+  COPY
+  OTHER
+
+  @@map("issue_category")
+}
+
+// 하자 수정(계약 안)인지 추가 요청(계약 밖)인지. 추가 비용과 잔금 청구의 근거라서 개발자만 바꾼다.
+enum IssueScope {
+  IN_SCOPE
+  OUT_OF_SCOPE
+
+  @@map("issue_scope")
+}
+
 // 수정 요청 쪽지. 시작 버전·화면·핀 위치는 만든 뒤 바꾸지 않는다.
 // 시작 버전은 이 프로젝트의 버전이고 시작 화면은 그 버전의 화면이라는 것을 두 칸짜리 외래키가 지킨다.
 // "핀은 화면·x·y가 셋 다 있거나 셋 다 없다"와 "x·y는 0~1"은 마이그레이션 SQL의 CHECK 제약이 지킨다.
@@ -286,6 +303,10 @@ model Issue {
   title                 String
   body                  String
   status                IssueStatus       @default(OPEN)
+  category              IssueCategory     @default(BUG)
+  scope                 IssueScope        @default(IN_SCOPE)
+  // 시각 없는 날짜. 시각이 있으면 시간대에 따라 하루가 밀린다.
+  dueDate               DateTime?         @map("due_date") @db.Date
   // 브라우저가 쓰기 칸을 열 때 만든 번호. 인터넷이 끊겨 다시 보내도 쪽지가 하나만 생긴다.
   requestId             String            @map("request_id") @db.Uuid
   createdAt             DateTime          @default(now()) @map("created_at") @db.Timestamptz

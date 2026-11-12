@@ -1,5 +1,6 @@
 import { Transform } from 'class-transformer';
-import { IsNumber, IsUUID, Length, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { IsEnum, IsNumber, IsUUID, Length, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { IssueCategory } from '../../generated/prisma/client.js';
 
 // 핀은 화면·x·y를 셋 다 보내거나 셋 다 보내지 않는다. 하나라도 보냈으면 셋 다 검사해서,
 // 일부만 보낸 요청은 빠진 칸 때문에 422가 된다. null도 "보낸 것"이라 검사에 걸린다.
@@ -24,6 +25,11 @@ export class CreateIssueDto {
   // 비워도 된다. 줄바꿈과 들여쓰기를 살리려고 공백을 지우지 않는다. MaxLength는 문자열이 아닌 값도 거부한다.
   @MaxLength(4000)
   body: string;
+
+  // 보내지 않으면 버그다. null은 "보낸 것"이라 검사에 걸린다(IsOptional은 null도 통과시킨다).
+  @ValidateIf((_, value) => value !== undefined)
+  @IsEnum(IssueCategory)
+  category?: IssueCategory;
 
   @ValidateIf(hasAnyPinField)
   @IsUUID()

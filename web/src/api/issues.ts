@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost, apiPostForm } from './client.ts'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPostForm } from './client.ts'
 import { screenLabel, type Viewport } from './projects.ts'
 import { versionLabel } from './versions.ts'
 
@@ -6,6 +6,22 @@ import { versionLabel } from './versions.ts'
 export type IssueStatus = 'OPEN' | 'IN_PROGRESS'
 
 export const ISSUE_STATUS_LABELS: Record<IssueStatus, string> = { OPEN: '접수', IN_PROGRESS: '수정 중' }
+
+// 아직 끝나지 않은 상태. 6번에서 확인 요청이 생기면 여기에 더하고, 확인 완료와 철회는 넣지 않는다.
+const UNRESOLVED: IssueStatus[] = ['OPEN', 'IN_PROGRESS']
+export const isUnresolved = (status: IssueStatus) => UNRESOLVED.includes(status)
+
+export type IssueCategory = 'BUG' | 'DESIGN' | 'COPY' | 'OTHER'
+// 하자 수정(계약 안)인지 추가 요청(계약 밖)인지. 개발자만 바꾼다.
+export type IssueScope = 'IN_SCOPE' | 'OUT_OF_SCOPE'
+
+export const ISSUE_CATEGORY_LABELS: Record<IssueCategory, string> = {
+  BUG: '버그',
+  DESIGN: '디자인',
+  COPY: '문구',
+  OTHER: '기타',
+}
+export const ISSUE_SCOPE_LABELS: Record<IssueScope, string> = { IN_SCOPE: '하자 수정', OUT_OF_SCOPE: '추가 요청' }
 
 // 핀이 꽂힌 자리. 비율은 사진 가로·세로에 대한 0~1 값이라, 사진이 줄거나 커져도 같은 자리다.
 export type IssuePin = {
@@ -23,6 +39,10 @@ export type IssueSummary = {
   number: number
   title: string
   status: IssueStatus
+  category: IssueCategory
+  scope: IssueScope
+  // "YYYY-MM-DD" 글자. 시각이 없는 날짜라서 Date로 바꾸지 않고 글자 그대로 다룬다.
+  dueDate: string | null
   authorName: string
   createdAt: string
   commentCount: number
@@ -47,6 +67,59 @@ export const originLabel = ({ originVersion, origin }: Pick<IssueSummary, 'origi
   return `${versionLabel(originVersion.number)} · ${place}`
 }
 
+// 보는 사람 컴퓨터의 오늘 날짜를 마감일과 같은 "YYYY-MM-DD" 글자로 만든다.
+const todayText = () => {
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${now.getFullYear()}-${month}-${day}`
+}
+
+// 마감일이 오늘보다 앞이고 쪽지가 아직 끝나지 않았을 때다. 마감일 당일은 지남이 아니다.
+// 글자끼리 비교한다. Date로 바꾸면 시간대 때문에 하루가 밀린다.
+export const isOverdue = ({ dueDate, status }: Pick<IssueSummary, 'dueDate' | 'status'>) =>
+  dueDate !== null && isUnresolved(status) && dueDate < todayText()
+
+// "11월 15일"처럼 보여 주고, 올해가 아니면 해를 붙인다("2027년 1월 5일").
+export const dueDateLabel = (dueDate: string) => {
+  const [year, month, day] = dueDate.split('-').map(Number)
+  const monthDay = `${month}월 ${day}일`
+  return year === new Date().getFullYear() ? monthDay : `${year}년 ${monthDay}`
+}
+
+// 쪽지 목록을 골라 보는 조건(검수실의 필터). 서버를 부르지 않지만 여기에 둔다. 필터 부품 파일(IssueFilters.tsx)이
+// 부품이 아닌 것을 함께 내보내면, 개발 서버가 그 파일을 고칠 때 화면을 통째로 새로 불러온다(린트 경고).
+// 화면 필터에서 "위치 없음"을 고른 값. 화면 id(UUID)와 겹치지 않는다.
+export const NO_PLACE = 'none'
+
+// 빈 글자('')는 "전체"다. screenId는 쪽지가 시작한 화면의 id이거나 NO_PLACE다.
+export type IssueFilter = {
+  status: IssueStatus | ''
+  screenId: string
+  category: IssueCategory | ''
+  scope: IssueScope | ''
+  overdueOnly: boolean
+}
+
+export const NO_FILTER: IssueFilter = { status: '', screenId: '', category: '', scope: '', overdueOnly: false }
+
+// 고른 조건의 수. 고르지 않은 값('', false)은 세지 않는다.
+export const countFilters = ({ status, screenId, category, scope, overdueOnly }: IssueFilter) =>
+  [status, screenId, category, scope, overdueOnly].filter(Boolean).length
+
+// 고른 조건을 모두 만족하는 쪽지만 남긴다. 서버에 다시 묻지 않고 받아 둔 목록에서 거른다.
+// 조건마다 "골랐는데 맞지 않으면 뺀다"를 차례로 본다. 고르지 않은 조건('')은 건너뛴다.
+export const filterIssues = (issues: IssueSummary[], filter: IssueFilter) =>
+  issues.filter((issue) => {
+    if (filter.status !== '' && issue.status !== filter.status) return false
+    const place = issue.origin ? issue.origin.screenId : NO_PLACE
+    if (filter.screenId !== '' && place !== filter.screenId) return false
+    if (filter.category !== '' && issue.category !== filter.category) return false
+    if (filter.scope !== '' && issue.scope !== filter.scope) return false
+    if (filter.overdueOnly && !isOverdue(issue)) return false
+    return true
+  })
+
 // requestId는 쓰기 칸을 열 때 만든 번호다. 실패해서 다시 보낼 때도 같은 번호를 써야 쪽지가 하나만 생긴다.
 // versionId는 보고 있던 버전이다. 그사이 새 버전이 게시됐으면 서버가 409(VERSION_CHANGED)로 답한다.
 export type NewIssue = {
@@ -54,9 +127,13 @@ export type NewIssue = {
   versionId: string
   title: string
   body: string
+  // 없으면 서버가 버그로 저장한다.
+  category?: IssueCategory
   pin?: { screenId: string; xRatio: number; yRatio: number }
 }
 export type NewComment = { requestId: string; versionId: string; body: string }
+// 보낸 칸만 바뀐다. dueDate의 null은 마감일을 지운다는 뜻이다.
+export type IssueChange = { category?: IssueCategory; scope?: IssueScope; dueDate?: string | null }
 
 // 주소 속 id는 projects.ts와 같은 이유로 encodeURIComponent로 감싼다.
 export const listIssues = async (projectId: string): Promise<IssueSummary[]> => {
@@ -82,6 +159,12 @@ export const createComment = async (issueId: string, comment: NewComment): Promi
 
 export const startIssue = async (issueId: string, versionId: string): Promise<IssueDetail> => {
   const response = await apiPost(`/issues/${encodeURIComponent(issueId)}/start`, { versionId })
+  return response.json()
+}
+
+// 범위나 마감일을 바꾸면 서버가 자동 댓글이 든 쪽지 상세를 돌려준다.
+export const updateIssue = async (issueId: string, versionId: string, change: IssueChange): Promise<IssueDetail> => {
+  const response = await apiPatch(`/issues/${encodeURIComponent(issueId)}`, { versionId, ...change })
   return response.json()
 }
 

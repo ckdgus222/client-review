@@ -1,0 +1,56 @@
+.filters {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+}
+
+/* 넓은 화면에서는 조건을 늘 펴 두어서 펴는 버튼이 필요 없다. */
+.toggle {
+  composes: linkButton from '../components/LinkButton.module.css';
+  display: none;
+  min-height: 44px;
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.fields label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-weight: 600;
+}
+
+/* 값은 TextField.module.css의 입력칸과 같다. 그쪽을 바꾸면 함께 바꾼다. 높이는 손가락으로 누르기 쉽게 44px이다. */
+.fields select {
+  min-height: 44px;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-weight: 400;
+}
+
+/* 체크 칸은 글자와 한 줄에 둔다. */
+.fields .check {
+  flex-direction: row;
+  align-items: center;
+  min-height: 44px;
+  font-weight: 400;
+}
+
+/* 휴대폰에서는 조건이 목록을 밀어내지 않게 접어 두고 버튼으로 편다. */
+@media (max-width: 48rem) {
+  .toggle {
+    display: inline-block;
+  }
+
+  .fields[data-expanded='false'] {
+    display: none;
+  }
+}

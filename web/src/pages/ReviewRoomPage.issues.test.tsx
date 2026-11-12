@@ -11,6 +11,7 @@ import {
   listIssues,
   removeIssuePhoto,
   startIssue,
+  updateIssue,
 } from '../api/issues.ts'
 import { listMembers } from '../api/members.ts'
 import { getProject, type ProjectDetail } from '../api/projects.ts'
@@ -38,6 +39,7 @@ vi.mock('../api/issues.ts', async (importOriginal) => ({
   createIssue: vi.fn(),
   createComment: vi.fn(),
   startIssue: vi.fn(),
+  updateIssue: vi.fn(),
   attachIssuePhoto: vi.fn(),
   removeIssuePhoto: vi.fn(),
 }))
@@ -93,6 +95,9 @@ const productIssue: IssueDetail = {
   title: '상품 버튼을 옮겨 주세요',
   body: '버튼과 설명 사이를 넓혀 주세요.',
   status: 'OPEN',
+  category: 'BUG',
+  scope: 'IN_SCOPE',
+  dueDate: null,
   authorName: '김수정',
   createdAt: '2026-11-11T01:00:00.000Z',
   commentCount: 0,
@@ -277,6 +282,7 @@ beforeEach(() => {
   vi.mocked(createIssue).mockResolvedValue(savedIssue)
   vi.mocked(createComment).mockResolvedValue(savedComment)
   vi.mocked(startIssue).mockResolvedValue({ ...productIssue, status: 'IN_PROGRESS' })
+  vi.mocked(updateIssue).mockResolvedValue(productIssue)
   vi.mocked(attachIssuePhoto).mockResolvedValue(productIssue)
   vi.mocked(removeIssuePhoto).mockResolvedValue({ ...productIssue, attachments: [] })
   vi.spyOn(window, 'confirm').mockReturnValue(true)
@@ -1071,6 +1077,7 @@ describe('ReviewRoomPage 쪽지 작성과 재시도', () => {
     fillDraft()
     await click('쪽지 남기기')
     expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+      category: 'BUG',
       requestId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
       versionId: current.id,
       title: savedIssue.title,
@@ -1110,6 +1117,7 @@ describe('ReviewRoomPage 쪽지 작성과 재시도', () => {
     fillDraft()
     await click('쪽지 남기기')
     expect(vi.mocked(createIssue).mock.calls[1][1]).toEqual({
+      category: 'BUG',
       requestId: expect.any(String),
       versionId: current.id,
       title: savedIssue.title,
@@ -1131,6 +1139,7 @@ describe('ReviewRoomPage 쪽지 작성과 재시도', () => {
     expect(screen.queryByRole('img', { name: '새 쪽지 위치' })).toBeNull()
     await click('쪽지 남기기')
     expect(createIssue).toHaveBeenCalledWith(project.id, {
+      category: 'BUG',
       requestId: expect.any(String),
       versionId: current.id,
       title: savedIssue.title,
@@ -1149,6 +1158,7 @@ describe('ReviewRoomPage 쪽지 작성과 재시도', () => {
     expectDraft()
     await click('쪽지 남기기')
     expect(createIssue).toHaveBeenCalledWith(project.id, {
+      category: 'BUG',
       requestId: expect.any(String),
       versionId: current.id,
       title: savedIssue.title,
@@ -1297,6 +1307,7 @@ describe('ReviewRoomPage 쪽지 작성과 재시도', () => {
     await placePin('상품 상세 · PC', 420, 90)
     await click('쪽지 남기기')
     expect(vi.mocked(createIssue).mock.calls[1][1]).toEqual({
+      category: 'BUG',
       requestId: vi.mocked(createIssue).mock.calls[0][1].requestId,
       versionId: latest.id,
       title: savedIssue.title,
@@ -1403,6 +1414,7 @@ describe('ReviewRoomPage 쪽지 작성과 재시도', () => {
       expectDraft()
       await click('쪽지 남기기')
       expect(vi.mocked(createIssue).mock.calls[1][1]).toEqual({
+        category: 'BUG',
         requestId: vi.mocked(createIssue).mock.calls[0][1].requestId,
         versionId: latest.id,
         title: savedIssue.title,
@@ -1634,7 +1646,10 @@ describe('ReviewRoomPage 쪽지 갱신', () => {
     expect(listIssues).toHaveBeenCalledTimes(2)
     expect(getIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id)
     expect(within(screen.getByRole('article', { name: '쪽지 #1' })).getByText('수정 중')).toBeTruthy()
-    expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getByText('수정 중')).toBeTruthy()
+    const row = within(screen.getByRole('region', { name: '쪽지 목록' })).getByRole('button', {
+      name: new RegExp(productIssue.title),
+    })
+    expect(within(row).getByText('수정 중')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '수정 시작' })).toBeNull()
   })
 
@@ -1807,7 +1822,10 @@ describe('ReviewRoomPage 응답 순서와 작성 화면 유지', () => {
       expect(commentInput.value).toBe(savedComment.body)
       expect(photo('장바구니 · 모바일').getAttribute('src')).toBe('/api/assets/current-cart')
       if (action === '수정 시작') {
-        expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getByText('수정 중')).toBeTruthy()
+        const row = within(screen.getByRole('region', { name: '쪽지 목록' })).getByRole('button', {
+          name: new RegExp(productIssue.title),
+        })
+        expect(within(row).getByText('수정 중')).toBeTruthy()
       }
 
       vi.mocked(getIssue).mockResolvedValueOnce({ ...cartIssue, body: 'B의 새로 불러온 내용' })
@@ -1843,6 +1861,7 @@ describe('ReviewRoomPage 응답 순서와 작성 화면 유지', () => {
       fillDraft()
       await click('쪽지 남기기')
       expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+        category: 'BUG',
         requestId: expect.any(String),
         versionId: current.id,
         title: savedIssue.title,
@@ -1863,6 +1882,7 @@ describe('ReviewRoomPage 응답 순서와 작성 화면 유지', () => {
     fillDraft()
     await click('쪽지 남기기')
     expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+      category: 'BUG',
       requestId: expect.any(String),
       versionId: current.id,
       title: savedIssue.title,
@@ -2425,6 +2445,7 @@ describe('ReviewRoomPage 처음 상세 응답과 보내는 중 핀 잠금', () =
       await click('쪽지 남기기')
       const firstRequest = structuredClone(vi.mocked(createIssue).mock.calls[0])
       expect(firstRequest[1]).toEqual({
+        category: 'BUG',
         requestId: expect.any(String),
         versionId: current.id,
         title: savedIssue.title,
@@ -2636,6 +2657,7 @@ describe('ReviewRoomPage 최신 버전 이동과 늦은 목록 응답', () => {
     fillDraft()
     await click('쪽지 남기기')
     expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+      category: 'BUG',
       requestId: expect.any(String),
       versionId: current.id,
       title: savedIssue.title,
@@ -2800,6 +2822,7 @@ describe('ReviewRoomPage 검수실을 떠난 뒤 응답과 버전 재시도', ()
       fillDraft()
       await click('쪽지 남기기')
       expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+        category: 'BUG',
         requestId: expect.any(String),
         versionId: current.id,
         title: savedIssue.title,
@@ -3122,6 +3145,7 @@ describe('ReviewRoomPage 작성 상태 경계', () => {
     expectDraft()
     await click('쪽지 남기기')
     expect(vi.mocked(createIssue).mock.calls[1][1]).toEqual({
+      category: 'BUG',
       requestId: vi.mocked(createIssue).mock.calls[0][1].requestId,
       versionId: latest.id,
       title: savedIssue.title,
@@ -3991,5 +4015,424 @@ describe('ReviewRoomPage 응답 없는 요청의 60초 대기 제한', () => {
     expect(within(screen.getByRole('region', { name: '쪽지 목록' })).getAllByRole('listitem')).toHaveLength(5)
     expect(screen.queryByText('연결을 확인하고 다시 시도해 주세요')).toBeNull()
     expect(listIssues).toHaveBeenCalledTimes(4)
+  })
+})
+
+describe('ReviewRoomPage 쪽지 정리와 상세 조회 확인', () => {
+  const unconfirmedMessage = '저장됐는지 확인하지 못했어요. 쪽지에 바뀐 값이 보이지 않으면 다시 눌러 주세요.'
+  const scopeComment = { ...savedComment, id: 'scope-comment', body: '범위: 하자 수정 → 추가 요청' }
+  const changed: IssueDetail = {
+    ...productIssue,
+    scope: 'OUT_OF_SCOPE',
+    comments: [scopeComment],
+    commentCount: 1,
+  }
+  const changeScope = async () => {
+    await act(async () => {
+      fireEvent.change(
+        within(screen.getByRole('region', { name: '쪽지 정리' })).getByRole('combobox', { name: '범위' }),
+        {
+          target: { value: 'OUT_OF_SCOPE' },
+        },
+      )
+    })
+  }
+  const scopeInput = () =>
+    within(screen.getByRole('region', { name: '쪽지 정리' })).getByRole<HTMLSelectElement>('combobox', { name: '범위' })
+
+  it.each([
+    ['연결 실패', new TypeError('Failed to fetch')],
+    ['서버 오류', new ApiError(503)],
+  ])('%s 뒤 재조회가 늦으면 안내와 옛 값이 남고 성공한 상세가 화면에 오면 사라진다', async (_name, error) => {
+    const refreshed = deferred<IssueDetail>()
+    await renderRoom(`?issue=${productIssue.id}`)
+    vi.mocked(updateIssue).mockRejectedValueOnce(error)
+    vi.mocked(getIssue).mockReturnValueOnce(refreshed.promise)
+
+    await changeScope()
+
+    expect(updateIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id, current.id, { scope: 'OUT_OF_SCOPE' })
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    expect(getIssue).toHaveBeenLastCalledWith(productIssue.id)
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+    expect(scopeInput().value).toBe('IN_SCOPE')
+    expect(scopeInput().disabled).toBe(false)
+    expect(screen.queryByText(scopeComment.body)).toBeNull()
+
+    await act(async () => refreshed.resolve(changed))
+
+    expect(screen.queryByText(unconfirmedMessage)).toBeNull()
+    expect(scopeInput().value).toBe('OUT_OF_SCOPE')
+    expect(screen.getByText(scopeComment.body)).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '댓글 1개' })).toBeTruthy()
+  })
+
+  it('상세를 새로 받아도 값이 같으면 안내만 사라지고 옛 범위와 빈 댓글을 보여 준다', async () => {
+    const refreshed = deferred<IssueDetail>()
+    await renderRoom(`?issue=${productIssue.id}`)
+    vi.mocked(updateIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    vi.mocked(getIssue).mockReturnValueOnce(refreshed.promise)
+    await changeScope()
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+
+    await act(async () => refreshed.resolve({ ...productIssue }))
+
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText(unconfirmedMessage)).toBeNull()
+    expect(scopeInput().value).toBe('IN_SCOPE')
+    expect(screen.getByRole('heading', { name: '댓글 0개' })).toBeTruthy()
+  })
+
+  it('재조회가 실패하면 안내가 남고 다음 15초 조회가 성공하면 사라진다', async () => {
+    vi.useFakeTimers()
+    await renderRoom(`?issue=${productIssue.id}`)
+    vi.mocked(updateIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    vi.mocked(getIssue).mockRejectedValueOnce(new ApiError(500))
+
+    await changeScope()
+
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+    expect(scopeInput().value).toBe('IN_SCOPE')
+    expect(scopeInput().disabled).toBe(false)
+    vi.mocked(getIssue).mockResolvedValueOnce(changed)
+    await advance()
+
+    expect(getIssue).toHaveBeenCalledTimes(3)
+    expect(screen.queryByText(unconfirmedMessage)).toBeNull()
+    expect(scopeInput().value).toBe('OUT_OF_SCOPE')
+    expect(screen.getByText(scopeComment.body)).toBeTruthy()
+  })
+
+  it('재조회가 계속 실패하면 저장한 댓글이 바로 붙어도 안내는 남고 15초 조회 성공 뒤에만 사라진다', async () => {
+    vi.useFakeTimers()
+    await renderRoom(`?issue=${productIssue.id}`)
+    vi.mocked(updateIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    vi.mocked(getIssue).mockRejectedValue(new ApiError(500))
+    await changeScope()
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+    expect(getIssue).toHaveBeenCalledTimes(2)
+
+    fillComment()
+    await click('댓글 남기기')
+
+    expect(createComment).toHaveBeenCalledExactlyOnceWith(
+      productIssue.id,
+      expect.objectContaining({ versionId: current.id, body: savedComment.body }),
+    )
+    expect(getIssue).toHaveBeenCalledTimes(3)
+    expect(screen.getByText(savedComment.body)).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '댓글 1개' })).toBeTruthy()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe('')
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+    expect(scopeInput().value).toBe('IN_SCOPE')
+    await advance()
+    expect(getIssue).toHaveBeenCalledTimes(4)
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+    expect(screen.getByText(savedComment.body)).toBeTruthy()
+
+    vi.mocked(getIssue).mockResolvedValueOnce({ ...changed, comments: [scopeComment, savedComment], commentCount: 2 })
+    await advance()
+
+    expect(getIssue).toHaveBeenCalledTimes(5)
+    expect(screen.queryByText(unconfirmedMessage)).toBeNull()
+    expect(screen.getByText(savedComment.body)).toBeTruthy()
+    expect(screen.getByText(scopeComment.body)).toBeTruthy()
+    expect(scopeInput().value).toBe('OUT_OF_SCOPE')
+  })
+
+  it('실패 전에 시작한 상세 응답이 늦게 오면 버리고 안내는 다음 15초 조회 성공까지 남긴다', async () => {
+    vi.useFakeTimers()
+    const oldResponse = deferred<IssueDetail>()
+    await renderRoom(`?issue=${productIssue.id}`)
+    vi.mocked(getIssue).mockReturnValueOnce(oldResponse.promise)
+    await advance()
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    vi.mocked(updateIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    vi.mocked(getIssue).mockRejectedValueOnce(new ApiError(500))
+    await changeScope()
+    expect(getIssue).toHaveBeenCalledTimes(3)
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+
+    await act(async () => oldResponse.resolve({ ...productIssue, body: '버려야 하는 옛 상세' }))
+
+    expect(screen.queryByText('버려야 하는 옛 상세')).toBeNull()
+    expect(screen.getByText(productIssue.body)).toBeTruthy()
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+    vi.mocked(getIssue).mockResolvedValueOnce(changed)
+    await advance()
+    expect(getIssue).toHaveBeenCalledTimes(4)
+    expect(screen.queryByText(unconfirmedMessage)).toBeNull()
+    expect(screen.getByText(scopeComment.body)).toBeTruthy()
+  })
+
+  it('수정 시작 응답이 상세에 반영되어도 안내는 남고 다음 15초 조회 성공 뒤에 사라진다', async () => {
+    vi.useFakeTimers()
+    await renderRoom(`?issue=${productIssue.id}`)
+    vi.mocked(updateIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    vi.mocked(getIssue).mockRejectedValueOnce(new ApiError(500))
+    await changeScope()
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+
+    await click('수정 시작')
+
+    expect(startIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id, current.id)
+    expect(within(screen.getByRole('article', { name: '쪽지 #1' })).getByText('수정 중')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '수정 시작' })).toBeNull()
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+    vi.mocked(getIssue).mockResolvedValueOnce({ ...changed, status: 'IN_PROGRESS' })
+    await advance()
+
+    expect(getIssue).toHaveBeenCalledTimes(3)
+    expect(screen.queryByText(unconfirmedMessage)).toBeNull()
+    expect(scopeInput().value).toBe('OUT_OF_SCOPE')
+    expect(screen.getByText(scopeComment.body)).toBeTruthy()
+  })
+
+  it('범위 변경 성공 응답의 범위와 자동 댓글은 재조회 없이 바로 보이고 목록을 새로 부른다', async () => {
+    await renderRoom(`?issue=${productIssue.id}`)
+    vi.mocked(updateIssue).mockResolvedValueOnce(changed)
+    vi.mocked(listIssues).mockResolvedValueOnce(issues.map((issue) => (issue.id === changed.id ? changed : issue)))
+
+    await changeScope()
+
+    expect(window.confirm).toHaveBeenCalledExactlyOnceWith(
+      "범위를 '추가 요청'으로 바꿀까요? 바꾼 기록이 댓글로 남아요.",
+    )
+    expect(updateIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id, current.id, { scope: 'OUT_OF_SCOPE' })
+    expect(getIssue).toHaveBeenCalledTimes(1)
+    expect(listIssues).toHaveBeenCalledTimes(2)
+    expect(listIssues).toHaveBeenLastCalledWith(project.id)
+    const detail = within(screen.getByRole('article', { name: '쪽지 #1' }))
+    expect(detail.getByText('범위', { selector: 'dt' }).nextElementSibling!.textContent).toBe('추가 요청')
+    expect(scopeInput().value).toBe('OUT_OF_SCOPE')
+    expect(detail.getByText(scopeComment.body)).toBeTruthy()
+    expect(detail.getByRole('heading', { name: '댓글 1개' })).toBeTruthy()
+    expect(
+      within(screen.getByRole('region', { name: '쪽지 목록' })).getByRole('button', {
+        name: new RegExp(productIssue.title),
+      }).textContent,
+    ).toContain('댓글 1')
+  })
+
+  it('범위 응답을 기다리는 사이 다른 쪽지를 열면 늦은 응답이 그 쪽지와 쓰던 댓글·날짜를 덮지 않는다', async () => {
+    const pending = deferred<IssueDetail>()
+    await renderRoom(`?issue=${productIssue.id}`)
+    vi.mocked(updateIssue).mockReturnValueOnce(pending.promise)
+    fireEvent.change(screen.getByLabelText('마감일'), { target: { value: '2026-11-20' } })
+    await changeScope()
+    await chooseIssue(cartIssue)
+    expect(screen.getByLabelText<HTMLInputElement>('마감일').value).toBe('')
+    fillComment()
+    fireEvent.change(screen.getByLabelText('마감일'), { target: { value: '2027-01-05' } })
+
+    await act(async () => pending.resolve(changed))
+
+    expect(queryParams().get('issue')).toBe(cartIssue.id)
+    expect(screen.queryByRole('article', { name: '쪽지 #1' })).toBeNull()
+    expect(screen.getByRole('article', { name: '쪽지 #2' })).toBeTruthy()
+    expect(scopeInput().value).toBe('IN_SCOPE')
+    expect(screen.queryByText(scopeComment.body)).toBeNull()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+    expect(screen.getByLabelText<HTMLInputElement>('마감일').value).toBe('2027-01-05')
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    expect(getIssue).toHaveBeenLastCalledWith(cartIssue.id)
+    expect(listIssues).toHaveBeenCalledTimes(2)
+  })
+
+  it('범위 응답을 기다리는 사이 같은 쪽지에 댓글을 남기면 늦은 응답을 버리고 다시 받아 둘 다 보여 준다', async () => {
+    const pending = deferred<IssueDetail>()
+    const refreshed = deferred<IssueDetail>()
+    await renderRoom(`?issue=${productIssue.id}`)
+    vi.mocked(updateIssue).mockReturnValueOnce(pending.promise)
+    await changeScope()
+    vi.mocked(getIssue).mockResolvedValueOnce({ ...productIssue, comments: [savedComment], commentCount: 1 })
+    fillComment()
+    await click('댓글 남기기')
+    expect(screen.getByText(savedComment.body, { selector: 'p' })).toBeTruthy()
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    fillComment()
+    vi.mocked(getIssue).mockReturnValueOnce(refreshed.promise)
+
+    await act(async () => pending.resolve(changed))
+
+    expect(getIssue).toHaveBeenCalledTimes(3)
+    expect(screen.getByText(savedComment.body, { selector: 'p' })).toBeTruthy()
+    expect(screen.queryByText(scopeComment.body)).toBeNull()
+    expect(scopeInput().value).toBe('IN_SCOPE')
+    await act(async () => refreshed.resolve({ ...changed, comments: [scopeComment, savedComment], commentCount: 2 }))
+
+    expect(scopeInput().value).toBe('OUT_OF_SCOPE')
+    expect(screen.getByText(scopeComment.body)).toBeTruthy()
+    expect(screen.getByText(savedComment.body, { selector: 'p' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '댓글 2개' })).toBeTruthy()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
+  })
+})
+
+describe('ReviewRoomPage 목록 필터 유지', () => {
+  const filteredIssues = [{ ...productIssue, dueDate: '2026-11-11' }, cartIssue, oldIssue, unpinnedIssue]
+  const list = () => within(screen.getByRole('region', { name: '쪽지 목록' }))
+  const chooseFilters = async () => {
+    await act(async () => {
+      fireEvent.change(list().getByRole('combobox', { name: '상태' }), { target: { value: 'OPEN' } })
+      fireEvent.change(list().getByRole('combobox', { name: '화면' }), {
+        target: { value: current.screens[0].screenId },
+      })
+      fireEvent.change(list().getByRole('combobox', { name: '분류' }), { target: { value: 'BUG' } })
+      fireEvent.change(list().getByRole('combobox', { name: '범위' }), { target: { value: 'IN_SCOPE' } })
+      fireEvent.click(list().getByRole('checkbox', { name: '마감 지남만' }))
+    })
+  }
+  const expectFilters = (total = 4) => {
+    expect(list().getByRole<HTMLSelectElement>('combobox', { name: '상태' }).value).toBe('OPEN')
+    expect(list().getByRole<HTMLSelectElement>('combobox', { name: '화면' }).value).toBe(current.screens[0].screenId)
+    expect(list().getByRole<HTMLSelectElement>('combobox', { name: '분류' }).value).toBe('BUG')
+    expect(list().getByRole<HTMLSelectElement>('combobox', { name: '범위' }).value).toBe('IN_SCOPE')
+    expect(list().getByRole<HTMLInputElement>('checkbox', { name: '마감 지남만' }).checked).toBe(true)
+    expect(list().getByRole('heading', { name: `쪽지 1개 / 전체 ${total}개` })).toBeTruthy()
+    expect(list().getAllByRole('listitem')).toHaveLength(1)
+    expect(list().getByRole('button', { name: new RegExp(productIssue.title) })).toBeTruthy()
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 10, 12, 12))
+    vi.mocked(listIssues).mockResolvedValue(filteredIssues)
+  })
+
+  it.each(['쪽지 쓰기 버튼', '사진'] as const)(
+    '%s으로 쓰기 칸을 열었다 취소해도 고른 필터와 개수가 남는다',
+    async (entry) => {
+      await renderRoom()
+      await chooseFilters()
+      expectFilters()
+
+      if (entry === '사진') await placePin()
+      if (entry === '쪽지 쓰기 버튼') await click('쪽지 쓰기')
+
+      expect(screen.getByRole('textbox', { name: '제목 (필수)' })).toBeTruthy()
+      expect(screen.queryByRole('region', { name: '쪽지 목록', hidden: true })).toBeNull()
+      await advance()
+      expect(listIssues).toHaveBeenCalledTimes(2)
+      await click('취소')
+
+      expect(screen.queryByRole('textbox', { name: '제목 (필수)', hidden: true })).toBeNull()
+      expectFilters()
+      expect(createIssue).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['쪽지 쓰기 버튼', '사진'] as const)(
+    '%s으로 조건에 맞지 않는 쪽지를 남겨도 필터가 남고 새 쪽지 상세는 열린다',
+    async (entry) => {
+      const created: IssueDetail = {
+        ...savedIssue,
+        category: 'COPY',
+        origin: entry === '사진' ? savedIssue.origin : null,
+      }
+      vi.mocked(createIssue).mockResolvedValue(created)
+      vi.mocked(getIssue).mockResolvedValue(created)
+      await renderRoom()
+      await chooseFilters()
+      expectFilters()
+
+      if (entry === '사진') await placePin()
+      if (entry === '쪽지 쓰기 버튼') await click('쪽지 쓰기')
+
+      expect(screen.queryByRole('region', { name: '쪽지 목록', hidden: true })).toBeNull()
+      fillDraft()
+      fireEvent.change(screen.getByRole('combobox', { name: '분류' }), { target: { value: 'COPY' } })
+      vi.mocked(listIssues).mockResolvedValue([created, ...filteredIssues])
+      await click('쪽지 남기기')
+
+      expect(createIssue).toHaveBeenCalledExactlyOnceWith(project.id, {
+        requestId: expect.any(String),
+        versionId: current.id,
+        title: savedIssue.title,
+        body: savedIssue.body,
+        category: 'COPY',
+        pin: entry === '사진' ? { screenId: current.screens[0].screenId, xRatio: 0.25, yRatio: 0.75 } : undefined,
+      })
+      expectFilters(5)
+      expect(list().queryByRole('button', { name: new RegExp(created.title), hidden: true })).toBeNull()
+      expect(
+        within(screen.getByRole('article', { name: '쪽지 #5' })).getByRole('heading', { name: created.title }),
+      ).toBeTruthy()
+      expect(queryParams().get('issue')).toBe(created.id)
+      await advance()
+      expectFilters(5)
+      expect(screen.getByRole('article', { name: '쪽지 #5' })).toBeTruthy()
+
+      await click('필터 지우기')
+
+      expect(list().getByRole('heading', { name: '쪽지 5개' })).toBeTruthy()
+      expect(list().getByRole('button', { name: new RegExp(created.title), pressed: true })).toBeTruthy()
+      expect(screen.getByRole('article', { name: '쪽지 #5' })).toBeTruthy()
+    },
+  )
+
+  it('15초 뒤 새 목록을 받아도 쪽지를 열고 닫아도 필터가 남는다', async () => {
+    await renderRoom()
+    await chooseFilters()
+    expectFilters()
+    await chooseIssue(productIssue)
+    expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+    expectFilters()
+    vi.mocked(listIssues).mockResolvedValue([savedIssue, ...filteredIssues])
+
+    await advance()
+
+    expect(listIssues).toHaveBeenCalledTimes(2)
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    expectFilters(5)
+    expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+    await click('쪽지 닫기')
+    expect(screen.queryByRole('article', { name: '쪽지 #1', hidden: true })).toBeNull()
+    expectFilters(5)
+  })
+
+  it('주소의 프로젝트 id가 바뀌면 모든 필터가 풀리고 다른 프로젝트의 전체 목록이 보인다', async () => {
+    const otherProject: ProjectDetail = {
+      ...project,
+      id: 'a6666666-6666-4666-8666-666666666666',
+      name: '다른 필터 검수실',
+      currentVersion: { id: 'b6666666-6666-4666-8666-666666666666', number: 1 },
+    }
+    const otherVersion = { ...current, id: otherProject.currentVersion!.id, projectId: otherProject.id }
+    const otherIssue: IssueDetail = {
+      ...savedIssue,
+      title: '다른 프로젝트의 문구 요청',
+      category: 'COPY',
+      origin: null,
+      originVersion: { id: otherVersion.id, number: 1 },
+    }
+    vi.mocked(getProject).mockImplementation(async (id) => (id === otherProject.id ? otherProject : project))
+    vi.mocked(listVersions).mockImplementation(async (id) =>
+      id === otherProject.id ? [otherVersion] : [current, initial],
+    )
+    vi.mocked(getVersion).mockImplementation(async (id) => (id === otherVersion.id ? otherVersion : current))
+    vi.mocked(listIssues).mockImplementation(async (id) => (id === otherProject.id ? [otherIssue] : filteredIssues))
+    await renderRoom('', `/projects/${otherProject.id}`)
+    await chooseFilters()
+    expectFilters()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('link', { name: '다른 페이지로 이동' }))
+    })
+
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${otherProject.id}`)
+    expect(listIssues).toHaveBeenLastCalledWith(otherProject.id)
+    expect(
+      list()
+        .getAllByRole<HTMLSelectElement>('combobox')
+        .map((select) => select.value),
+    ).toEqual(['', '', '', ''])
+    expect(list().getByRole<HTMLInputElement>('checkbox', { name: '마감 지남만' }).checked).toBe(false)
+    expect(list().queryByRole('button', { name: '필터 지우기', hidden: true })).toBeNull()
+    expect(list().getByRole('heading', { name: '쪽지 1개' })).toBeTruthy()
+    expect(list().getAllByRole('listitem')).toHaveLength(1)
+    expect(list().getByRole('button', { name: new RegExp(otherIssue.title) })).toBeTruthy()
   })
 })

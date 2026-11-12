@@ -2,6 +2,8 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { ActivityService } from '../activity/activity.service.js';
 import {
   ActivityType,
+  type IssueCategory,
+  type IssueScope,
   IssueStatus,
   Prisma,
   ProjectRole,
@@ -28,6 +30,10 @@ export type IssueSummary = {
   number: number;
   title: string;
   status: IssueStatus;
+  category: IssueCategory;
+  scope: IssueScope;
+  // "YYYY-MM-DD" 글자. 시각이 없는 날짜라서 Date로 주면 받는 쪽 시간대에 따라 하루가 밀린다.
+  dueDate: string | null;
   authorName: string;
   createdAt: Date;
   commentCount: number;
@@ -49,6 +55,8 @@ export type NewIssue = {
   versionId: string;
   title: string;
   body: string;
+  // 없으면 DB 기본값(BUG)이 들어간다.
+  category?: IssueCategory;
   pin?: { screenId: string; xRatio: number; yRatio: number };
 };
 
@@ -60,6 +68,9 @@ const SUMMARY_FIELDS = {
   number: true,
   title: true,
   status: true,
+  category: true,
+  scope: true,
+  dueDate: true,
   createdAt: true,
   xRatio: true,
   yRatio: true,
@@ -104,15 +115,20 @@ const DETAIL_FIELDS = {
   comments: { select: COMMENT_FIELDS, orderBy: { createdAt: 'asc' } },
 } satisfies Prisma.IssueSelect;
 
+// date 칸은 UTC 자정의 Date로 읽힌다. 그래서 앞 10글자가 저장한 날짜 그대로다.
+export const toDateText = (date: Date) => date.toISOString().slice(0, 10);
+
 const toSummary = ({
   author,
   originVersionScreen,
   xRatio,
   yRatio,
+  dueDate,
   _count,
   ...issue
 }: Prisma.IssueGetPayload<{ select: typeof SUMMARY_FIELDS }>): IssueSummary => ({
   ...issue,
+  dueDate: dueDate && toDateText(dueDate),
   authorName: author.name,
   commentCount: _count.comments,
   // 화면·x·y는 셋 다 있거나 셋 다 없다(DB CHECK 제약). 타입이 그것을 몰라서 셋 다 확인한다.
@@ -183,6 +199,7 @@ export class IssuesService {
             authorId: userId,
             title: input.title,
             body: input.body,
+            category: input.category,
             requestId: input.requestId,
           },
           select: { id: true },

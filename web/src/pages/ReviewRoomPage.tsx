@@ -8,6 +8,7 @@ import {
   type IssueDetail as IssueDetailData,
   type IssueSummary,
   listIssues,
+  NO_FILTER,
   originLabel,
 } from '../api/issues.ts'
 import { listMembers } from '../api/members.ts'
@@ -178,6 +179,9 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const [composerLocked, setComposerLocked] = useState(false)
   // 열어 둔 쪽지에 아직 저장되지 않은 댓글 글이 있는가(쓰는 중, 보내는 중, 잠김). 새 쪽지 쓰기로 넘어가기 전에 묻는 데 쓴다.
   const [hasCommentDraft, setHasCommentDraft] = useState(false)
+  // 쪽지 목록의 필터. 주소에 넣지 않고 화면 상태로만 둔다. 목록이 새로 와도(15초마다), 쪽지를 열고 닫아도,
+  // 쪽지 쓰기 칸을 열었다 닫아도 남는다. 화면을 새로 고치거나 다른 프로젝트로 가면 풀린다.
+  const [issueFilter, setIssueFilter] = useState(NO_FILTER)
 
   // 주소의 지금 값. 늦게 끝난 요청의 콜백(쪽지를 만든 뒤 그 쪽지 열기, 최신 버전으로 가기)이 주소를 바꿀 때 쓴다.
   // 그런 콜백은 요청을 시작한 때의 주소를 기억하고 있어서(setSearchParams에 함수를 넘겨도 같다), 그대로 쓰면
@@ -214,6 +218,10 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 상세 요청의 번호를 화면 상태로도 둔다. 수정 시작·참고 사진 버튼을 누른 때의 번호를 그 요청의 콜백이 기억하게
   // 하려는 것이다(applyChange). ref는 늘 지금 값이라서, 콜백이 읽으면 누른 때가 아니라 응답이 온 때의 번호가 나온다.
   const [detailNumber, setDetailNumber] = useState(0)
+  // 쪽지 상세를 서버에서 새로 받아 화면에 쓴 횟수. 쪽지 정리 칸이 "저장됐는지 확인하지 못했어요" 안내를 거둘 때를 아는 데 쓴다.
+  // 상세 조회의 응답을 화면에 쓸 때만 올린다. 댓글을 붙이거나(addComment) 쓰기 응답을 쓸 때(applyChange)는 올리지 않는다.
+  // 그런 내용은 서버에 다시 물은 것이 아니라서, 저장됐는지 모르는 변경이 실제로 저장됐는지 알려 주지 못한다.
+  const [fetchCount, setFetchCount] = useState(0)
 
   // 상세 요청을 새로 시작한다고 적는다. 이보다 먼저 시작한 요청의 응답은 이제 받지 않는다.
   const startDetailRequest = useCallback((issueId: string) => {
@@ -306,31 +314,33 @@ const ReviewRoom = ({ id }: { id: string }) => {
 
   // 쪽지를 처음 열 때와 새로 부를 때(15초마다, 댓글을 남긴 뒤, 쪽지 상태가 달라져 있을 때, 쓰기 응답을 버렸을 때) 함께 쓴다.
   const loadIssue = useCallback(
-    (issueId: string) => {
+    async (issueId: string) => {
       const number = startDetailRequest(issueId)
       detailInFlight.current = { number, since: Date.now() }
-      getIssue(issueId)
-        .then(
-          (detail) => {
-            if (detailRequest.current.number === number) setLoadedIssue({ id: issueId, detail })
-          },
-          (caught) => {
-            if (detailRequest.current.number !== number) return
-            // 보여 주던 상세가 있으면 그대로 둔다. 새로 부르기는 도움 기능이라, 실패했다고 보던 쪽지와 쓰던 댓글을 치우지 않는다.
-            // 보여 줄 상세가 없을 때만 오류를 알린다.
-            setLoadedIssue((shown) =>
-              shown?.id === issueId && shown.detail ? shown : { id: issueId, error: toMessage(caught) },
-            )
-          },
+      try {
+        const detail = await getIssue(issueId)
+        // 기다리는 사이 더 새 요청을 시작했으면 이 응답은 버린다.
+        if (detailRequest.current.number !== number) return
+        setLoadedIssue({ id: issueId, detail })
+        setFetchCount((count) => count + 1)
+      } catch (caught) {
+        if (detailRequest.current.number !== number) return
+        // 보여 주던 상세가 있으면 그대로 둔다. 새로 부르기는 도움 기능이라, 실패했다고 보던 쪽지와 쓰던 댓글을 치우지 않는다.
+        // 보여 줄 상세가 없을 때만 오류를 알린다.
+        setLoadedIssue((shown) =>
+          shown?.id === issueId && shown.detail ? shown : { id: issueId, error: toMessage(caught) },
         )
-        .finally(() => {
-          if (detailInFlight.current.number === number) detailInFlight.current = NOT_IN_FLIGHT
-        })
+      } finally {
+        if (detailInFlight.current.number === number) detailInFlight.current = NOT_IN_FLIGHT
+      }
     },
     [startDetailRequest],
   )
 
   useEffect(() => {
+    // loadIssue는 요청 번호만 바로 올리고(그래야 먼저 시작한 요청의 응답을 버린다) 나머지 setState는 응답을 기다린 뒤에 한다.
+    // 린트는 그 전부를 effect에서 바로 부른 것으로 봐서 경고한다.
+    // oxlint-disable-next-line react/set-state-in-effect
     if (openIssueId) loadIssue(openIssueId)
     // 쪽지를 닫으면 번호만 올려서, 닫기 전에 시작한 요청의 응답을 버린다. 그 응답이 늦게 오면 그사이 새로 만든 쪽지의 상세를 덮어쓴다.
     else startDetailRequest('')
@@ -362,7 +372,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
     if (issueId && detailRequest.current.issueId === issueId) loadIssue(issueId)
   }
 
-  // 수정 시작·참고 사진의 응답(서버가 돌려준 바뀐 쪽지)을 화면에 쓴다. startedAt은 그 버튼을 누른 때의 상세 요청 번호다.
+  // 수정 시작·참고 사진·쪽지 정리(분류·범위·마감일)의 응답(서버가 돌려준 바뀐 쪽지)을 화면에 쓴다.
+  // startedAt은 그 버튼을 누른 때의 상세 요청 번호다.
   const applyChange = (issue: IssueDetailData, startedAt: number) => {
     // 목록에 보이는 상태도 바뀌었으니 목록은 늘 새로 부른다.
     refreshList()
@@ -372,7 +383,10 @@ const ReviewRoom = ({ id }: { id: string }) => {
     if (open.issueId !== issue.id) return
     // 누른 뒤에 이 쪽지를 새로 부른 적이 있으면(댓글을 남긴 뒤, 15초마다 등) 이 응답을 버리고 다시 부른다.
     // 서버가 이 요청을 그 새로 부르기보다 먼저 처리했을 수 있어서, 그대로 쓰면 방금 보이던 댓글이 화면에서 사라진다.
-    if (open.number !== startedAt) return loadIssue(issue.id)
+    if (open.number !== startedAt) {
+      loadIssue(issue.id)
+      return
+    }
     // 누르기 전에 시작한 요청의 응답(바뀌기 전 내용)이 아직 안 왔으면, 번호를 올려서 버린다.
     startDetailRequest(issue.id)
     setLoadedIssue({ id: issue.id, detail: issue })
@@ -608,6 +622,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
       <>
         <IssueList
           issues={issues}
+          filter={issueFilter}
+          onFilterChange={setIssueFilter}
           selectedId={openIssueId}
           onSelect={selectIssue}
           onCompose={canWrite ? () => startComposing() : undefined}
@@ -634,6 +650,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
             canWrite={canWrite}
             versionLoaded={detail !== undefined}
             isDeveloper={isDeveloper}
+            fetchCount={fetchCount}
             // 누른 때의 번호를 넘긴다(applyChange).
             onChanged={(issue) => applyChange(issue, detailNumber)}
             onCommented={(comment) => addComment(shownIssue.id, comment)}

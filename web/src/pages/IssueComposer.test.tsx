@@ -5,7 +5,10 @@ import { ApiError } from '../api/client.ts'
 import { createIssue, type IssueDetail } from '../api/issues.ts'
 import { IssueComposer } from './IssueComposer.tsx'
 
-vi.mock('../api/issues.ts', () => ({ createIssue: vi.fn() }))
+vi.mock('../api/issues.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/issues.ts')>()),
+  createIssue: vi.fn(),
+}))
 
 const projectId = '11111111-1111-4111-8111-111111111111'
 const versionId = '22222222-2222-4222-8222-222222222222'
@@ -21,6 +24,9 @@ const saved: IssueDetail = {
   title: '버튼을 옮겨 주세요',
   body: '  첫째 줄\n둘째 줄  ',
   status: 'OPEN',
+  category: 'BUG',
+  scope: 'IN_SCOPE',
+  dueDate: null,
   authorName: '클라이언트',
   createdAt: '2026-11-11T00:00:00.000Z',
   commentCount: 0,
@@ -76,6 +82,216 @@ beforeEach(() => {
 })
 
 describe('IssueComposer', () => {
+  it('제목 위에 분류 선택지가 버그·디자인·문구·기타 순서로 있고 기본값은 버그다', () => {
+    const { title } = renderComposer()
+    const category = screen.getByRole<HTMLSelectElement>('combobox', { name: '분류' })
+
+    expect(screen.getByLabelText('분류')).toBe(category)
+    expect(category.tagName).toBe('SELECT')
+    expect(Array.from(category.options, (option) => [option.value, option.textContent])).toEqual([
+      ['BUG', '버그'],
+      ['DESIGN', '디자인'],
+      ['COPY', '문구'],
+      ['OTHER', '기타'],
+    ])
+    expect(category.value).toBe('BUG')
+    expect(category.disabled).toBe(false)
+    expect(category.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+  })
+
+  it.each([
+    ['버그', 'BUG'],
+    ['디자인', 'DESIGN'],
+    ['문구', 'COPY'],
+    ['기타', 'OTHER'],
+  ] as const)('%s를 고르기만 하면 보내지 않고 쪽지를 남길 때 %s로 보낸다', async (_label, value) => {
+    const result = { ...saved, category: value }
+    vi.mocked(createIssue).mockResolvedValueOnce(result)
+    const { props } = renderComposer()
+    fillDraft()
+    const category = screen.getByRole<HTMLSelectElement>('combobox', { name: '분류' })
+    // 버그도 다른 분류에서 돌아와 고를 수 있어야 한다.
+    fireEvent.change(category, { target: { value: 'DESIGN' } })
+    fireEvent.change(category, { target: { value } })
+    expect(category.value).toBe(value)
+    expect(createIssue).not.toHaveBeenCalled()
+
+    await send()
+
+    expect(createIssue).toHaveBeenCalledExactlyOnceWith(projectId, {
+      requestId: expect.any(String),
+      versionId,
+      title: saved.title,
+      body: saved.body,
+      category: value,
+      pin: undefined,
+    })
+    expect(props.onCreated).toHaveBeenCalledExactlyOnceWith(result)
+  })
+
+  it('분류를 따로 고르지 않으면 BUG로 보낸다', async () => {
+    renderComposer()
+    fillDraft()
+
+    await send()
+
+    expect(createIssue).toHaveBeenCalledExactlyOnceWith(projectId, expect.objectContaining({ category: 'BUG' }))
+  })
+
+  it('보내는 중에는 분류가 잠기고 고른 값이 남으며 성공하면 잠금이 풀린다', async () => {
+    const pending = deferred<IssueDetail>()
+    vi.mocked(createIssue).mockReturnValueOnce(pending.promise)
+    renderComposer()
+    fillDraft()
+    const category = screen.getByRole<HTMLSelectElement>('combobox', { name: '분류' })
+    fireEvent.change(category, { target: { value: 'COPY' } })
+
+    await send()
+
+    expect(category.disabled).toBe(true)
+    expect(category.value).toBe('COPY')
+    expect(createIssue).toHaveBeenCalledExactlyOnceWith(projectId, expect.objectContaining({ category: 'COPY' }))
+    await act(async () => pending.resolve({ ...saved, category: 'COPY' }))
+    expect(category.disabled).toBe(false)
+  })
+
+  it.each([
+    ['연결 끊김', new TypeError('Failed to fetch')],
+    ['서버 오류', new ApiError(503)],
+  ])('%s 뒤 분류를 잠그고 읽기 전용에서도 처음 분류 그대로 다시 보낸다', async (_label, error) => {
+    const pending = deferred<IssueDetail>()
+    vi.mocked(createIssue).mockRejectedValueOnce(error).mockReturnValueOnce(pending.promise)
+    const { props, rerender } = renderComposer()
+    fillDraft()
+    const category = screen.getByRole<HTMLSelectElement>('combobox', { name: '분류' })
+    fireEvent.change(category, { target: { value: 'OTHER' } })
+    await send()
+    const firstRequest = structuredClone(vi.mocked(createIssue).mock.calls[0])
+
+    expect(firstRequest[1].category).toBe('OTHER')
+    expect(category.disabled).toBe(true)
+    expect(category.value).toBe('OTHER')
+    rerender(<IssueComposer {...props} canSubmit={false} versionId="past-version" />)
+    expect(category.disabled).toBe(true)
+    expect(category.value).toBe('OTHER')
+
+    await send('다시 보내기')
+
+    expect(category.disabled).toBe(true)
+    expect(category.value).toBe('OTHER')
+    expect(createIssue).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createIssue).mock.calls[1]).toEqual(firstRequest)
+    await act(async () => pending.resolve({ ...saved, category: 'OTHER' }))
+    expect(category.disabled).toBe(false)
+  })
+
+  it.each([401, 403, 404, 422, 500])(
+    '잠긴 요청의 재시도가 %i로 실패해도 처음 분류를 잠근 채 유지한다',
+    async (status) => {
+      vi.mocked(createIssue)
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockRejectedValueOnce(new ApiError(status))
+      renderComposer()
+      fillDraft()
+      const category = screen.getByRole<HTMLSelectElement>('combobox', { name: '분류' })
+      fireEvent.change(category, { target: { value: 'DESIGN' } })
+      await send()
+      const firstRequest = structuredClone(vi.mocked(createIssue).mock.calls[0])
+
+      await send('다시 보내기')
+
+      expect(category.disabled).toBe(true)
+      expect(category.value).toBe('DESIGN')
+      await send('다시 보내기')
+      expect(firstRequest[1].category).toBe('DESIGN')
+      expect(vi.mocked(createIssue).mock.calls).toEqual([firstRequest, firstRequest, firstRequest])
+    },
+  )
+
+  it.each(['취소', 'VERSION_CHANGED', 'VERSION_NOT_IN_REVIEW', 'REQUEST_ID_REUSED'])(
+    '%s로 잠금이 풀리면 분류를 다시 골라 바뀐 값으로 보낸다',
+    async (action) => {
+      vi.mocked(createIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      if (action !== '취소') vi.mocked(createIssue).mockRejectedValueOnce(new ApiError(409, action))
+      const { props, rerender } = renderComposer()
+      fillDraft()
+      const category = screen.getByRole<HTMLSelectElement>('combobox', { name: '분류' })
+      fireEvent.change(category, { target: { value: 'DESIGN' } })
+      await send()
+      expect(category.disabled).toBe(true)
+
+      await send(action === '취소' ? '취소' : '다시 보내기')
+
+      expect(props.onCancel).toHaveBeenCalledTimes(action === '취소' ? 1 : 0)
+      expect(category.disabled).toBe(false)
+      expect(category.value).toBe('DESIGN')
+      rerender(<IssueComposer {...props} versionId="latest-version" />)
+      fireEvent.change(category, { target: { value: 'COPY' } })
+      await send()
+
+      expect(category.value).toBe('COPY')
+      expect(createIssue).toHaveBeenCalledTimes(action === '취소' ? 2 : 3)
+      expect(createIssue).toHaveBeenLastCalledWith(
+        projectId,
+        expect.objectContaining({ versionId: 'latest-version', category: 'COPY' }),
+      )
+    },
+  )
+
+  it.each([401, 403, 404, 422])('처음 요청이 %i로 실패해도 고른 분류가 남고 잠기지 않는다', async (status) => {
+    vi.mocked(createIssue).mockRejectedValueOnce(new ApiError(status))
+    renderComposer()
+    fillDraft()
+    const category = screen.getByRole<HTMLSelectElement>('combobox', { name: '분류' })
+    fireEvent.change(category, { target: { value: 'OTHER' } })
+
+    await send()
+
+    expect(category.value).toBe('OTHER')
+    expect(category.disabled).toBe(false)
+    await send()
+    expect(createIssue).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(createIssue).mock.calls[1][1].category).toBe('OTHER')
+  })
+
+  it.each([false, true])(
+    '쓸 수 없고 versionLoaded=%s여도 고른 분류가 남고 돌아오면 그대로 보낸다',
+    async (versionLoaded) => {
+      const { props, rerender, title } = renderComposer()
+      fillDraft()
+      const category = screen.getByRole<HTMLSelectElement>('combobox', { name: '분류' })
+      fireEvent.change(category, { target: { value: 'DESIGN' } })
+
+      rerender(<IssueComposer {...props} canSubmit={false} versionLoaded={versionLoaded} versionId="past-version" />)
+
+      expect(category.value).toBe('DESIGN')
+      await act(async () => fireEvent.submit(title.form!))
+      expect(createIssue).not.toHaveBeenCalled()
+      rerender(<IssueComposer {...props} />)
+      expect(category.value).toBe('DESIGN')
+      await send()
+      expect(createIssue).toHaveBeenCalledExactlyOnceWith(
+        projectId,
+        expect.objectContaining({ versionId, category: 'DESIGN' }),
+      )
+    },
+  )
+
+  it('제목 검사에 실패해도 고른 분류가 남고 제목을 고치면 그 분류로 보낸다', async () => {
+    renderComposer()
+    const category = screen.getByRole<HTMLSelectElement>('combobox', { name: '분류' })
+    fireEvent.change(category, { target: { value: 'COPY' } })
+
+    await send()
+
+    expect(createIssue).not.toHaveBeenCalled()
+    expect(category.value).toBe('COPY')
+    expect(category.disabled).toBe(false)
+    fillDraft()
+    await send()
+    expect(createIssue).toHaveBeenCalledExactlyOnceWith(projectId, expect.objectContaining({ category: 'COPY' }))
+  })
+
   it.each([
     [false, '아직 사진을 불러오지 못했어요. 지금은 쪽지를 남길 수 없어요.'],
     [true, '읽기 전용인 버전을 보고 있어요. 검수 중인 최신 버전으로 돌아오면 남길 수 있어요.'],
@@ -192,6 +408,7 @@ describe('IssueComposer', () => {
     await send()
 
     expect(createIssue).toHaveBeenCalledExactlyOnceWith(projectId, {
+      category: 'BUG',
       requestId: expect.any(String),
       versionId,
       title: '고친 제목',
@@ -295,6 +512,7 @@ describe('IssueComposer', () => {
     await send()
 
     expect(createIssue).toHaveBeenCalledExactlyOnceWith(projectId, {
+      category: 'BUG',
       requestId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
       versionId,
       title: '가'.repeat(120),
@@ -310,6 +528,7 @@ describe('IssueComposer', () => {
     await send()
 
     expect(createIssue).toHaveBeenCalledExactlyOnceWith(projectId, {
+      category: 'BUG',
       requestId: expect.any(String),
       versionId,
       title: saved.title,
@@ -361,6 +580,7 @@ describe('IssueComposer', () => {
     expect(body.value).toBe(saved.body)
     await send()
     expect(vi.mocked(createIssue).mock.calls[0][1]).toEqual({
+      category: 'BUG',
       requestId: expect.any(String),
       versionId: 'new-version',
       title: saved.title,
@@ -601,6 +821,7 @@ describe('IssueComposer', () => {
       expect(vi.mocked(createIssue).mock.calls[2]).toEqual([
         projectId,
         {
+          category: 'BUG',
           requestId: firstRequest[1].requestId,
           versionId: 'latest-version',
           title: '고친 제목',

@@ -7,7 +7,25 @@ import { PrismaModule } from '../prisma/prisma.module.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { VersionsService } from '../versions/versions.service.js';
-import { IssuesService, type NewIssue } from './issues.service.js';
+import { IssuesService, type NewIssue, toDateText } from './issues.service.js';
+
+describe('toDateText', () => {
+  it.each([
+    ['UTC', 0],
+    ['Asia/Seoul', -540],
+    ['America/Los_Angeles', 480],
+  ] as const)('서버 시간대 %s에서도 연초·윤일·연말의 날짜를 그대로 돌려준다', (timezone, offset) => {
+    vi.stubEnv('TZ', timezone);
+    try {
+      expect(new Date('2026-01-01T00:00:00.000Z').getTimezoneOffset()).toBe(offset);
+      for (const date of ['2026-01-01', '2028-02-29', '2026-12-31']) {
+        expect(toDateText(new Date(`${date}T00:00:00.000Z`))).toBe(date);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
 
 const notFound = (message: string) => ({ status: 404, response: { statusCode: 404, message, error: 'Not Found' } });
 const versionChanged = {
@@ -150,6 +168,9 @@ describe('IssuesService', () => {
         number: 1,
         title: request.title,
         status: 'OPEN',
+        category: 'BUG',
+        scope: 'IN_SCOPE',
+        dueDate: null,
         authorName: author.name,
         createdAt: expect.any(Date),
         commentCount: 0,
@@ -170,6 +191,9 @@ describe('IssuesService', () => {
         title: request.title,
         body: request.body,
         status: 'OPEN',
+        category: 'BUG',
+        scope: 'IN_SCOPE',
+        dueDate: null,
         authorId: author.id,
         requestId: request.requestId,
         originVersionId: current.id,
@@ -193,6 +217,65 @@ describe('IssuesService', () => {
     },
   );
 
+  it.each(['BUG', 'DESIGN', 'COPY', 'OTHER'] as const)(
+    '분류 %s로 쓰면 DB와 목록·상세에 그 분류가 남고 범위는 하자 수정, 마감일은 없다',
+    async (category) => {
+      const detail = await service.create(projectId, client.id, input({ category }));
+      const triage = { category, scope: 'IN_SCOPE', dueDate: null };
+      expect(detail).toMatchObject(triage);
+      expect(await prisma.issue.findUniqueOrThrow({ where: { id: detail.id } })).toMatchObject(triage);
+      expect(await service.list(projectId, client.id)).toEqual([expect.objectContaining({ id: detail.id, ...triage })]);
+      expect(await service.getDetail(detail.id, client.id)).toEqual(detail);
+      expect(await prisma.comment.count({ where: { issueId: detail.id } })).toBe(0);
+    },
+  );
+
+  it.each([undefined, 'DESIGN'] as const)(
+    '처음 분류가 %s인 쪽지를 같은 requestId로 다른 분류와 함께 다시 보내도 처음 분류가 남는다',
+    async (category) => {
+      const request = input({ category });
+      const first = await service.create(projectId, client.id, request);
+      expect(first.category).toBe(category ?? 'BUG');
+      const before = await readState();
+      const replay = await service.create(projectId, client.id, { ...request, category: 'OTHER' });
+      expect(replay).toEqual(first);
+      expect(await readState()).toEqual(before);
+      expect(before.issues).toHaveLength(1);
+      expect(before.events).toHaveLength(1);
+    },
+  );
+
+  it.each(['UTC', 'Asia/Seoul', 'America/Los_Angeles'])(
+    '서버 시간대가 %s여도 DB의 마감일을 목록·상세에 YYYY-MM-DD로 주고 저장된 분류·범위를 유지한다',
+    async (timezone) => {
+      vi.stubEnv('TZ', timezone);
+      try {
+        const issue = await prisma.issue.create({
+          data: {
+            projectId,
+            number: 1,
+            title: '이미 마감일이 있는 쪽지',
+            body: '',
+            requestId: randomUUID(),
+            authorId: client.id,
+            originVersionId: current.id,
+            category: 'COPY',
+            scope: 'OUT_OF_SCOPE',
+            dueDate: new Date('2028-02-29T00:00:00.000Z'),
+          },
+        });
+        const triage = { category: 'COPY', scope: 'OUT_OF_SCOPE', dueDate: '2028-02-29' };
+        expect(await service.list(projectId, client.id)).toEqual([
+          expect.objectContaining({ id: issue.id, ...triage }),
+        ]);
+        expect(await service.getDetail(issue.id, client.id)).toMatchObject(triage);
+        expect(await prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).toEqual(issue);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it.each([
     [0, 1],
     [1, 0],
@@ -205,6 +288,9 @@ describe('IssuesService', () => {
       number: 1,
       title: request.title,
       status: 'OPEN',
+      category: 'BUG',
+      scope: 'IN_SCOPE',
+      dueDate: null,
       authorName: client.name,
       createdAt: detail.createdAt,
       commentCount: 0,
