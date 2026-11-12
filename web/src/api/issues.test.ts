@@ -1,9 +1,11 @@
 import { ApiError } from './client.ts'
 import {
   attachIssuePhoto,
+  countFilters,
   createComment,
   createIssue,
   dueDateLabel,
+  filterIssues,
   getIssue,
   isOverdue,
   isUnresolved,
@@ -11,6 +13,8 @@ import {
   ISSUE_SCOPE_LABELS,
   ISSUE_STATUS_LABELS,
   listIssues,
+  NO_FILTER,
+  NO_PLACE,
   removeIssuePhoto,
   startIssue,
   updateIssue,
@@ -18,6 +22,8 @@ import {
   type IssueChange,
   type IssueComment,
   type IssueDetail,
+  type IssueFilter,
+  type IssueScope,
   type IssueSummary,
   type IssueStatus,
   type NewComment,
@@ -569,5 +575,169 @@ describe('dueDateLabel', () => {
     expect(new Date().getUTCFullYear()).toBe(2026)
     expect(dueDateLabel('2026-12-31')).toBe('2026년 12월 31일')
     expect(dueDateLabel('2027-01-05')).toBe('1월 5일')
+  })
+})
+
+describe('NO_FILTER', () => {
+  it('네 선택 칸은 전체이고 마감 지남만은 꺼져 있다', () => {
+    expect(NO_FILTER).toEqual({ status: '', screenId: '', category: '', scope: '', overdueOnly: false })
+  })
+})
+
+describe('countFilters', () => {
+  it.each<{ filter: IssueFilter; expected: number }>([
+    { filter: { ...NO_FILTER }, expected: 0 },
+    { filter: { ...NO_FILTER, status: 'OPEN' }, expected: 1 },
+    { filter: { ...NO_FILTER, screenId }, expected: 1 },
+    { filter: { ...NO_FILTER, screenId: NO_PLACE }, expected: 1 },
+    { filter: { ...NO_FILTER, category: 'BUG' }, expected: 1 },
+    { filter: { ...NO_FILTER, scope: 'IN_SCOPE' }, expected: 1 },
+    { filter: { ...NO_FILTER, overdueOnly: true }, expected: 1 },
+    { filter: { ...NO_FILTER, status: 'OPEN', category: 'BUG' }, expected: 2 },
+    { filter: { ...NO_FILTER, status: 'OPEN', category: 'BUG', screenId }, expected: 3 },
+    { filter: { ...NO_FILTER, status: 'OPEN', category: 'BUG', screenId, scope: 'IN_SCOPE' }, expected: 4 },
+    {
+      filter: { status: 'OPEN', category: 'BUG', screenId: NO_PLACE, scope: 'IN_SCOPE', overdueOnly: true },
+      expected: 5,
+    },
+  ])('조건 $filter의 고른 개수는 $expected개다', ({ filter, expected }) => {
+    expect(countFilters(filter)).toBe(expected)
+  })
+})
+
+describe('filterIssues', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 10, 15, 12))
+  })
+
+  it.each<IssueStatus>(['OPEN', 'IN_PROGRESS'])('상태 %s인 쪽지만 남긴다', (status) => {
+    const open: IssueSummary = { ...summary, status: 'OPEN' }
+    const inProgress: IssueSummary = { ...summary, id: 'in-progress', status: 'IN_PROGRESS' }
+
+    expect(filterIssues([inProgress, open], { ...NO_FILTER, status })).toEqual([status === 'OPEN' ? open : inProgress])
+  })
+
+  it.each<IssueCategory>(['BUG', 'DESIGN', 'COPY', 'OTHER'])('분류 %s인 쪽지만 남긴다', (category) => {
+    const categories: IssueCategory[] = ['BUG', 'DESIGN', 'COPY', 'OTHER']
+    const issues = categories.map((value) => ({ ...summary, id: value, category: value }))
+
+    expect(filterIssues(issues, { ...NO_FILTER, category })).toEqual([{ ...summary, id: category, category }])
+  })
+
+  it.each<IssueScope>(['IN_SCOPE', 'OUT_OF_SCOPE'])('범위 %s인 쪽지만 남긴다', (scope) => {
+    const inScope: IssueSummary = { ...summary, scope: 'IN_SCOPE' }
+    const outOfScope: IssueSummary = { ...summary, id: 'extra', scope: 'OUT_OF_SCOPE' }
+
+    expect(filterIssues([outOfScope, inScope], { ...NO_FILTER, scope })).toEqual([
+      scope === 'IN_SCOPE' ? inScope : outOfScope,
+    ])
+  })
+
+  it('처음 화면 id로 거르고 이름이 같은 다른 화면과 위치 없는 쪽지는 제외한다', () => {
+    const sameName: IssueSummary = { ...summary, id: 'same-name', origin: { ...summary.origin!, screenId: 'other' } }
+    const differentVersion: IssueSummary = {
+      ...summary,
+      id: 'different-version',
+      originVersion: { id: 'older-version', number: 1 },
+      origin: { ...summary.origin!, asset: { id: 'older-photo', width: 800, height: 600 } },
+    }
+    const issues = [sameName, differentVersion, { ...summary, id: 'no-place', origin: null }, summary]
+
+    expect(filterIssues(issues, { ...NO_FILTER, screenId })).toEqual([differentVersion, summary])
+    expect(filterIssues(issues, { ...NO_FILTER, screenId: 'other' })).toEqual([sameName])
+  })
+
+  it('위치 없음은 origin이 null인 쪽지만 남기고 좌표 0이나 이름이 위치 없음인 화면은 제외한다', () => {
+    const noPlace: IssueSummary = { ...summary, id: 'no-place', origin: null }
+    const located: IssueSummary = {
+      ...summary,
+      origin: { ...summary.origin!, screenName: '위치 없음', xRatio: 0, yRatio: 0 },
+    }
+
+    expect(filterIssues([located, noPlace, summary], { ...NO_FILTER, screenId: NO_PLACE })).toEqual([noPlace])
+  })
+
+  it.each<IssueStatus>(['OPEN', 'IN_PROGRESS'])(
+    '마감 지남만을 고르면 %s의 어제는 남고 당일·내일·마감일 없음은 제외한다',
+    (status) => {
+      const yesterday: IssueSummary = { ...summary, status, dueDate: '2026-11-14' }
+      const today: IssueSummary = { ...summary, id: 'today', status, dueDate: '2026-11-15' }
+      const tomorrow: IssueSummary = { ...summary, id: 'tomorrow', status, dueDate: '2026-11-16' }
+      const noDueDate: IssueSummary = { ...summary, id: 'no-due-date', status, dueDate: null }
+      const issues = [today, yesterday, noDueDate, tomorrow]
+
+      expect(filterIssues(issues, { ...NO_FILTER, overdueOnly: true })).toEqual([yesterday])
+      expect(filterIssues(issues, { ...NO_FILTER, status })).toEqual(issues)
+    },
+  )
+
+  it('끝난 쪽지는 마감일이 지났어도 마감 지남만 결과에 넣지 않는다', () => {
+    const overdue: IssueSummary = { ...summary, dueDate: '2026-11-14' }
+    // 끝난 상태는 6번에서 타입에 생긴다. 서버에서 받은 경우도 확인한다.
+    const verified: IssueSummary = { ...overdue, id: 'verified', status: 'VERIFIED' as IssueStatus }
+    const withdrawn: IssueSummary = { ...overdue, id: 'withdrawn', status: 'WITHDRAWN' as IssueStatus }
+
+    expect(filterIssues([verified, overdue, withdrawn], { ...NO_FILTER, overdueOnly: true })).toEqual([overdue])
+  })
+
+  it.each([screenId, NO_PLACE])('화면 %s를 포함한 다섯 조건 중 하나라도 다르면 제외한다', (selectedScreen) => {
+    const matching: IssueSummary = {
+      ...summary,
+      status: 'IN_PROGRESS',
+      category: 'DESIGN',
+      scope: 'OUT_OF_SCOPE',
+      dueDate: '2026-11-14',
+      origin: selectedScreen === NO_PLACE ? null : summary.origin,
+    }
+    const issues: IssueSummary[] = [
+      { ...matching, id: 'wrong-status', status: 'OPEN' },
+      { ...matching, id: 'wrong-screen', origin: { ...summary.origin!, screenId: 'other-screen' } },
+      { ...matching, id: 'wrong-category', category: 'BUG' },
+      matching,
+      { ...matching, id: 'wrong-scope', scope: 'IN_SCOPE' },
+      { ...matching, id: 'not-overdue', dueDate: '2026-11-15' },
+    ]
+    const filter: IssueFilter = {
+      status: 'IN_PROGRESS',
+      screenId: selectedScreen,
+      category: 'DESIGN',
+      scope: 'OUT_OF_SCOPE',
+      overdueOnly: true,
+    }
+
+    expect(filterIssues(issues, filter)).toEqual([matching])
+  })
+
+  it('조건이 없으면 모든 쪽지를 받은 순서대로 돌려준다', () => {
+    const issues: IssueSummary[] = [
+      { ...summary, id: 'second', number: 2, origin: null },
+      { ...summary, id: 'third', number: 3, category: 'OTHER', scope: 'OUT_OF_SCOPE' },
+      { ...summary, id: 'first', number: 1, status: 'IN_PROGRESS', dueDate: '2026-11-14' },
+    ]
+
+    expect(filterIssues(issues, NO_FILTER)).toEqual(issues)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('빈 목록이나 맞는 쪽지가 없는 조건은 빈 배열을 돌려준다', () => {
+    expect(filterIssues([], NO_FILTER)).toEqual([])
+    expect(filterIssues([], { ...NO_FILTER, overdueOnly: true })).toEqual([])
+    expect(filterIssues([summary], { ...NO_FILTER, category: 'OTHER' })).toEqual([])
+    expect(filterIssues([summary], { ...NO_FILTER, screenId: 'removed-screen' })).toEqual([])
+  })
+
+  it('거른 결과도 원래 순서를 지키고 원래 배열·쪽지·조건을 바꾸거나 서버에 요청하지 않는다', () => {
+    const issues: IssueSummary[] = [
+      { ...summary, id: 'second', number: 2 },
+      { ...summary, id: 'excluded', category: 'OTHER' },
+      { ...summary, id: 'first', number: 1 },
+    ]
+    const filter: IssueFilter = { ...NO_FILTER, category: 'BUG' }
+    const before = structuredClone({ issues, filter })
+
+    expect(filterIssues(issues, filter)).toEqual([before.issues[0], before.issues[2]])
+    expect({ issues, filter }).toEqual(before)
+    expect(fetch).not.toHaveBeenCalled()
   })
 })

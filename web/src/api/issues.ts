@@ -87,6 +87,38 @@ export const dueDateLabel = (dueDate: string) => {
   return year === new Date().getFullYear() ? monthDay : `${year}년 ${monthDay}`
 }
 
+// 쪽지 목록을 골라 보는 조건(검수실의 필터).
+// 화면 필터에서 "위치 없음"을 고른 값. 화면 id(UUID)와 겹치지 않는다.
+export const NO_PLACE = 'none'
+
+// 빈 글자('')는 "전체"다. screenId는 쪽지가 시작한 화면의 id이거나 NO_PLACE다.
+export type IssueFilter = {
+  status: IssueStatus | ''
+  screenId: string
+  category: IssueCategory | ''
+  scope: IssueScope | ''
+  overdueOnly: boolean
+}
+
+export const NO_FILTER: IssueFilter = { status: '', screenId: '', category: '', scope: '', overdueOnly: false }
+
+// 고른 조건의 수. 고르지 않은 값('', false)은 세지 않는다.
+export const countFilters = ({ status, screenId, category, scope, overdueOnly }: IssueFilter) =>
+  [status, screenId, category, scope, overdueOnly].filter(Boolean).length
+
+// 고른 조건을 모두 만족하는 쪽지만 남긴다. 서버에 다시 묻지 않고 받아 둔 목록에서 거른다.
+// 조건마다 "골랐는데 맞지 않으면 뺀다"를 차례로 본다. 고르지 않은 조건('')은 건너뛴다.
+export const filterIssues = (issues: IssueSummary[], filter: IssueFilter) =>
+  issues.filter((issue) => {
+    if (filter.status !== '' && issue.status !== filter.status) return false
+    const place = issue.origin ? issue.origin.screenId : NO_PLACE
+    if (filter.screenId !== '' && place !== filter.screenId) return false
+    if (filter.category !== '' && issue.category !== filter.category) return false
+    if (filter.scope !== '' && issue.scope !== filter.scope) return false
+    if (filter.overdueOnly && !isOverdue(issue)) return false
+    return true
+  })
+
 // requestId는 쓰기 칸을 열 때 만든 번호다. 실패해서 다시 보낼 때도 같은 번호를 써야 쪽지가 하나만 생긴다.
 // versionId는 보고 있던 버전이다. 그사이 새 버전이 게시됐으면 서버가 409(VERSION_CHANGED)로 답한다.
 export type NewIssue = {
