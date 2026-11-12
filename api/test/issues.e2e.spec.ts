@@ -161,6 +161,9 @@ describe('쪽지 API (e2e)', () => {
         number: 1,
         title: input.title,
         status: 'OPEN',
+        category: 'BUG',
+        scope: 'IN_SCOPE',
+        dueDate: null,
         authorName: role,
         createdAt: expect.any(String),
         commentCount: 0,
@@ -194,6 +197,9 @@ describe('쪽지 API (e2e)', () => {
       number: 1,
       title: input.title,
       status: 'OPEN',
+      category: 'BUG',
+      scope: 'IN_SCOPE',
+      dueDate: null,
       authorName: '개발자',
       createdAt: created.body.createdAt,
       commentCount: 0,
@@ -211,6 +217,62 @@ describe('쪽지 API (e2e)', () => {
     await get(`/api/projects/${projectId}/issues`).expect(200).expect([summary]);
     await get(`/api/issues/${created.body.id}`).expect(200).expect(created.body);
   });
+
+  it('쪽지 쓰기에 scope를 넣으면 422이고 저장하지 않는다', async () => {
+    const before = await readIssueState();
+    for (const scope of ['IN_SCOPE', 'OUT_OF_SCOPE', null]) {
+      await createIssue(issueInput({ category: 'DESIGN', scope }), clientCookie).expect(422);
+      expect(await readIssueState()).toEqual(before);
+    }
+  });
+
+  it('쪽지 쓰기에 dueDate를 넣으면 422이고 저장하지 않는다', async () => {
+    const before = await readIssueState();
+    for (const dueDate of ['2026-11-15', null]) {
+      await createIssue(issueInput({ category: 'COPY', dueDate }), clientCookie).expect(422);
+      expect(await readIssueState()).toEqual(before);
+    }
+  });
+
+  it('분류를 골라 쓰면 그 분류로 저장되고 고르지 않으면 버그, 하자 수정, 마감일 없음이다', async () => {
+    for (const category of [undefined, 'BUG', 'DESIGN', 'COPY', 'OTHER']) {
+      const created = await createIssue(issueInput(category === undefined ? {} : { category }), clientCookie).expect(
+        201,
+      );
+      const triage = { category: category ?? 'BUG', scope: 'IN_SCOPE', dueDate: null };
+      expect(created.body).toMatchObject({ ...triage, comments: [] });
+      expect(await prisma.issue.findUniqueOrThrow({ where: { id: created.body.id } })).toMatchObject(triage);
+      await get(`/api/issues/${created.body.id}`, clientCookie).expect(200).expect(created.body);
+      const list = await get(`/api/projects/${projectId}/issues`, clientCookie).expect(200);
+      expect(list.body).toContainEqual(expect.objectContaining({ id: created.body.id, ...triage }));
+    }
+    expect(await prisma.issue.count()).toBe(5);
+    expect(await prisma.comment.count()).toBe(0);
+  });
+
+  it('쪽지 쓰기에 없는 분류를 넣으면 422이고 저장하지 않는다', async () => {
+    const before = await readIssueState();
+    for (const category of ['FEATURE', null, 0, 'bug', '', ' BUG ', ['BUG'], { category: 'BUG' }, false]) {
+      await createIssue(issueInput({ category }), clientCookie).expect(422);
+      expect(await readIssueState()).toEqual(before);
+    }
+  });
+
+  it.each([undefined, 'DESIGN'])(
+    '처음 분류가 %s인 쪽지를 같은 requestId로 다른 분류와 함께 다시 보내면 처음 분류가 남는다',
+    async (category) => {
+      const input = issueInput(category === undefined ? {} : { category });
+      const first = await createIssue(input, clientCookie).expect(201);
+      expect(first.body.category).toBe(category ?? 'BUG');
+      const before = await readIssueState();
+      await createIssue({ ...input, category: 'OTHER' }, clientCookie)
+        .expect(201)
+        .expect(first.body);
+      expect(await readIssueState()).toEqual(before);
+      expect(before.issues).toHaveLength(1);
+      expect(before.events.filter((event) => event.type === 'ISSUE_CREATED')).toHaveLength(1);
+    },
+  );
 
   it('같은 requestId로 다시 보내면 201이고 처음 쪽지를 돌려주며 쪽지·일지는 하나다', async () => {
     const input = issueInput({ screenId, xRatio: 0.25, yRatio: 0.75 });
