@@ -164,6 +164,7 @@ const CurrentAddress = () => {
         {location.search}
       </output>
       <button onClick={() => navigate(-1)}>브라우저 뒤로 가기</button>
+      <button onClick={() => navigate(1)}>브라우저 앞으로 가기</button>
     </>
   )
 }
@@ -477,6 +478,45 @@ describe('ReviewRoomPage 버전 재시도와 초기 불러오기', () => {
     const versions = screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' })
     expect(versions.value).toBe(initial.id)
     expect(Array.from(versions.options, (option) => option.value)).toEqual([latest.id, current.id, initial.id])
+  })
+
+  it('409 뒤 최신 버전 응답을 기다리다 브라우저 뒤로·앞으로 가기로 원래 버전에 돌아오면 늦은 응답 뒤에도 그 주소와 사진을 유지한다', async () => {
+    vi.mocked(createComment).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    await renderRoom(`?version=${initial.id}&issue=${productIssue.id}&keep=yes`)
+    await chooseVersion(current.id)
+    expect(queryParams().get('version')).toBe(current.id)
+    expect(photo().getAttribute('src')).toBe('/api/assets/current-product')
+    fillComment()
+    await click('댓글 남기기')
+    expect(screen.getByText('새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.')).toBeTruthy()
+
+    publishLatest()
+    const pendingProject = deferred<ProjectDetail>()
+    vi.mocked(getProject).mockReturnValueOnce(pendingProject.promise)
+    await click('최신 버전 보기')
+    expect(getProject).toHaveBeenCalledTimes(2)
+
+    // 버전 고르기를 거치지 않고 주소 기록을 왕복해, 요청을 시작한 때와 같은 주소로 돌아온다.
+    await click('브라우저 뒤로 가기')
+    expect(queryParams().get('version')).toBe(initial.id)
+    expect(photo().getAttribute('src')).toBe('/api/assets/old-current-product')
+    await click('브라우저 앞으로 가기')
+    expect(queryParams().get('version')).toBe(current.id)
+    expect(photo().getAttribute('src')).toBe('/api/assets/current-product')
+
+    await act(async () => {
+      pendingProject.resolve({ ...project, currentVersion: { id: latest.id, number: 2 } })
+    })
+
+    expect(queryParams().get('version')).toBe(current.id)
+    expect(queryParams().get('issue')).toBe(productIssue.id)
+    expect(queryParams().get('keep')).toBe('yes')
+    expect(photo().getAttribute('src')).toBe('/api/assets/current-product')
+    const versions = screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' })
+    expect(versions.value).toBe(current.id)
+    expect(Array.from(versions.options, (option) => option.value)).toEqual([latest.id, current.id, initial.id])
+    expect(screen.getByText(/지난 버전이에요/)).toBeTruthy()
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
   })
 
   it('409 뒤 지난 버전에서 최신 버전 응답을 기다리다 안내 링크로 이동하고 쪽지를 고르면 늦은 응답이 그 처음 사진을 바꾸지 않는다', async () => {
