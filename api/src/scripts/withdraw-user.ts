@@ -29,8 +29,10 @@ export const withdrawUser = async (prisma: PrismaService, rawEmail: string) => {
       WHERE user_id = ${user.id}::uuid AND revoked_at IS NULL
     `;
     // .invalid는 메일이 갈 수 없는 예약 도메인이다. 사용자 id를 넣어 고유 제약을 지킨다.
+    // 마지막 접속·동의 시각도 방침이 계정 정보로 적은 항목이라 함께 비운다.
     await tx.$executeRaw`
-      UPDATE users SET name = ${WITHDRAWN_NAME}, email = 'withdrawn-' || id || '@invalid'
+      UPDATE users
+      SET name = ${WITHDRAWN_NAME}, email = 'withdrawn-' || id || '@invalid', last_seen_at = NULL, privacy_agreed_at = NULL
       WHERE id = ${user.id}::uuid
     `;
     const sessions = await tx.$executeRaw`DELETE FROM sessions WHERE user_id = ${user.id}::uuid`;

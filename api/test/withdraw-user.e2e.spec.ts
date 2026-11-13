@@ -98,7 +98,9 @@ describe('탈퇴 처리 (e2e)', () => {
     await resetDatabase(prisma);
 
     developerId = (await prisma.user.create({ data: { email: developerEmail, name: '개발자' } })).id;
-    userId = (await prisma.user.create({ data: { email, name } })).id;
+    // 탈퇴가 마지막 접속·동의 시각을 비우는지 보려면 값이 있어야 한다.
+    const withdrawing = { email, name, lastSeenAt: new Date(), privacyAgreedAt: new Date() };
+    userId = (await prisma.user.create({ data: withdrawing })).id;
     otherId = (await prisma.user.create({ data: { email: otherEmail, name: '다른 참여자' } })).id;
     const project = await prisma.project.create({
       data: {
@@ -221,6 +223,8 @@ describe('탈퇴 처리 (e2e)', () => {
       ...before,
       name: '탈퇴한 사용자',
       email: `withdrawn-${userId}@invalid`,
+      lastSeenAt: null,
+      privacyAgreedAt: null,
     });
     expect(await prisma.user.count({ where: { OR: [{ email }, { name }] } })).toBe(0);
     expect(await prisma.session.count({ where: { userId } })).toBe(0);
