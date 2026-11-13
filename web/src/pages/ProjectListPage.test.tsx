@@ -867,6 +867,93 @@ describe('ProjectListPage 보관과 삭제', () => {
     expect(await screen.findByRole('heading', { name: '로그인' })).toBeDefined()
   })
 
+  it.each(['성공', '실패'] as const)(
+    '두 삭제 대기 줄을 잇달아 되살린 뒤 앞 목록 요청의 늦은 %s 응답은 최신 목록을 덮지 않는다',
+    async (outcome) => {
+      const anotherDeleted: MyProject = { ...deletedProject, id: 'another-deleted', name: '두 번째 지운 프로젝트' }
+      const firstReload = deferred<MyProject[]>()
+      const lastReload = deferred<MyProject[]>()
+      const restored: MyProject = { ...deletedProject, status: 'ACTIVE', purgeAfter: null }
+      const anotherRestored: MyProject = { ...anotherDeleted, status: 'ARCHIVED', purgeAfter: null }
+      vi.mocked(listProjects)
+        .mockResolvedValueOnce([deletedProject, anotherDeleted])
+        .mockReturnValueOnce(firstReload.promise)
+        .mockReturnValueOnce(lastReload.promise)
+      renderProjectList()
+      const deleted = within(await screen.findByRole('region', { name: '삭제 대기' }))
+      const buttons = deleted.getAllByRole<HTMLButtonElement>('button', { name: '되살리기' })
+
+      await act(async () => fireEvent.click(buttons[0]))
+      expect(listProjects).toHaveBeenCalledTimes(2)
+      expect(buttons[0].disabled).toBe(true)
+      expect(buttons[1].disabled).toBe(false)
+      await act(async () => fireEvent.click(buttons[1]))
+      expect(listProjects).toHaveBeenCalledTimes(3)
+      expect(restoreProject).toHaveBeenNthCalledWith(1, deletedProject.id)
+      expect(restoreProject).toHaveBeenNthCalledWith(2, anotherDeleted.id)
+
+      await act(async () => lastReload.resolve([restored, anotherRestored]))
+      expect(screen.queryByRole('region', { name: '삭제 대기' })).toBeNull()
+      await act(async () => {
+        if (outcome === '성공') firstReload.resolve([restored, anotherDeleted])
+        if (outcome === '실패') firstReload.reject(new ApiError(500))
+      })
+
+      expect(
+        within(screen.getByRole('region', { name: '진행 중' })).getByRole('link', { name: restored.name }),
+      ).toBeDefined()
+      expect(
+        within(screen.getByRole('region', { name: '보관함' })).getByRole('link', { name: anotherRestored.name }),
+      ).toBeDefined()
+      expect(screen.queryByRole('region', { name: '삭제 대기' })).toBeNull()
+      expect(screen.queryByRole('button', { name: '되살리기' })).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(listProjects).toHaveBeenCalledTimes(3)
+    },
+  )
+
+  it('되살린 뒤 목록 다시 받기가 한 번 실패해도 다음 요청이 성공하면 오류가 걷힌다', async () => {
+    const anotherDeleted: MyProject = { ...deletedProject, id: 'another-deleted', name: '두 번째 지운 프로젝트' }
+    const firstReload = deferred<MyProject[]>()
+    const secondRestore = deferred<void>()
+    const lastReload = deferred<MyProject[]>()
+    vi.mocked(listProjects)
+      .mockResolvedValueOnce([deletedProject, anotherDeleted])
+      .mockReturnValueOnce(firstReload.promise)
+      .mockReturnValueOnce(lastReload.promise)
+    vi.mocked(restoreProject).mockResolvedValueOnce(undefined).mockReturnValueOnce(secondRestore.promise)
+    renderProjectList()
+    const deleted = within(await screen.findByRole('region', { name: '삭제 대기' }))
+    const buttons = deleted.getAllByRole('button', { name: '되살리기' })
+    await act(async () => fireEvent.click(buttons[0]))
+    // 오류가 뜨기 전에 다른 줄의 되살리기도 시작해 둔다.
+    fireEvent.click(buttons[1])
+    expect(restoreProject).toHaveBeenNthCalledWith(2, anotherDeleted.id)
+    expect(listProjects).toHaveBeenCalledTimes(2)
+
+    await act(async () => firstReload.reject(new ApiError(500)))
+    expect(screen.getByRole('alert').textContent).toBe('잠시 뒤 다시 시도해 주세요')
+    expect(screen.queryByText('아직 프로젝트가 없어요.')).toBeNull()
+    await act(async () => secondRestore.resolve(undefined))
+    expect(listProjects).toHaveBeenCalledTimes(3)
+    await act(async () =>
+      lastReload.resolve([
+        { ...deletedProject, status: 'ACTIVE', purgeAfter: null },
+        { ...anotherDeleted, status: 'ARCHIVED', purgeAfter: null },
+      ]),
+    )
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(
+      within(screen.getByRole('region', { name: '진행 중' })).getByRole('link', { name: deletedProject.name }),
+    ).toBeDefined()
+    expect(
+      within(screen.getByRole('region', { name: '보관함' })).getByRole('link', { name: anotherDeleted.name }),
+    ).toBeDefined()
+    expect(screen.queryByRole('region', { name: '삭제 대기' })).toBeNull()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe('/')
+  })
+
   it('되살린 뒤 목록 재조회가 실패하면 빈 목록으로 처리하지 않고 목록 오류를 보여 준다', async () => {
     vi.mocked(listProjects).mockResolvedValueOnce([deletedProject]).mockRejectedValueOnce(new ApiError(500))
     renderProjectList()

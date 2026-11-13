@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react'
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router'
 import { ApiError } from '../api/client.ts'
 import { isUuid } from '../api/ids.ts'
@@ -249,6 +249,15 @@ const StatusSection = ({ project, onStatusChange }: StatusSectionProps) => {
   const [confirmName, setConfirmName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<ReactNode>()
+  // 지우기 응답을 기다리는 사이 다른 프로젝트로 떠났으면, 늦게 온 응답이 그 화면에서 목록으로 끌어내지 않게 한다.
+  // 개발 모드의 React는 화면을 붙였다 뗐다 다시 붙여 보므로, 붙을 때마다 true로 돌려놓는다.
+  const isOpen = useRef(true)
+  useEffect(() => {
+    isOpen.current = true
+    return () => {
+      isOpen.current = false
+    }
+  }, [])
   const isArchived = project.status === 'ARCHIVED'
   // 서버도 앞뒤 공백을 지우고 다시 본다. 버튼 잠금은 실수를 줄이는 것이고 막는 것은 서버다.
   const nameMatches = confirmName.trim() === project.name
@@ -272,7 +281,7 @@ const StatusSection = ({ project, onStatusChange }: StatusSectionProps) => {
     setError(undefined)
     try {
       await deleteProject(project.id, confirmName)
-      navigate('/')
+      if (isOpen.current) navigate('/')
     } catch (caught) {
       setError(deleteMessage(caught))
     } finally {
@@ -452,11 +461,15 @@ const ProjectSettings = ({ id }: { id: string }) => {
         <MembersSection
           projectId={id}
           approver={project.approver}
-          onApproverChange={(approver) => setProject({ ...project, approver })}
+          // 응답을 기다리는 사이 다른 칸(상태·승인자)이 바뀌었을 수 있어서, 그때의 값 위에 바꾼다.
+          onApproverChange={(approver) => setProject((current) => current && { ...current, approver })}
         />
       )}
       {isDeveloper && project.status !== 'DELETE_PENDING' && (
-        <StatusSection project={project} onStatusChange={(status) => setProject({ ...project, status })} />
+        <StatusSection
+          project={project}
+          onStatusChange={(status) => setProject((current) => current && { ...current, status })}
+        />
       )}
     </section>
   )

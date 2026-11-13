@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { getMe } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
 import { createInvitation } from '../api/invitations.ts'
@@ -194,6 +194,55 @@ describe.each([
 })
 
 describe('ProjectSettingsPage 프로젝트 지우기', () => {
+  it('A의 지우기 요청 중 B로 이동하면 늦은 성공 응답이 목록으로 끌어내지 않는다', async () => {
+    const pending = deferred()
+    const nextProject = { ...project, id: '6b62c564-585a-4f05-ae57-8d6b3bc5a47f', name: '다음 프로젝트' }
+    vi.mocked(deleteProject).mockReturnValueOnce(pending.promise)
+    vi.mocked(getProject).mockResolvedValueOnce(project).mockResolvedValueOnce(nextProject)
+    const HistoryControls = () => {
+      const navigate = useNavigate()
+      const location = useLocation()
+      return (
+        <>
+          <button onClick={() => navigate(-1)}>뒤로 가기</button>
+          <output aria-label="현재 주소">{location.pathname}</output>
+        </>
+      )
+    }
+    render(
+      <MemoryRouter
+        basename="/app"
+        initialEntries={[`/app/projects/${nextProject.id}/settings`, `/app/projects/${project.id}/settings`]}
+        initialIndex={1}
+      >
+        <HistoryControls />
+        <Routes>
+          <Route path="/projects/:id/settings" element={<ProjectSettingsPage />} />
+          <Route path="/" element={<h1>내 프로젝트</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    fireEvent.change(await screen.findByLabelText(confirmLabel), { target: { value: project.name } })
+    fireEvent.click(screen.getByRole('button', { name: '프로젝트 지우기' }))
+    expect(deleteProject).toHaveBeenCalledExactlyOnceWith(project.id, project.name)
+
+    fireEvent.click(screen.getByRole('button', { name: '뒤로 가기' }))
+    await screen.findByRole('heading', { name: nextProject.name })
+    const input = screen.getByLabelText<HTMLInputElement>(confirmLabel)
+    expect(input.value).toBe('')
+    expect(input.disabled).toBe(false)
+    fireEvent.change(input, { target: { value: nextProject.name } })
+
+    await act(async () => pending.resolve())
+
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${nextProject.id}/settings`)
+    expect(screen.getByRole('heading', { name: nextProject.name })).toBeDefined()
+    expect(screen.queryByRole('heading', { name: '내 프로젝트' })).toBeNull()
+    expect(input.value).toBe(nextProject.name)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '프로젝트 지우기' }).disabled).toBe(false)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it.each(['', '   ', '다른 이름', 'review 프로젝트', 'Review프로젝트', 'Review  프로젝트', 'Review 프로젝트!'])(
     '이름이 "%s"이면 지우기를 잠그고 요청하지 않는다',
     async (name) => {
@@ -258,6 +307,43 @@ describe('ProjectSettingsPage 프로젝트 지우기', () => {
     fireEvent.click(screen.getByRole('button', { name: '프로젝트 지우기' }))
     await screen.findByRole('heading', { name: '내 프로젝트' })
     expect(deleteProject).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('ProjectSettingsPage 보관과 승인자 동시 변경', () => {
+  it('보관 요청 중 승인자를 바꾼 뒤 보관 응답이 와도 승인자가 옛 값으로 돌아가지 않는다', async () => {
+    const pending = deferred()
+    const previousApprover = { memberId: 'previous-client', name: '이전 승인자' }
+    const nextApprover = { memberId: 'next-client', name: '새 승인자' }
+    vi.mocked(archiveProject).mockReturnValueOnce(pending.promise)
+    vi.mocked(setApprover).mockResolvedValueOnce(nextApprover)
+    vi.mocked(listMembers).mockResolvedValue({
+      members: [previousApprover, nextApprover].map(({ memberId, name }) => ({
+        id: memberId,
+        name,
+        email: `${memberId}@example.com`,
+        role: 'CLIENT',
+        lastSeenAt: null,
+      })),
+      invitations: [],
+    })
+    await renderSettings({ approver: previousApprover })
+    const choice = await screen.findByRole<HTMLSelectElement>('combobox', { name: '승인자' })
+    fireEvent.click(screen.getByRole('button', { name: '보관하기' }))
+    expect(archiveProject).toHaveBeenCalledExactlyOnceWith(project.id)
+    fireEvent.change(choice, { target: { value: nextApprover.memberId } })
+    fireEvent.click(screen.getByRole('button', { name: '승인자 저장' }))
+    await screen.findByText(`${nextApprover.name}님이 최종 버전을 승인해요.`, { exact: false })
+    expect(setApprover).toHaveBeenCalledExactlyOnceWith(project.id, nextApprover.memberId)
+    expect(screen.queryByRole('status')).toBeNull()
+
+    await act(async () => pending.resolve())
+
+    expect(screen.getByRole('status').textContent).toBe(archivedNotice)
+    expect(screen.getByRole('button', { name: '보관 풀기' })).toBeDefined()
+    expect(screen.getByText(`${nextApprover.name}님이 최종 버전을 승인해요.`, { exact: false })).toBeDefined()
+    expect(screen.queryByText(`${previousApprover.name}님이 최종 버전을 승인해요.`, { exact: false })).toBeNull()
+    expect(choice.value).toBe(nextApprover.memberId)
   })
 })
 

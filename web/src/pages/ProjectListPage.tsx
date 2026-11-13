@@ -128,11 +128,21 @@ export const ProjectListPage = () => {
     }
   }, [])
 
-  // 되살린 뒤에도 다시 부른다.
-  const loadProjects = () =>
-    listProjects()
-      .then(setProjects)
-      .catch((caught) => setListError(toMessage(caught)))
+  // 되살린 뒤에도 다시 부른다. 여러 줄을 잇달아 되살리면 응답이 순서와 다르게 올 수 있어서, 마지막 요청의 응답만 쓴다.
+  const latestLoad = useRef(0)
+  const loadProjects = () => {
+    latestLoad.current += 1
+    const load = latestLoad.current
+    return listProjects()
+      .then((loaded) => {
+        if (load !== latestLoad.current) return
+        setProjects(loaded)
+        setListError(undefined)
+      })
+      .catch((caught) => {
+        if (load === latestLoad.current) setListError(toMessage(caught))
+      })
+  }
 
   // 로그인 확인을 기다리지 않고 같이 부른다. 로그인 안 했으면 401로 실패하지만, 그때 화면은 로그인 화면으로 간다.
   useEffect(() => {

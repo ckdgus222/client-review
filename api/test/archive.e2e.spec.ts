@@ -527,6 +527,28 @@ describe('보관과 삭제 (e2e)', () => {
     expect(await readState()).toEqual(before);
   });
 
+  it('삭제 대기 프로젝트에서 이미 철회된 멤버를 철회하면 404, 개발자를 철회하면 403이다', async () => {
+    const revoked = await prisma.projectMember.findFirstOrThrow({
+      where: { projectId, revokedAt: { not: null } },
+    });
+    const developer = await prisma.projectMember.findFirstOrThrow({
+      where: { projectId, userId: developerId },
+    });
+    await setStatus('DELETE_PENDING');
+    const before = await readState();
+
+    const revokedResponse = await post(`/api/members/${revoked.id}/revoke`).expect(404);
+    expect(revokedResponse.body.message).toBe('없는 참여자예요');
+    expect(revokedResponse.body.code).toBeUndefined();
+    const developerResponse = await post(`/api/members/${developer.id}/revoke`).expect(403);
+    expect(developerResponse.body.message).toBe('개발자의 접근은 철회할 수 없어요');
+    expect(developerResponse.body.code).toBeUndefined();
+    // 철회할 수 있는 활성 클라이언트는 상태 검사까지 가서 409를 받는다.
+    await post(`/api/members/${clientMemberId}/revoke`).expect(409).expect(deletePendingBody);
+
+    expect(await readState()).toEqual(before);
+  });
+
   it('보관한 프로젝트에서도 접근 철회는 된다', async () => {
     const token = createSessionToken();
     await prisma.invitation.create({
