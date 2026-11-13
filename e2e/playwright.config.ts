@@ -50,6 +50,8 @@ export default defineConfig({
         // 서버가 뒤에 /app/invite/<토큰>을 붙인다. 브라우저가 여는 앱 주소(/app/)와 다르다.
         APP_URL: WEB_ORIGIN,
         ASSET_DIR: fileURLToPath(new URL('./.assets', import.meta.url)),
+        // 루트 .env에 실제 SMTP 값을 넣어도 테스트의 api는 메일을 보내지 않고 로그에 찍는다(docs/mail.md).
+        MAIL_MODE: 'log',
       },
     },
     {

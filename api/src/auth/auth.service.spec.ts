@@ -1085,7 +1085,7 @@ describe('AuthService.findSessionUser', () => {
           where: { tokenHash },
         });
         const userBefore = await tx.user.findUniqueOrThrow({ where: { id: user.id } });
-        const transactionService = new AuthService(tx as PrismaService, new MailService());
+        const transactionService = new AuthService(tx as PrismaService, new MailService(vi.fn().mockResolvedValue(undefined)));
 
         await expect(transactionService.findSessionUser(sessionId)).resolves.toEqual(allowed ? user : null);
 
