@@ -8,6 +8,7 @@ import {
   daysUntilPurge,
   purgeText,
   statusNotice,
+  projectStatusError,
   createScreen,
   getProject,
   hideScreen,
@@ -44,6 +45,22 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+
+describe('projectStatusError', () => {
+  it.each([
+    ['PROJECT_ARCHIVED', '보관한 프로젝트예요. 보관을 풀어야 바꿀 수 있어요'],
+    ['PROJECT_DELETE_PENDING', '삭제 대기 중인 프로젝트예요. 되살려야 바꿀 수 있어요'],
+  ])('%s를 상태에 맞는 안내 문구로 바꾼다', (code, message) => {
+    expect(projectStatusError(code)).toBe(message)
+  })
+
+  it.each([undefined, '', 'SCREEN_EXISTS', 'PROJECT_NAME_MISMATCH', 'UNKNOWN_CODE'])(
+    '상태 오류가 아닌 %s는 각 화면의 기존 오류 처리에 맡긴다',
+    (code) => {
+      expect(projectStatusError(code)).toBeUndefined()
+    },
+  )
 })
 
 describe('daysUntilPurge', () => {

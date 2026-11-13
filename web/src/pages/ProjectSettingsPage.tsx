@@ -1,20 +1,26 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react'
-import { Link, Navigate, useParams } from 'react-router'
+import { Link, Navigate, useNavigate, useParams } from 'react-router'
 import { ApiError } from '../api/client.ts'
 import { isUuid } from '../api/ids.ts'
 import { type CreatedInvitation, createInvitation } from '../api/invitations.ts'
 import { listMembers, type Member, type MemberList, revokeMember, setApprover } from '../api/members.ts'
 import {
   type Approver,
+  archiveProject,
   createScreen,
+  deleteProject,
   getProject,
   hideScreen,
   MAX_CLIENTS,
   listScreens,
   type ProjectDetail,
+  projectStatusError,
+  type ProjectStatus,
   type Screen,
   screenLabel,
   showScreen,
+  statusNotice,
+  unarchiveProject,
   VIEWPORT_LABELS,
   type Viewport,
 } from '../api/projects.ts'
@@ -30,7 +36,7 @@ const toMessage = (error: unknown): ReactNode => {
   if (error.status === 401) return <SessionEnded />
   if (error.code === 'SCREEN_EXISTS') return '이미 있는 화면이에요'
   if (error.status === 422) return '화면 이름은 1~40자로 써 주세요'
-  return '잠시 뒤 다시 시도해 주세요'
+  return projectStatusError(error.code) ?? '잠시 뒤 다시 시도해 주세요'
 }
 
 // "마지막 접속: 2시간 전"처럼 보여 준다. 하루 넘게 지나면 "어제", "3일 전"이 된다.
@@ -54,7 +60,7 @@ const memberMessage = (error: unknown, invalidInput?: string): ReactNode => {
   if (error.code === 'PROJECT_FULL') return `클라이언트는 ${MAX_CLIENTS}명까지 참여할 수 있어요`
   if (error.code === 'ALREADY_MEMBER') return '이미 참여한 사람이에요'
   if (error.status === 422 && invalidInput) return invalidInput
-  return '잠시 뒤 다시 시도해 주세요'
+  return projectStatusError(error.code) ?? '잠시 뒤 다시 시도해 주세요'
 }
 
 const INVALID_EMAIL = '이메일 주소를 확인해 주세요'
@@ -230,10 +236,84 @@ const MembersSection = ({ projectId, approver, onApproverChange }: MembersSectio
   )
 }
 
+const deleteMessage = (error: unknown): ReactNode => {
+  if (error instanceof ApiError && error.code === 'PROJECT_NAME_MISMATCH') return '프로젝트 이름이 달라요'
+  return toMessage(error)
+}
+
+type StatusSectionProps = { project: ProjectDetail; onStatusChange: (status: ProjectStatus) => void }
+
+// 보관·보관 풀기와 지우기(docs/archive.md 정할 것 17). 개발자에게만, 삭제 대기가 아닐 때만 보인다(되살리기는 목록에서 한다).
+const StatusSection = ({ project, onStatusChange }: StatusSectionProps) => {
+  const navigate = useNavigate()
+  const [confirmName, setConfirmName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<ReactNode>()
+  const isArchived = project.status === 'ARCHIVED'
+  // 서버도 앞뒤 공백을 지우고 다시 본다. 버튼 잠금은 실수를 줄이는 것이고 막는 것은 서버다.
+  const nameMatches = confirmName.trim() === project.name
+
+  const toggleArchived = async () => {
+    setBusy(true)
+    setError(undefined)
+    try {
+      await (isArchived ? unarchiveProject(project.id) : archiveProject(project.id))
+      onStatusChange(isArchived ? 'ACTIVE' : 'ARCHIVED')
+    } catch (caught) {
+      setError(toMessage(caught))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleDelete = async (event: FormEvent) => {
+    event.preventDefault()
+    setBusy(true)
+    setError(undefined)
+    try {
+      await deleteProject(project.id, confirmName)
+      navigate('/')
+    } catch (caught) {
+      setError(deleteMessage(caught))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <h2>보관과 지우기</h2>
+      <p className={styles.hint}>
+        보관하면 읽기만 할 수 있어요. 지우면 7일 동안 프로젝트 목록에서 되살릴 수 있고, 그 뒤 사진과 함께 완전히
+        지워져요.
+      </p>
+      <div>
+        <Button variant="secondary" disabled={busy} onClick={toggleArchived}>
+          {isArchived ? '보관 풀기' : '보관하기'}
+        </Button>
+      </div>
+      <form className={styles.create} onSubmit={handleDelete} noValidate>
+        <TextField
+          label="지우려면 프로젝트 이름을 그대로 입력해 주세요"
+          value={confirmName}
+          onChange={setConfirmName}
+          disabled={busy}
+        />
+        <Button type="submit" disabled={busy || !nameMatches}>
+          프로젝트 지우기
+        </Button>
+      </form>
+      {error && <ErrorText message={error} />}
+    </>
+  )
+}
+
 const ProjectSettings = ({ id }: { id: string }) => {
   const isValidId = isUuid(id)
   const { user, error: meError } = useMe()
   const [project, setProject] = useState<ProjectDetail>()
+  // 삭제 대기 띠의 남은 날을 화면을 연 때의 시각으로 센다. 다시 그릴 때마다 글이 흔들리지 않게 한다.
+  const [openedAt] = useState(Date.now)
   const [screens, setScreens] = useState<Screen[]>([])
   const [notFound, setNotFound] = useState(false)
   const [loadError, setLoadError] = useState<ReactNode>()
@@ -301,11 +381,18 @@ const ProjectSettings = ({ id }: { id: string }) => {
   const isDeveloper = project.myRole === 'DEVELOPER'
   const visibleScreens = screens.filter((screen) => !screen.hiddenAt)
   const hiddenScreens = screens.filter((screen) => screen.hiddenAt)
+  const notice = statusNotice(project, openedAt)
 
   return (
     <section className={styles.panel}>
       <Link to="/">프로젝트 목록</Link>
       <h1>{project.name}</h1>
+      {/* 보관·삭제 대기 띠(정할 것 18). */}
+      {notice && (
+        <p className={styles.notice} role="status">
+          {notice}
+        </p>
+      )}
       {isDeveloper && (
         <form className={styles.create} onSubmit={handleCreate} noValidate>
           <TextField label="화면 이름" value={name} onChange={setName} disabled={sending} />
@@ -367,6 +454,9 @@ const ProjectSettings = ({ id }: { id: string }) => {
           approver={project.approver}
           onApproverChange={(approver) => setProject({ ...project, approver })}
         />
+      )}
+      {isDeveloper && project.status !== 'DELETE_PENDING' && (
+        <StatusSection project={project} onStatusChange={(status) => setProject({ ...project, status })} />
       )}
     </section>
   )

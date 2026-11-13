@@ -47,6 +47,14 @@ export const daysUntilPurge = (purgeAfter: string, now: number) => Math.ceil((Da
 export const purgeText = (daysLeft: number) =>
   daysLeft > 0 ? `${daysLeft}일 뒤 완전히 지워져요` : '곧 완전히 지워져요'
 
+// 서버가 보관·삭제 대기 프로젝트의 쓰기를 409로 막을 때의 문구. 오류 코드를 문구로 바꾸는 화면들이 같이 쓴다.
+const PROJECT_STATUS_ERRORS: Record<string, string> = {
+  PROJECT_ARCHIVED: '보관한 프로젝트예요. 보관을 풀어야 바꿀 수 있어요',
+  PROJECT_DELETE_PENDING: '삭제 대기 중인 프로젝트예요. 되살려야 바꿀 수 있어요',
+}
+
+export const projectStatusError = (code: string | undefined) => (code ? PROJECT_STATUS_ERRORS[code] : undefined)
+
 // 검수실·설정 화면 위의 띠 글. 진행 중이면 null이다. 쓰기 버튼은 감추지 않고, 누르면 서버의 409를 오류 글로 보인다.
 export const statusNotice = ({ status, purgeAfter }: Pick<ProjectDetail, 'status' | 'purgeAfter'>, now: number) => {
   if (status === 'ARCHIVED') return '보관한 프로젝트예요. 읽기만 할 수 있어요'

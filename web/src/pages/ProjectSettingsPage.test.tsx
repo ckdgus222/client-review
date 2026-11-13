@@ -166,6 +166,9 @@ beforeEach(() => {
     .mockResolvedValue({ ...screens[1], hiddenAt: null })
 })
 
+// 프로젝트 지우기는 이름을 입력해야 눌린다(docs/archive.md 조각 7). 화면 작업의 잠금 검사에서 뺀다.
+const isNotDeleteButton = (button: HTMLButtonElement) => button.textContent !== '프로젝트 지우기'
+
 describe('ProjectSettingsPage 로그인과 조회', () => {
   it('로그인 확인을 한 번 요청하고 응답 전에는 확인 중 문단만 보여 준다', async () => {
     const pending = deferred<Me>()
@@ -564,7 +567,9 @@ describe('ProjectSettingsPage 프로젝트 사이 이동', () => {
     const input = screen.getByRole<HTMLInputElement>('textbox', { name: '화면 이름' })
     expect(input.value).toBe('')
     expect(input.disabled).toBe(false)
-    expect(screen.getAllByRole<HTMLButtonElement>('button').every((button) => !button.disabled)).toBe(true)
+    expect(
+      screen.getAllByRole<HTMLButtonElement>('button').filter(isNotDeleteButton).every((button) => !button.disabled),
+    ).toBe(true)
     fireEvent.change(input, { target: { value: 'B에서 쓰던 이름' } })
 
     await act(async () => {
@@ -577,7 +582,9 @@ describe('ProjectSettingsPage 프로젝트 사이 이동', () => {
     expect(input.value).toBe('B에서 쓰던 이름')
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByRole('link', { name: '다시 로그인하기' })).toBeNull()
-    expect(screen.getAllByRole<HTMLButtonElement>('button').every((button) => !button.disabled)).toBe(true)
+    expect(
+      screen.getAllByRole<HTMLButtonElement>('button').filter(isNotDeleteButton).every((button) => !button.disabled),
+    ).toBe(true)
   })
 })
 
@@ -1105,7 +1112,9 @@ describe('ProjectSettingsPage 작업 중 세션 종료', () => {
       expect(viewport.value).toBe('MOBILE')
       expect(input.disabled).toBe(false)
       expect(viewport.disabled).toBe(false)
-      expect(screen.getAllByRole<HTMLButtonElement>('button').every((button) => !button.disabled)).toBe(true)
+      expect(
+        screen.getAllByRole<HTMLButtonElement>('button').filter(isNotDeleteButton).every((button) => !button.disabled),
+      ).toBe(true)
       expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual(originalItems)
       expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${project.id}/settings`)
       expect(screen.queryByRole('heading', { name: '로그인' })).toBeNull()
