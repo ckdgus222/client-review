@@ -350,6 +350,7 @@ describe('참여자 API (e2e)', () => {
         type: 'MEMBER_REVOKED',
         createdAt: expect.any(String),
         actorName: developer.name,
+        mailFailedTo: [],
         issue: null,
         memberName: client.name,
         version: null,

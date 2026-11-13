@@ -413,6 +413,104 @@ describe('알림 우편함 (e2e)', () => {
     expect(await prisma.notificationDelivery.findFirstOrThrow()).toEqual(failed);
   });
 
+  it('활동 일지의 메일 실패 주소는 개발자에게만 보인다', async () => {
+    for (const email of ['sent@example.com', 'pending@example.com']) {
+      await prisma.user.create({
+        data: { email, name: email, memberships: { create: { projectId, role: 'CLIENT' } } },
+      });
+    }
+    await publish();
+    const event = await prisma.activityEvent.findFirstOrThrow({ where: { projectId, type: 'VERSION_PUBLISHED' } });
+    await prisma.notificationDelivery.update({
+      where: { eventId_toEmail: { eventId: event.id, toEmail: 'pending@example.com' } },
+      data: { nextAttemptAt: new Date('2099-01-01T00:00:00Z') },
+    });
+    send.mockImplementation(async (mail) => {
+      if (mail.to !== 'sent@example.com') throw new Error('발송 실패');
+      mails.push(mail);
+    });
+
+    for (let attempts = 1; attempts <= 5; attempts += 1) {
+      await prisma.$executeRaw`
+        UPDATE notification_deliveries
+        SET next_attempt_at = clock_timestamp() - interval '1 second'
+        WHERE event_id = ${event.id}::uuid AND to_email IN (${client.email}, ${approver.email})
+      `;
+      await worker.processDue();
+      const response = await request(server)
+        .get(`/api/projects/${projectId}/activity`)
+        .set('Cookie', developer.cookie)
+        .expect(200);
+      expect(response.body).toEqual([
+        {
+          id: event.id,
+          type: 'VERSION_PUBLISHED',
+          createdAt: event.createdAt.toISOString(),
+          actorName: 'developer',
+          version: { id: versionId, number: 0 },
+          memberName: null,
+          issue: null,
+          mailFailedTo: attempts === 5 ? [approver.email, client.email] : [],
+        },
+      ]);
+    }
+    expect(send).toHaveBeenCalledTimes(11);
+    expect(await deliveriesFor('VERSION_PUBLISHED')).toEqual([
+      expect.objectContaining({ toEmail: approver.email, status: 'FAILED', attempts: 5, sentAt: null }),
+      expect.objectContaining({ toEmail: client.email, status: 'FAILED', attempts: 5, sentAt: null }),
+      expect.objectContaining({ toEmail: 'pending@example.com', status: 'PENDING', attempts: 0, sentAt: null }),
+      expect.objectContaining({ toEmail: 'sent@example.com', status: 'SENT', attempts: 0, sentAt: expect.any(Date) }),
+    ]);
+
+    const issueId = await createIssue();
+    const issueEvent = await prisma.activityEvent.findFirstOrThrow({ where: { projectId, issueId } });
+    const developerResponse = await request(server)
+      .get(`/api/projects/${projectId}/activity`)
+      .set('Cookie', developer.cookie)
+      .expect(200);
+    expect(developerResponse.body).toEqual([
+      expect.objectContaining({ id: issueEvent.id, mailFailedTo: [] }),
+      expect.objectContaining({ id: event.id, mailFailedTo: [approver.email, client.email] }),
+    ]);
+    for (const member of [client, approver]) {
+      const response = await request(server)
+        .get(`/api/projects/${projectId}/activity`)
+        .set('Cookie', member.cookie)
+        .expect(200);
+      expect(response.body).toEqual(
+        developerResponse.body.map((item: Record<string, unknown>) => ({ ...item, mailFailedTo: [] })),
+      );
+    }
+
+    const outsider = await prisma.user.create({ data: { email: 'outsider@example.com', name: '비멤버' } });
+    const outsiderCookie = await login(outsider.id);
+    const notFound = { statusCode: 404, message: '없는 프로젝트예요', error: 'Not Found' };
+    await request(server)
+      .get(`/api/projects/${projectId}/activity`)
+      .set('Cookie', outsiderCookie)
+      .expect(404)
+      .expect(notFound);
+    await post(`/api/members/${client.memberId}/revoke`).expect(204);
+    await request(server)
+      .get(`/api/projects/${projectId}/activity`)
+      .set('Cookie', client.cookie)
+      .expect(404)
+      .expect(notFound);
+    const afterRevoke = await request(server)
+      .get(`/api/projects/${projectId}/activity`)
+      .set('Cookie', developer.cookie)
+      .expect(200);
+    expect(afterRevoke.body).toContainEqual(
+      expect.objectContaining({ id: event.id, mailFailedTo: [approver.email, client.email] }),
+    );
+    await prisma.projectMember.update({ where: { id: developer.memberId }, data: { revokedAt: new Date() } });
+    await request(server)
+      .get(`/api/projects/${projectId}/activity`)
+      .set('Cookie', developer.cookie)
+      .expect(404)
+      .expect(notFound);
+  });
+
   it('느린 발송기로 두 작업자가 동시에 보내도 메일은 한 통씩만 간다', async () => {
     await publish();
     const next = await post(`/api/projects/${projectId}/versions`).expect(201);
