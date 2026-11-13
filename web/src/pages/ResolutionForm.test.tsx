@@ -275,8 +275,8 @@ describe('ResolutionForm', () => {
 
   it.each([
     ['422', new ApiError(422), '입력한 내용을 확인해 주세요', 0],
-    ['403', new ApiError(403), '잠시 뒤 다시 시도해 주세요', 0],
-    ['404', new ApiError(404), '찾을 수 없어요. 화면을 새로 고쳐 주세요', 0],
+    ['403', new ApiError(403), '잠시 뒤 다시 시도해 주세요', 1],
+    ['404', new ApiError(404), '찾을 수 없어요. 화면을 새로 고쳐 주세요', 1],
     ['VERSION_CHANGED', new ApiError(409, 'VERSION_CHANGED'), '새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.', 1],
     ['VERSION_NOT_IN_REVIEW', new ApiError(409, 'VERSION_NOT_IN_REVIEW'), '승인된 버전이라 더 쓸 수 없어요.', 1],
     ['ISSUE_STATE_CHANGED', new ApiError(409, 'ISSUE_STATE_CHANGED'), staleMessage, 1],

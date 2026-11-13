@@ -90,8 +90,8 @@ const reasonActions = [
 ] as const
 const failures = [
   ['422', new ApiError(422), '입력한 내용을 확인해 주세요', 0],
-  ['403', new ApiError(403), '잠시 뒤 다시 시도해 주세요', 0],
-  ['404', new ApiError(404), '찾을 수 없어요. 화면을 새로 고쳐 주세요', 0],
+  ['403', new ApiError(403), '잠시 뒤 다시 시도해 주세요', 1],
+  ['404', new ApiError(404), '찾을 수 없어요. 화면을 새로 고쳐 주세요', 1],
   ['VERSION_CHANGED', new ApiError(409, 'VERSION_CHANGED'), '새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.', 1],
   ['VERSION_NOT_IN_REVIEW', new ApiError(409, 'VERSION_NOT_IN_REVIEW'), '승인된 버전이라 더 쓸 수 없어요.', 1],
   ['ISSUE_STATE_CHANGED', new ApiError(409, 'ISSUE_STATE_CHANGED'), staleMessage, 1],
@@ -450,6 +450,135 @@ describe('IssueReview', () => {
     },
   )
 
+  it.each([
+    ['재요청', 'READY_FOR_REVIEW', 'VERIFIED', '다시 열기', '다시 여는 사유'],
+    ['철회', 'OPEN', 'WITHDRAWN', '다시 열기', '다시 여는 사유'],
+    ['다시 열기', 'WITHDRAWN', 'OPEN', '철회', '철회 사유'],
+  ] as const)(
+    '%s 사유를 쓰다가 %s에서 %s로 바뀌어 다른 동작을 펴면 빈 칸에서 시작한다',
+    async (action, before, after, nextAction, label) => {
+      const { props, rerender } = renderReview({ issue: { ...issue, status: before } })
+      await click(action)
+      fillReason('앞 동작에만 쓸 사유')
+
+      rerender(<IssueReview {...props} issue={{ ...issue, status: after }} fetchCount={4} />)
+      expect(screen.queryByRole('textbox')).toBeNull()
+      await click(nextAction)
+
+      expect(screen.getByLabelText(label)).toBe(reasonInput())
+      expect(reasonInput().value).toBe('')
+      expectNoRequest()
+    },
+  )
+
+  it('철회 응답이 끊긴 뒤 철회 상태를 새로 받으면 다시 여는 사유는 비어 있다', async () => {
+    vi.mocked(withdrawIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const { props, rerender } = renderReview({ issue: { ...issue, status: 'OPEN', attempts: [] } })
+    await click('철회')
+    fillReason('더 이상 필요 없어요')
+    await click('철회하기')
+    expect(screen.getByRole('alert').textContent).toBe(unconfirmedMessage)
+    expect(props.onRefresh).toHaveBeenCalledTimes(1)
+
+    rerender(<IssueReview {...props} issue={{ ...props.issue, status: 'WITHDRAWN' }} fetchCount={4} />)
+    expect(screen.queryByRole('textbox')).toBeNull()
+    await click('다시 열기')
+    expect(reasonInput().value).toBe('')
+    fillReason('다시 필요해졌어요')
+    await click('다시 열기')
+
+    expect(withdrawIssue).toHaveBeenCalledExactlyOnceWith(issue.id, { versionId, reason: '더 이상 필요 없어요' })
+    expect(reopenIssue).toHaveBeenCalledExactlyOnceWith(issue.id, {
+      versionId,
+      reason: '다시 필요해졌어요',
+      attemptId: undefined,
+    })
+  })
+
+  it.each([
+    ['재요청', 'READY_FOR_REVIEW', '재요청 보내기', false],
+    ['철회', 'READY_FOR_REVIEW', '철회하기', false],
+    ['철회', 'OPEN', '철회하기', true],
+  ] as const)(
+    '%s 사유를 쓰는 %s에 새 고쳤어요가 오면 칸이 닫히고 같은 동작을 다시 펴면 사유가 남는다(보내기=%s, 첫 줄=%s)',
+    async (action, status, submit, firstAttempt) => {
+      const currentIssue: Issue = { ...issue, status, attempts: firstAttempt ? [] : issue.attempts }
+      const { props, rerender } = renderReview({ issue: currentIssue })
+      await click(action)
+      fillReason('쓰던 사유')
+      const refreshed: Issue = {
+        ...currentIssue,
+        status: 'READY_FOR_REVIEW',
+        attempts: [...currentIssue.attempts, { ...latestAttempt, id: 'attempt-new' }],
+      }
+
+      rerender(<IssueReview {...props} issue={refreshed} fetchCount={4} />)
+
+      expect(screen.queryByRole('textbox')).toBeNull()
+      expect(screen.getAllByRole('button').map((item) => item.textContent)).toEqual(['재요청', '철회', '확인 완료'])
+      expectNoRequest()
+      await click(action)
+      expect(reasonInput().value).toBe('쓰던 사유')
+      await click(submit)
+      if (action === '철회') {
+        expect(withdrawIssue).toHaveBeenCalledExactlyOnceWith(issue.id, { versionId, reason: '쓰던 사유' })
+        expect(reopenIssue).not.toHaveBeenCalled()
+        return
+      }
+      expect(reopenIssue).toHaveBeenCalledExactlyOnceWith(issue.id, {
+        versionId,
+        reason: '쓰던 사유',
+        attemptId: 'attempt-new',
+      })
+      expect(withdrawIssue).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(reasonActions)(
+    '가장 최근 줄의 id가 같으면 새로 받은 이력에서도 $name 사유 칸이 그대로 남는다',
+    async (action) => {
+      const { props, rerender } = renderReview({ issue: { ...issue, status: action.status } })
+      await click(action.name)
+      fillReason('쓰던 사유')
+
+      rerender(
+        <IssueReview
+          {...props}
+          issue={{ ...props.issue, attempts: props.issue.attempts.map((attempt) => ({ ...attempt })) }}
+          fetchCount={4}
+        />,
+      )
+
+      expect(screen.getByLabelText(action.label)).toBe(reasonInput())
+      expect(reasonInput().value).toBe('쓰던 사유')
+      expectNoRequest()
+    },
+  )
+
+  it('새 버전 게시로 상태만 바뀌고 마지막 줄이 같으면 철회 사유 칸은 닫히지 않는다', async () => {
+    const { props, rerender } = renderReview()
+    await click('철회')
+    fillReason('쓰던 철회 사유')
+
+    rerender(
+      <IssueReview
+        {...props}
+        issue={{ ...issue, status: 'IN_PROGRESS', attempts: issue.attempts.map((attempt) => ({ ...attempt })) }}
+        versionId={latestVersionId}
+        fetchCount={4}
+      />,
+    )
+
+    expect(screen.getByLabelText('철회 사유')).toBe(reasonInput())
+    expect(reasonInput().value).toBe('쓰던 철회 사유')
+    expectNoRequest()
+    await click('철회하기')
+    expect(withdrawIssue).toHaveBeenCalledExactlyOnceWith(issue.id, {
+      versionId: latestVersionId,
+      reason: '쓰던 철회 사유',
+    })
+  })
+
   it('재요청의 ATTEMPT_CHANGED 뒤 새로 받은 마지막 줄을 보고 다시 보낸다', async () => {
     vi.mocked(reopenIssue).mockRejectedValueOnce(new ApiError(409, 'ATTEMPT_CHANGED'))
     const { props, rerender } = renderReview()
@@ -463,6 +592,10 @@ describe('IssueReview', () => {
         fetchCount={4}
       />,
     )
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.getAllByRole('button').map((item) => item.textContent)).toEqual(['재요청', '철회', '확인 완료'])
+    expect(reopenIssue).toHaveBeenCalledTimes(1)
+    await click('재요청')
     expect(reasonInput().value).toBe('쓰던 사유')
     await click('재요청 보내기')
     expect(reopenIssue).toHaveBeenLastCalledWith(issue.id, { versionId, reason: '쓰던 사유', attemptId: 'attempt-new' })

@@ -57,6 +57,13 @@ const Compare = ({ id }: { id: string }) => {
     }
   }, [id, isValidId, reloads])
 
+  const reload = () => setReloads((count) => count + 1)
+  // 서버가 돌려준 바뀐 쪽지를 화면에 쓴다. 그보다 먼저 시작한 불러오기는 바뀌기 전 내용이라, 다시 불러와서 그 응답을 버린다.
+  const applyChange = (changed: Issue) => {
+    setIssue(changed)
+    reload()
+  }
+
   if (user === null) return <Navigate to="/login" replace />
   // 확인 중 오류여도 로그인 화면으로 보내지 않는다. 서버가 잠깐 멈춘 것일 수 있다.
   if (user === undefined) return <p>{meError ?? '확인하는 중이에요.'}</p>
@@ -109,8 +116,8 @@ const Compare = ({ id }: { id: string }) => {
         canWrite
         reviewOnly
         fetchCount={fetchCount}
-        onChanged={setIssue}
-        onRefresh={() => setReloads((count) => count + 1)}
+        onChanged={applyChange}
+        onRefresh={reload}
         onGoLatest={doNothing}
         versionChangedNotice={
           <>

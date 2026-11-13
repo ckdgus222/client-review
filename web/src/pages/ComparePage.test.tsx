@@ -326,15 +326,19 @@ describe('ComparePage 확인하기', () => {
     fireEvent.click(screen.getByRole('button', { name: '확인 완료' }))
     expect(verifyIssue).toHaveBeenCalledTimes(1)
 
+    vi.mocked(getIssue).mockResolvedValueOnce({ ...issue, status: 'VERIFIED' })
     await act(async () => pending.resolve({ ...issue, status: 'VERIFIED' }))
     expect(screen.getByText('확인 완료').getAttribute('data-status')).toBe('VERIFIED')
     expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
     expect(screen.queryByRole('button', { name: '재요청' })).toBeNull()
-    expect(getIssue).toHaveBeenCalledTimes(1)
+    expect(getIssue).toHaveBeenCalledTimes(2)
   })
 
   it('재요청은 사유와 가장 최근 줄의 버전·id를 보내고 응답의 접수 상태를 보인다', async () => {
     vi.mocked(reopenIssue).mockResolvedValueOnce({ ...issue, status: 'OPEN' })
+    vi.mocked(getIssue)
+      .mockResolvedValueOnce(issue)
+      .mockResolvedValueOnce({ ...issue, status: 'OPEN' })
     renderCompare()
     fireEvent.click(await screen.findByRole('button', { name: '재요청' }))
     fireEvent.change(screen.getByRole('textbox', { name: '재요청 사유' }), { target: { value: '  아직 겹쳐요  ' } })
@@ -347,7 +351,7 @@ describe('ComparePage 확인하기', () => {
     expect((await screen.findByText('접수')).getAttribute('data-status')).toBe('OPEN')
     expect(screen.queryByRole('region', { name: '확인하기' })).toBeNull()
     expect(screen.queryByRole('textbox')).toBeNull()
-    expect(getIssue).toHaveBeenCalledTimes(1)
+    expect(getIssue).toHaveBeenCalledTimes(2)
   })
 
   it('사유 없이 재요청할 수 없고 취소하면 요청하지 않는다', async () => {
@@ -421,6 +425,70 @@ describe.each([
 })
 
 describe('ComparePage 새로 불러오기와 이동', () => {
+  it('확인 완료 응답보다 먼저 시작한 불러오기의 늦은 응답이 와도 확인 완료가 유지된다', async () => {
+    const staleLoad = deferred<Issue>()
+    const verification = deferred<Issue>()
+    const freshLoad = deferred<Issue>()
+    const verified: Issue = {
+      ...issue,
+      status: 'VERIFIED',
+      attempts: [
+        olderAttempt,
+        { ...latestAttempt, result: 'VERIFIED', reviewedByName: user.name, reviewedAt: '2026-11-13T01:00:00Z' },
+      ],
+    }
+    vi.mocked(getIssue)
+      .mockResolvedValueOnce(issue)
+      .mockReturnValueOnce(staleLoad.promise)
+      .mockReturnValueOnce(freshLoad.promise)
+    vi.mocked(verifyIssue)
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockReturnValueOnce(verification.promise)
+    renderCompare()
+
+    fireEvent.click(await screen.findByRole('button', { name: '확인 완료' }))
+    await screen.findByText(unconfirmedMessage)
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    fireEvent.click(screen.getByRole('button', { name: '확인 완료' }))
+    expect(verifyIssue).toHaveBeenCalledTimes(2)
+    await act(async () => verification.resolve(verified))
+
+    // 성공 뒤의 새 조회도 대기시켜, 화면이 쓰기 응답을 바로 쓰는지 확인한다.
+    expect(screen.getByText('확인 완료').getAttribute('data-status')).toBe('VERIFIED')
+    expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
+    expect(getIssue).toHaveBeenCalledTimes(3)
+    await act(async () => staleLoad.resolve(issue))
+
+    expect(screen.getByText('확인 완료').getAttribute('data-status')).toBe('VERIFIED')
+    expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '재요청' })).toBeNull()
+    await act(async () => freshLoad.resolve(verified))
+    expect(screen.getByText('확인 완료').getAttribute('data-status')).toBe('VERIFIED')
+    expect(vi.mocked(getIssue).mock.calls).toEqual([[issue.id], [issue.id], [issue.id]])
+  })
+
+  it('403이면 쪽지를 다시 불러오고 새로 받은 canReview가 거짓이면 버튼이 사라지며 안내는 남는다', async () => {
+    const refreshed = deferred<Issue>()
+    vi.mocked(verifyIssue).mockRejectedValueOnce(new ApiError(403))
+    vi.mocked(getIssue).mockResolvedValueOnce(issue).mockReturnValueOnce(refreshed.promise)
+    renderCompare()
+    fireEvent.click(await screen.findByRole('button', { name: '확인 완료' }))
+
+    expect((await screen.findByRole('alert')).textContent).toBe('잠시 뒤 다시 시도해 주세요')
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    await act(async () => refreshed.resolve({ ...issue, canReview: false }))
+
+    expect(screen.getByText('확인 요청').getAttribute('data-status')).toBe('READY_FOR_REVIEW')
+    expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '재요청' })).toBeNull()
+    expect(screen.getByRole('alert').textContent).toBe('잠시 뒤 다시 시도해 주세요')
+    expect(verifyIssue).toHaveBeenCalledExactlyOnceWith(issue.id, {
+      versionId: latestAttempt.versionId,
+      attemptId: latestAttempt.id,
+    })
+    expect(vi.mocked(getIssue).mock.calls).toEqual([[issue.id], [issue.id]])
+  })
+
   it.each([
     ['연결 실패', new TypeError('Failed to fetch')],
     ['서버 오류', new ApiError(500)],
@@ -466,10 +534,14 @@ describe('ComparePage 새로 불러오기와 이동', () => {
     vi.mocked(getIssue)
       .mockResolvedValueOnce(issue)
       .mockResolvedValueOnce({ ...issue, attempts: [...issue.attempts, newerAttempt] })
+      .mockResolvedValueOnce({ ...issue, status: 'OPEN', attempts: [...issue.attempts, newerAttempt] })
     renderCompare()
     await screen.findByRole('button', { name: '재요청' })
     sendReview('재요청')
     expect(await screen.findByText(newerAttempt.summary, { exact: false })).toBeDefined()
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(reopenIssue).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: '재요청' }))
     expect((screen.getByRole('textbox', { name: '재요청 사유' }) as HTMLTextAreaElement).value).toBe(
       '아직 버튼이 겹쳐요',
     )

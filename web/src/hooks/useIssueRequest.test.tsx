@@ -104,8 +104,8 @@ describe('useIssueRequest', () => {
     ],
     ['코드 없는 409', new ApiError(409), { kind: 'conflict', code: undefined }, false, false, 1],
     ['401', new ApiError(401), { kind: 'session' }, false, false, 0],
-    ['403', new ApiError(403), { kind: 'rejected', status: 403 }, false, false, 0],
-    ['404', new ApiError(404), { kind: 'rejected', status: 404 }, false, false, 0],
+    ['403', new ApiError(403), { kind: 'rejected', status: 403 }, false, false, 1],
+    ['404', new ApiError(404), { kind: 'rejected', status: 404 }, false, false, 1],
     ['422', new ApiError(422), { kind: 'rejected', status: 422 }, false, false, 0],
     [
       '409가 아닌 상태 변경 코드',
@@ -224,6 +224,8 @@ describe('useIssueRequest', () => {
     ['ISSUE_STATE_CHANGED', new ApiError(409, 'ISSUE_STATE_CHANGED'), undefined, true],
     ['ATTEMPT_CHANGED', new ApiError(409, 'ATTEMPT_CHANGED'), undefined, true],
     ['VERSION_CHANGED', new ApiError(409, 'VERSION_CHANGED'), { kind: 'conflict', code: 'VERSION_CHANGED' }, false],
+    ['403', new ApiError(403), { kind: 'rejected', status: 403 }, false],
+    ['404', new ApiError(404), { kind: 'rejected', status: 404 }, false],
     ['422', new ApiError(422), { kind: 'rejected', status: 422 }, false],
   ] satisfies [string, Error, SubmitError | undefined, boolean][])(
     'fetchCount가 올라도 %s 안내는 그대로 남는다',

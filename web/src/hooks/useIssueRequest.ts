@@ -15,6 +15,14 @@ type IssueRequestOptions = {
 const isStale = (error: SubmitError) =>
   error.kind === 'conflict' && (error.code === 'ISSUE_STATE_CHANGED' || error.code === 'ATTEMPT_CHANGED')
 
+// 실패한 뒤 쪽지를 새로 불러와야 하는가. 저장됐는지 모르거나(unknown), 화면이 아는 것과 서버가 다른 경우다:
+// 상태가 달라졌거나(409) 내 권한이 바뀌었거나(403) 쪽지가 없어졌다(404).
+// 로그인이 끝난 것(401)과 틀린 입력(422)은 새로 불러와도 달라지지 않는다.
+const needsRefresh = (error: SubmitError) => {
+  if (error.kind === 'unknown' || error.kind === 'conflict') return true
+  return error.kind === 'rejected' && error.status !== 422
+}
+
 // 고쳤어요·확인 완료·재요청·철회·다시 열기가 함께 쓰는 보내기 규칙이다(기획 정할 것 7).
 // 이 요청들은 요청 번호가 없다. 서버가 쪽지의 지금 상태로 막아서, 이미 저장된 요청이 다시 가도 두 번 적용되지 않는다.
 // 그래서 실패해도 입력을 잠그지 않고, 쪽지를 새로 불러와서 다시 보낼지를 사람이 지금 상태를 보고 정하게 한다.
@@ -46,8 +54,7 @@ export const useIssueRequest = ({ fetchCount, onChanged, onRefresh }: IssueReque
       return true
     } catch (caught) {
       const submitError = toSubmitError(caught)
-      // 저장됐는지 모르거나(unknown) 화면이 아는 것과 서버가 달라졌으면(409) 쪽지를 새로 불러온다.
-      if (submitError.kind === 'unknown' || submitError.kind === 'conflict') onRefresh()
+      if (needsRefresh(submitError)) onRefresh()
       if (submitError.kind === 'unknown') {
         setUnconfirmed(true)
         return false

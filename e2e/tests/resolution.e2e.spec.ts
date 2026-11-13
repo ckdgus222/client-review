@@ -876,3 +876,125 @@ test('비교 화면을 연 뒤 새 버전이 게시되면 확인 완료가 거�
   await expect(statusFor(page)).toHaveText('수정 중')
   await expect(historyFor(page).getByRole('listitem')).toContainText('결과: 결과 없음')
 })
+
+test('다른 동작의 사유 칸을 펴면 앞 동작에 쓰던 사유가 딸려 오지 않는다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  await loginAs(room.client.id)
+  await openIssue(page, room, issue)
+  await reviewFor(page).getByRole('button', { name: '철회', exact: true }).click()
+  await reviewFor(page).getByLabel('철회 사유', { exact: true }).fill('이 화면은 쓰지 않아요')
+  await page.route(`**/api/issues/${issue.id}/withdraw`, async (route) => {
+    expect((await route.fetch()).status()).toBe(200)
+    await route.abort('failed')
+  }, { times: 1 })
+  const refresh = await holdDetailRefresh(page, issue.id)
+  try {
+    await reviewFor(page).getByRole('button', { name: '철회하기', exact: true }).click()
+    await expect(detailFor(page).getByText(UNCONFIRMED, { exact: true })).toBeVisible()
+    expect((await db.issue.findUniqueOrThrow({ where: { id: issue.id } })).status).toBe('WITHDRAWN')
+    refresh.release()
+    await expect(statusFor(page)).toHaveText('철회')
+    await expect(reviewFor(page).getByLabel('철회 사유', { exact: true })).toHaveCount(0)
+    await reviewFor(page).getByRole('button', { name: '다시 열기', exact: true }).click()
+    await expect(reviewFor(page).getByLabel('다시 여는 사유', { exact: true })).toHaveValue('')
+    await reviewFor(page).getByLabel('다시 여는 사유', { exact: true }).fill('다시 쓰기로 했어요')
+    await clickAction(page, issue.id, 'reopen', reviewFor(page).getByRole('button', { name: '다시 열기', exact: true }))
+    await expect(statusFor(page)).toHaveText('접수')
+    const comments = detailFor(page).getByRole('region', { name: '댓글', exact: true }).getByRole('listitem')
+    await expect(comments).toHaveCount(2)
+    await expect(comments.nth(0)).toContainText('철회 사유: 이 화면은 쓰지 않아요')
+    await expect(comments.nth(1)).toContainText('다시 연 사유: 다시 쓰기로 했어요')
+    expect(await db.comment.findMany({ where: { issueId: issue.id }, orderBy: { createdAt: 'asc' } })).toMatchObject([
+      { body: '철회 사유: 이 화면은 쓰지 않아요', authorId: room.client.id },
+      { body: '다시 연 사유: 다시 쓰기로 했어요', authorId: room.client.id },
+    ])
+  } finally {
+    refresh.release()
+  }
+})
+
+test('재요청 사유를 쓰는 사이 새 고쳤어요가 오면 사유 칸이 닫히고 다시 펴야 새 고쳤어요를 돌려보낸다', async ({ page, browser, baseURL, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  const first = await seedAttempt(room, issue.id)
+  await loginAs(room.client.id)
+  await openIssue(page, room, issue)
+  await reviewFor(page).getByRole('button', { name: '재요청', exact: true }).click()
+  await reviewFor(page).getByLabel('재요청 사유', { exact: true }).fill('아직 글씨가 작아요')
+  const developerContext = await browser.newContext({ baseURL })
+  try {
+    await loginContext(developerContext, baseURL!, room.developer.id)
+    const rejected = await page.request.post(`/api/issues/${issue.id}/reopen`, {
+      headers: { Origin: baseURL! },
+      data: { versionId: room.version.id, attemptId: first.id, reason: '다른 창에서 먼저 재요청했어요' },
+    })
+    expect(rejected.status()).toBe(200)
+    const reviewedFirst = await db.resolutionAttempt.findUniqueOrThrow({ where: { id: first.id } })
+    expect(reviewedFirst.result).toBe('REOPENED')
+    const submitted = await developerContext.request.post(`/api/issues/${issue.id}/submit-resolution`, {
+      headers: { Origin: baseURL! },
+      data: { versionId: room.version.id, screenId: room.product.id, summary: '새로 고친 상품 화면' },
+    })
+    expect(submitted.status()).toBe(200)
+    const newest = await db.resolutionAttempt.findFirstOrThrow({ where: { issueId: issue.id }, orderBy: { createdAt: 'desc' } })
+    expect(newest.id).not.toBe(first.id)
+    expect(newest.result).toBeNull()
+
+    await refreshIssue(page, issue.id)
+
+    await expect(reviewFor(page).getByLabel('재요청 사유', { exact: true })).toHaveCount(0)
+    await expect(reviewFor(page).getByRole('button')).toHaveText(['재요청', '철회', '확인 완료'])
+    const history = historyFor(page).getByRole('listitem')
+    await expect(history).toHaveCount(2)
+    await expect(history.nth(0)).toContainText('결과: 재요청')
+    await expect(history.nth(1)).toContainText('새로 고친 상품 화면')
+    await expect(history.nth(1)).toContainText('결과: 결과 없음')
+    expect(await db.resolutionAttempt.findUniqueOrThrow({ where: { id: newest.id } })).toEqual(newest)
+    await reviewFor(page).getByRole('button', { name: '재요청', exact: true }).click()
+    await expect(reviewFor(page).getByLabel('재요청 사유', { exact: true })).toHaveValue('아직 글씨가 작아요')
+    const response = await clickAction(page, issue.id, 'reopen', reviewFor(page).getByRole('button', { name: '재요청 보내기', exact: true }))
+    expect(response.request().postDataJSON()).toEqual({
+      versionId: room.version.id, attemptId: newest.id, reason: '아직 글씨가 작아요',
+    })
+    await expect(statusFor(page)).toHaveText('접수')
+    await expect(history.nth(1)).toContainText('결과: 재요청')
+    await expect(detailFor(page).getByText('재요청 사유: 아직 글씨가 작아요', { exact: true })).toBeVisible()
+    expect(await db.resolutionAttempt.findUniqueOrThrow({ where: { id: first.id } })).toEqual(reviewedFirst)
+    expect(await db.resolutionAttempt.findUniqueOrThrow({ where: { id: newest.id } })).toMatchObject({
+      result: 'REOPENED', reviewedById: room.client.id,
+    })
+    expect(await db.resolutionAttempt.count({ where: { issueId: issue.id } })).toBe(2)
+  } finally {
+    await developerContext.close()
+  }
+})
+
+test('비교 화면을 연 뒤 승인자가 바뀌면 확인 완료가 거절되고 버튼이 사라진다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  const attempt = await seedAttempt(room, issue.id)
+  await loginAs(room.approver.id)
+  await page.goto(`/app/issues/${issue.id}/compare`)
+  await expect(reviewFor(page).getByRole('button', { name: '확인 완료', exact: true })).toBeVisible()
+  const nextApprover = await db.projectMember.findFirstOrThrow({
+    where: { projectId: room.project.id, userId: room.client.id },
+  })
+  await db.project.update({ where: { id: room.project.id }, data: { approverMemberId: nextApprover.id } })
+  const refresh = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === `/api/issues/${issue.id}` && response.request().method() === 'GET',
+  )
+
+  await clickAction(page, issue.id, 'verify', reviewFor(page).getByRole('button', { name: '확인 완료', exact: true }), 403)
+
+  const refreshed = await refresh
+  expect(refreshed.status()).toBe(200)
+  expect(await refreshed.json()).toMatchObject({ canReview: false, status: 'READY_FOR_REVIEW' })
+  await expect(page.getByRole('button', { name: '확인 완료', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '재요청', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('alert')).toHaveText('잠시 뒤 다시 시도해 주세요')
+  await expect(page.locator('[data-status]')).toHaveText('확인 요청')
+  expect((await db.issue.findUniqueOrThrow({ where: { id: issue.id } })).status).toBe('READY_FOR_REVIEW')
+  expect(await db.resolutionAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).toEqual(attempt)
+  expect(await db.activityEvent.count({ where: { projectId: room.project.id, type: 'ISSUE_VERIFIED' } })).toBe(0)
+})

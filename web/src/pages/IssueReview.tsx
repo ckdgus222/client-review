@@ -60,8 +60,8 @@ export const IssueReview = ({
   versionChangedNotice,
 }: IssueReviewProps) => {
   const reasonFieldId = useId()
-  // 사유 칸을 펴 둔 동작. 그 동작을 할 수 없는 상태가 되면 칸을 그리지 않는다.
-  const [opened, setOpened] = useState<ReasonAction>()
+  // 펴 둔 사유 칸: 어떤 동작인지와, 펼 때 보고 있던 가장 최근 고쳤어요 줄(없으면 undefined).
+  const [opened, setOpened] = useState<{ action: ReasonAction; attemptId?: string }>()
   const [reason, setReason] = useState('')
   const [reasonError, setReasonError] = useState<string>()
   const { sending, error, unconfirmed, stale, send } = useIssueRequest({ fetchCount, onChanged, onRefresh })
@@ -81,7 +81,17 @@ export const IssueReview = ({
 
   // 확인 완료와 재요청이 답하는 줄. 보고 있던 줄의 id를 보내서, 그사이 새 고쳤어요가 왔으면 서버가 멈춘다.
   const latestAttemptId = issue.attempts[issue.attempts.length - 1]?.id
-  const shownForm = opened && reasonActions.includes(opened) ? opened : undefined
+  // 사유 칸은 펼 때 본 상태에 묶인다. 그 동작을 지금도 할 수 있고, 그때 본 고쳤어요 줄이 지금도 가장 최근 줄일 때만 보여 준다.
+  // 사유를 쓰는 사이 새 고쳤어요가 오면 칸이 닫혀서, 읽지 않은 고쳤어요를 돌려보내지 않는다(쓰던 사유는 남는다).
+  const isStillValid =
+    opened !== undefined && reasonActions.includes(opened.action) && opened.attemptId === latestAttemptId
+  const shownForm = isStillValid ? opened.action : undefined
+
+  const openForm = (action: ReasonAction) => {
+    // 다른 동작에 쓰던 사유가 이 칸에 딸려 오지 않게 비운다. 닫혔던 같은 동작을 다시 펴면 쓰던 사유가 남아 있다.
+    if (opened?.action !== action) setReason('')
+    setOpened({ action, attemptId: latestAttemptId })
+  }
 
   const closeForm = () => {
     setOpened(undefined)
@@ -118,7 +128,7 @@ export const IssueReview = ({
       <section className={styles.review} aria-label="확인하기">
         <div className={styles.actions}>
           {reasonActions.map((action) => (
-            <Button key={action} variant="secondary" disabled={sending} onClick={() => setOpened(action)}>
+            <Button key={action} variant="secondary" disabled={sending} onClick={() => openForm(action)}>
               {REASON_FORMS[action].open}
             </Button>
           ))}
