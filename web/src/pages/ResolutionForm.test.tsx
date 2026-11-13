@@ -180,6 +180,30 @@ describe('ResolutionForm', () => {
     expect(summaryInput().value).toBe(summary)
   })
 
+  it('빈 설명을 고쳐 보낸 요청이 실패하면 지난 내용 오류는 지우고 설명과 화면 선택은 남긴다', async () => {
+    vi.mocked(submitResolution).mockRejectedValueOnce(new ApiError(422))
+    const { props } = renderForm()
+    selectScreen()
+    await submit()
+
+    expect(screen.getByRole('alert').textContent).toBe('고친 내용은 1~2,000자로 써 주세요')
+    expect(submitResolution).not.toHaveBeenCalled()
+
+    fillSummary('버튼을 오른쪽으로 옮겼어요')
+    await submit()
+
+    expect(submitResolution).toHaveBeenCalledExactlyOnceWith(issue.id, {
+      versionId,
+      summary: '버튼을 오른쪽으로 옮겼어요',
+      screenId: 'screen-mobile',
+    })
+    expect(screen.queryByText('고친 내용은 1~2,000자로 써 주세요')).toBeNull()
+    expect(screen.getByRole('alert').textContent).toBe('입력한 내용을 확인해 주세요')
+    expect(summaryInput().value).toBe('버튼을 오른쪽으로 옮겼어요')
+    expect(screenInput().value).toBe('screen-mobile')
+    expect(props.onChanged).not.toHaveBeenCalled()
+  })
+
   it.each([1, 2000])('앞뒤 공백을 뺀 설명 %i자를 정확한 화면·버전과 한 번 보낸다', async (length) => {
     const { props } = renderForm()
     const summary = '가'.repeat(length)

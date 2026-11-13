@@ -1,0 +1,48 @@
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+}
+
+.review :where(p) {
+  margin: 0;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.form label {
+  font-weight: 600;
+}
+
+/* 값은 TextField.module.css의 입력칸과 같다. 그쪽을 바꾸면 함께 바꾼다. */
+.form textarea {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  resize: vertical;
+}
+
+.form textarea[aria-invalid='true'] {
+  border-color: var(--color-danger);
+}
+
+/* 보내는 동안에는 바꿀 수 없다는 것이 보이게 바탕을 회색으로 바꾼다. */
+.form textarea:read-only {
+  background: var(--color-disabled-bg);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
