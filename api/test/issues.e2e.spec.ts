@@ -178,6 +178,7 @@ describe('쪽지 API (e2e)', () => {
         comments: [],
         attempts: [],
         canReview: role !== '개발자',
+        currentVersion: { id: versionId, status: 'IN_REVIEW' },
         projectId,
       });
       expect(new Date(created.body.createdAt).toISOString()).toBe(created.body.createdAt);
@@ -230,6 +231,7 @@ describe('쪽지 API (e2e)', () => {
       comments: [],
       attempts: [],
       canReview: false,
+      currentVersion: { id: versionId, status: 'IN_REVIEW' },
       projectId,
     });
     await get(`/api/projects/${projectId}/issues`).expect(200).expect([summary]);
@@ -325,7 +327,12 @@ describe('쪽지 API (e2e)', () => {
     const draft = await createDraft();
     await publish(draft.body.id);
     const before = await readIssueState();
-    await createIssue(input).expect(201).expect(first.body);
+    await createIssue(input)
+      .expect(201)
+      .expect({
+        ...first.body,
+        currentVersion: { id: draft.body.id, status: 'IN_REVIEW' },
+      });
     expect(await readIssueState()).toEqual(before);
     expect(before.issues).toHaveLength(1);
     expect(before.events.filter((event) => event.type === 'ISSUE_CREATED')).toHaveLength(1);
@@ -397,7 +404,12 @@ describe('쪽지 API (e2e)', () => {
     expect(await prisma.activityEvent.findMany({ where: { type: 'ISSUE_CREATED' } })).toEqual([
       expect.objectContaining({ issueId: issue.body.id }),
     ]);
-    await get(`/api/issues/${issue.body.id}`).expect(200).expect(issue.body);
+    await get(`/api/issues/${issue.body.id}`)
+      .expect(200)
+      .expect({
+        ...issue.body,
+        currentVersion: { id: draft.body.id, status: 'IN_REVIEW' },
+      });
   });
 
   it.each(['게시 전 버전', '지난 버전', '남의 프로젝트 버전', '없는 id', '게시한 버전이 없는 프로젝트'] as const)(
@@ -583,8 +595,18 @@ describe('쪽지 API (e2e)', () => {
     await post(`/api/screens/${screenId}/hide`).expect(200);
     expect((await prisma.screen.findUniqueOrThrow({ where: { id: screenId } })).hiddenAt).not.toBeNull();
     await get(`/api/projects/${projectId}/issues`, clientCookie).expect(200).expect(originalList.body);
-    await get(`/api/issues/${pinned.body.id}`, clientCookie).expect(200).expect(pinned.body);
-    await get(`/api/issues/${unpinned.body.id}`, clientCookie).expect(200).expect(unpinned.body);
+    await get(`/api/issues/${pinned.body.id}`, clientCookie)
+      .expect(200)
+      .expect({
+        ...pinned.body,
+        currentVersion: { id: draft.body.id, status: 'IN_REVIEW' },
+      });
+    await get(`/api/issues/${unpinned.body.id}`, clientCookie)
+      .expect(200)
+      .expect({
+        ...unpinned.body,
+        currentVersion: { id: draft.body.id, status: 'IN_REVIEW' },
+      });
     expect(pinned.body.origin).toEqual({
       screenId,
       screenName: '첫 화면',
@@ -647,14 +669,25 @@ describe('쪽지 API (e2e)', () => {
     const before = await readIssueState();
     await post(`/api/issues/${created.body.id}/start`).send({ versionId }).expect(409).expect(versionChangedBody);
     expect(await readIssueState()).toEqual(before);
-    await get(`/api/issues/${created.body.id}`, clientCookie).expect(200).expect(created.body);
+    await get(`/api/issues/${created.body.id}`, clientCookie)
+      .expect(200)
+      .expect({
+        ...created.body,
+        currentVersion: { id: draft.body.id, status: 'IN_REVIEW' },
+      });
   });
 
   it('지난 버전에서 시작한 쪽지도 현재 버전 id로 수정 시작하고 처음 위치는 그대로다', async () => {
     const created = await createIssue(issueInput({ screenId, xRatio: 0.2, yRatio: 0.8 }), clientCookie).expect(201);
     const draft = await createDraft();
     await publish(draft.body.id);
-    const expected = { ...created.body, status: 'IN_PROGRESS', isMine: false, canReview: false };
+    const expected = {
+      ...created.body,
+      currentVersion: { id: draft.body.id, status: 'IN_REVIEW' },
+      status: 'IN_PROGRESS',
+      isMine: false,
+      canReview: false,
+    };
     await post(`/api/issues/${created.body.id}/start`).send({ versionId: draft.body.id }).expect(200).expect(expected);
     await get(`/api/issues/${created.body.id}`).expect(200).expect(expected);
     expect(await prisma.activityEvent.count({ where: { issueId: created.body.id, type: 'ISSUE_STARTED' } })).toBe(1);

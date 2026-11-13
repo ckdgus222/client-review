@@ -5,6 +5,7 @@ import { useIssueRequest } from './useIssueRequest.ts'
 import type { SubmitError } from './useLockedSubmit.ts'
 
 const saved: IssueDetail = {
+  currentVersion: { id: 'version-1', status: 'IN_REVIEW' },
   id: 'issue-1',
   projectId: 'project-1',
   number: 1,

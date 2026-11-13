@@ -54,6 +54,7 @@ const project: ProjectDetail = {
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
   currentVersion: { id: 'd565474f-17a5-4a8e-9b61-bde406fefdf3', number: 0 },
+  isApprover: false,
   approver: null,
 }
 const screens: Screen[] = [
@@ -68,6 +69,7 @@ const screens: Screen[] = [
   },
 ]
 const draft: VersionDetail = {
+  approval: null,
   id: '24f86b45-afd2-4c27-a774-90586f6e8473',
   projectId: project.id,
   number: null,

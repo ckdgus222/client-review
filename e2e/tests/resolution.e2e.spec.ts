@@ -202,7 +202,7 @@ test('개발자가 고쳤어요를 보내면 클라이언트에게 확인 요청
     await expect(historyFor(page).getByRole('listitem')).toContainText('버튼 색을 파란색으로 고쳤어요')
     await refreshIssue(clientPage, issue.id)
     await expect(statusFor(clientPage)).toHaveText('확인 요청')
-    await expect(historyFor(clientPage).getByRole('listitem')).toContainText('결과: 결과 없음')
+    await expect(historyFor(clientPage).getByRole('listitem')).toContainText('결과: 확인 대기 중')
     await clickAction(clientPage, issue.id, 'verify', reviewFor(clientPage).getByRole('button', { name: '확인 완료', exact: true }))
     await expect(statusFor(clientPage)).toHaveText('확인 완료')
     await expect(reviewFor(clientPage).getByRole('button')).toHaveText(['다시 열기'])
@@ -372,7 +372,7 @@ test('재요청 뒤 다시 보낸 고쳤어요와 새 버전 게시로 결과 �
   await expect(rows.nth(2)).toContainText('3차')
   await expect(rows.nth(2)).toContainText('화면: 메인 · PC')
   await expect(rows.nth(2)).toContainText('개발자')
-  await expect(rows.nth(2)).toContainText('결과: 결과 없음')
+  await expect(rows.nth(2)).toContainText('결과: 확인 대기 중')
   await expect(rows.nth(0).getByRole('link')).toHaveCount(0)
   await expect(rows.nth(1).getByRole('link')).toHaveCount(0)
   await expect(rows.nth(2).getByRole('link', { name: '비교해서 보기', exact: true })).toHaveAttribute('href', `/app/issues/${issue.id}/compare`)
@@ -508,7 +508,7 @@ test('확인 완료를 누르는 사이 재요청되고 새 고쳤어요가 오�
     await expect(detailFor(page).getByText(STATE_CHANGED, { exact: true })).toBeVisible()
     await expect(historyFor(page).getByRole('listitem')).toHaveCount(2)
     await expect(historyFor(page).getByRole('listitem').nth(1)).toContainText('새로 고친 상품 화면')
-    await expect(historyFor(page).getByRole('listitem').nth(1)).toContainText('결과: 결과 없음')
+    await expect(historyFor(page).getByRole('listitem').nth(1)).toContainText('결과: 확인 대기 중')
     const reviewed = await clickAction(page, issue.id, 'verify', reviewFor(page).getByRole('button', { name: '확인 완료', exact: true }))
     expect(reviewed.request().postDataJSON().attemptId).not.toBe(first.id)
     await expect(statusFor(page)).toHaveText('확인 완료')
@@ -648,13 +648,56 @@ test('고쳤어요가 저장된 뒤 응답이 끊기면 안내가 보이고 새�
     await expect(formFor(page)).toHaveCount(0)
     await expect(historyFor(page).getByRole('listitem')).toHaveCount(1)
     await expect(historyFor(page).getByRole('listitem')).toContainText('저장은 된 설명')
-    await expect(historyFor(page).getByRole('listitem')).toContainText('결과: 결과 없음')
+    await expect(historyFor(page).getByRole('listitem')).toContainText('결과: 확인 대기 중')
     await expect(detailFor(page).getByText(UNCONFIRMED, { exact: true })).toHaveCount(0)
     expect(await db.resolutionAttempt.count({ where: { issueId: issue.id } })).toBe(1)
     expect(await db.activityEvent.count({ where: { projectId: room.project.id, type: 'RESOLUTION_SUBMITTED' } })).toBe(1)
   } finally {
     refresh.release()
   }
+})
+
+test('답을 기다리는 고쳤어요 줄은 확인 대기 중으로 보이고 새 버전 게시로 지나간 줄은 결과 없음으로 보인다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  await loginAs(room.developer.id)
+  await openIssue(page, room, issue)
+  await submitResolution(page, issue.id, '처음 고친 버튼 색')
+  await expect(statusFor(page)).toHaveText('확인 요청')
+  const rows = historyFor(page).getByRole('listitem')
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first().getByText('결과: 확인 대기 중', { exact: true })).toBeVisible()
+  await expect(historyFor(page).getByText('결과: 결과 없음', { exact: true })).toHaveCount(0)
+  const first = await db.resolutionAttempt.findFirstOrThrow({ where: { issueId: issue.id } })
+
+  const draft = await db.deliveryVersion.create({ data: { projectId: room.project.id } })
+  await db.versionScreen.create({ data: {
+    versionId: draft.id, screenId: room.main.id, assetId: room.version.screens[0].assetId,
+  } })
+  const published = await page.request.post(`/api/versions/${draft.id}/publish`, {
+    headers: { Origin: new URL(page.url()).origin },
+  })
+  expect(published.status()).toBe(200)
+  await refreshIssue(page, issue.id)
+
+  await expect(statusFor(page)).toHaveText('수정 중')
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText('처음 고친 버튼 색')
+  await expect(rows.first().getByText('결과: 결과 없음', { exact: true })).toBeVisible()
+  await expect(historyFor(page).getByText('결과: 확인 대기 중', { exact: true })).toHaveCount(0)
+  expect(await db.resolutionAttempt.findUniqueOrThrow({ where: { id: first.id } })).toEqual(first)
+
+  await openIssue(page, room, issue, draft.id)
+  await submitResolution(page, issue.id, '새 버전에서 다시 고친 버튼 색')
+
+  await expect(statusFor(page)).toHaveText('확인 요청')
+  await expect(rows).toHaveCount(2)
+  await expect(rows.nth(0)).toContainText('처음 고친 버튼 색')
+  await expect(rows.nth(0).getByText('결과: 결과 없음', { exact: true })).toBeVisible()
+  await expect(rows.nth(1)).toContainText('새 버전에서 다시 고친 버튼 색')
+  await expect(rows.nth(1).getByText('결과: 확인 대기 중', { exact: true })).toBeVisible()
+  await expect(historyFor(page).getByText('결과: 확인 대기 중', { exact: true })).toHaveCount(1)
+  expect(await db.resolutionAttempt.findUniqueOrThrow({ where: { id: first.id } })).toEqual(first)
 })
 
 test('새 버전을 게시하면 확인 요청 쪽지가 수정 중으로 보이고 지난 버전에서는 이력만 보인다', async ({ page, loginAs }) => {
@@ -705,7 +748,10 @@ test('승인된 버전에서는 개발자에게 고쳤어요 보내기가 없고
   const issue = await seedIssue(room)
   const attempt = await seedAttempt(room, issue.id)
   const open = await seedIssue(room, '아직 수정할 요청')
-  await db.deliveryVersion.update({ where: { id: room.version.id }, data: { status: 'APPROVED' } })
+  await db.$transaction([
+    db.deliveryVersion.update({ where: { id: room.version.id }, data: { status: 'APPROVED' } }),
+    db.approval.create({ data: { versionId: room.version.id, approverId: room.approver.id, summary: { issues: [] } } }),
+  ])
   await loginAs(room.developer.id)
   await openIssue(page, room, open)
   await expect(statusFor(page, open.number)).toHaveText('접수')
@@ -717,7 +763,7 @@ test('승인된 버전에서는 개발자에게 고쳤어요 보내기가 없고
     await expect(statusFor(page)).toHaveText('확인 요청')
     await expect(detailFor(page).getByText(READ_ONLY, { exact: true })).toBeVisible()
     await expect(historyFor(page).getByRole('listitem')).toContainText(attempt.summary)
-    await expect(historyFor(page).getByRole('listitem')).toContainText('결과: 결과 없음')
+    await expect(historyFor(page).getByRole('listitem')).toContainText('결과: 확인 대기 중')
     await expect(formFor(page)).toHaveCount(0)
     await expect(reviewFor(page)).toHaveCount(0)
     await expect(detailFor(page).getByRole('textbox', { name: '댓글', exact: true })).toHaveCount(0)
@@ -949,7 +995,7 @@ test('재요청 사유를 쓰는 사이 새 고쳤어요가 오면 사유 칸이
     await expect(history).toHaveCount(2)
     await expect(history.nth(0)).toContainText('결과: 재요청')
     await expect(history.nth(1)).toContainText('새로 고친 상품 화면')
-    await expect(history.nth(1)).toContainText('결과: 결과 없음')
+    await expect(history.nth(1)).toContainText('결과: 확인 대기 중')
     expect(await db.resolutionAttempt.findUniqueOrThrow({ where: { id: newest.id } })).toEqual(newest)
     await reviewFor(page).getByRole('button', { name: '재요청', exact: true }).click()
     await expect(reviewFor(page).getByLabel('재요청 사유', { exact: true })).toHaveValue('아직 글씨가 작아요')
@@ -997,4 +1043,93 @@ test('비교 화면을 연 뒤 승인자가 바뀌면 확인 완료가 거절되
   expect((await db.issue.findUniqueOrThrow({ where: { id: issue.id } })).status).toBe('READY_FOR_REVIEW')
   expect(await db.resolutionAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).toEqual(attempt)
   expect(await db.activityEvent.count({ where: { projectId: room.project.id, type: 'ISSUE_VERIFIED' } })).toBe(0)
+})
+
+test('고쳤어요 설명을 쓰다가 사진을 누르면 확인 창이 뜨고 취소하면 설명이 그대로다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  await loginAs(room.developer.id)
+  await openIssue(page, room, issue)
+  const summary = '아직 보내지 않은 고쳤어요 설명'
+  await formFor(page).getByLabel('고친 내용', { exact: true }).fill(summary)
+  const address = page.url()
+  const messages: string[] = []
+  const dialogTypes: string[] = []
+  let accept = false
+  page.on('dialog', async (dialog) => {
+    messages.push(dialog.message())
+    dialogTypes.push(dialog.type())
+    if (accept) {
+      await dialog.accept()
+      return
+    }
+    await dialog.dismiss()
+  })
+
+  const photo = page.getByRole('img', { name: '메인 · PC', exact: true })
+  await photo.click({ position: { x: 30, y: 30 } })
+  expect(messages).toEqual(['쓰던 글이 사라져요. 새 쪽지를 쓸까요?'])
+  expect(dialogTypes).toEqual(['confirm'])
+  await expect(formFor(page).getByLabel('고친 내용', { exact: true })).toHaveValue(summary)
+  await expect(detailFor(page)).toBeVisible()
+  await expect(page).toHaveURL(address)
+  await expect(page.getByRole('textbox', { name: '제목 (필수)', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('img', { name: '새 쪽지 위치', exact: true })).toHaveCount(0)
+
+  accept = true
+  await photo.click({ position: { x: 30, y: 30 } })
+  expect(messages).toEqual(Array(2).fill('쓰던 글이 사라져요. 새 쪽지를 쓸까요?'))
+  expect(dialogTypes).toEqual(['confirm', 'confirm'])
+  await expect(page.getByRole('textbox', { name: '제목 (필수)', exact: true })).toBeVisible()
+  await expect(detailFor(page)).toHaveCount(0)
+  await expect(page.getByRole('img', { name: '새 쪽지 위치', exact: true })).toBeVisible()
+  expect(new URL(page.url()).searchParams.has('issue')).toBe(false)
+  expect(await db.resolutionAttempt.count({ where: { issueId: issue.id } })).toBe(0)
+  expect((await db.issue.findUniqueOrThrow({ where: { id: issue.id } })).status).toBe('OPEN')
+})
+
+test('재요청 사유를 쓰다가 사진을 누르면 확인 창이 뜨고 취소하면 사유가 그대로다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  const attempt = await seedAttempt(room, issue.id)
+  await loginAs(room.client.id)
+  await openIssue(page, room, issue)
+  await reviewFor(page).getByRole('button', { name: '재요청', exact: true }).click()
+  const reason = '아직 보내지 않은 재요청 사유'
+  await reviewFor(page).getByLabel('재요청 사유', { exact: true }).fill(reason)
+  const address = page.url()
+  const messages: string[] = []
+  const dialogTypes: string[] = []
+  let accept = false
+  page.on('dialog', async (dialog) => {
+    messages.push(dialog.message())
+    dialogTypes.push(dialog.type())
+    if (accept) {
+      await dialog.accept()
+      return
+    }
+    await dialog.dismiss()
+  })
+
+  const photo = page.getByRole('img', { name: '메인 · PC', exact: true })
+  await photo.click({ position: { x: 30, y: 30 } })
+  expect(messages).toEqual(['쓰던 글이 사라져요. 새 쪽지를 쓸까요?'])
+  expect(dialogTypes).toEqual(['confirm'])
+  await expect(reviewFor(page).getByLabel('재요청 사유', { exact: true })).toHaveValue(reason)
+  await expect(detailFor(page)).toBeVisible()
+  await expect(page).toHaveURL(address)
+  await expect(page.getByRole('textbox', { name: '제목 (필수)', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('img', { name: '새 쪽지 위치', exact: true })).toHaveCount(0)
+
+  accept = true
+  await photo.click({ position: { x: 30, y: 30 } })
+  expect(messages).toEqual(Array(2).fill('쓰던 글이 사라져요. 새 쪽지를 쓸까요?'))
+  expect(dialogTypes).toEqual(['confirm', 'confirm'])
+  await expect(page.getByRole('textbox', { name: '제목 (필수)', exact: true })).toBeVisible()
+  await expect(detailFor(page)).toHaveCount(0)
+  await expect(page.getByRole('img', { name: '새 쪽지 위치', exact: true })).toBeVisible()
+  expect(new URL(page.url()).searchParams.has('issue')).toBe(false)
+  expect((await db.issue.findUniqueOrThrow({ where: { id: issue.id } })).status).toBe('READY_FOR_REVIEW')
+  expect((await db.resolutionAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).result).toBeNull()
+  expect(await db.comment.count({ where: { issueId: issue.id } })).toBe(0)
 })

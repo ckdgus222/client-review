@@ -155,6 +155,7 @@ describe('VersionsService', () => {
       summary: '',
       testUrl: null,
       publishedAt: null,
+      approval: null,
       screens: [],
     });
     expect(await prisma.deliveryVersion.findMany()).toEqual([
@@ -205,6 +206,7 @@ describe('VersionsService', () => {
       summary: '',
       testUrl: 'https://example.com/old',
       publishedAt: null,
+      approval: null,
       screens: [
         {
           screenId: visible.screen.id,
@@ -355,6 +357,7 @@ describe('VersionsService', () => {
         summary: '',
         testUrl: null,
         publishedAt: null,
+        approval: null,
         screens: [],
       },
     });
@@ -408,6 +411,7 @@ describe('VersionsService', () => {
         summary: '설명',
         testUrl: 'https://example.com',
         publishedAt: null,
+        approval: null,
         screens: [
           {
             screenId: older.screen.id,
@@ -446,6 +450,7 @@ describe('VersionsService', () => {
         summary: '',
         testUrl: null,
         publishedAt,
+        approval: null,
         screens: [
           {
             screenId: screen.id,
@@ -458,6 +463,115 @@ describe('VersionsService', () => {
       });
     },
   );
+
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    'getDetail은 %s에게 승인 전에는 null, 승인 뒤에는 승인자 이름과 저장된 승인 시각만 준다',
+    async (role) => {
+      const version = await prisma.deliveryVersion.create({
+        data: { projectId, number: 1, status: 'IN_REVIEW', publishedAt, summary: '버전 설명' },
+      });
+      await prisma.project.update({ where: { id: projectId }, data: { currentVersionId: version.id } });
+      const userId = role === 'DEVELOPER' ? developerId : clientId;
+      const before = await service.getDetail(version.id, userId);
+      expect(before.approval).toBeNull();
+      const approvedAt = new Date('2026-01-03T06:10:22.123Z');
+      const approval = await prisma.approval.create({
+        data: {
+          versionId: version.id,
+          approverId: clientId,
+          approvedAt,
+          summary: {
+            issues: [{ number: 1, title: '승인 당시 쪽지', category: 'BUG', scope: 'IN_SCOPE', status: 'VERIFIED' }],
+          },
+        },
+      });
+      await prisma.deliveryVersion.update({ where: { id: version.id }, data: { status: 'APPROVED' } });
+
+      const detail = await service.getDetail(version.id, userId);
+
+      expect(approval.approvedAt).toEqual(approvedAt);
+      // 전체 응답을 비교해 승인 줄의 id·사용자 id·이메일·summary가 추가되지 않았는지도 본다.
+      expect(detail).toEqual({
+        ...before,
+        status: 'APPROVED',
+        approval: { approverName: '클라이언트', approvedAt: approval.approvedAt },
+      });
+    },
+  );
+
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    'getDetail은 %s에게 지난 버전의 승인을 유지하고 다른 버전의 승인과 섞지 않는다',
+    async (role) => {
+      const first = await prisma.deliveryVersion.create({
+        data: { projectId, number: 1, status: 'APPROVED', publishedAt },
+      });
+      const firstApproval = await prisma.approval.create({
+        data: {
+          versionId: first.id,
+          approverId: clientId,
+          approvedAt: new Date('2026-01-03T06:10:22.123Z'),
+          summary: { issues: [] },
+        },
+      });
+      const nextApprover = await prisma.projectMember.create({
+        data: { projectId, userId: outsiderId, role: 'CLIENT' },
+      });
+      const second = await prisma.deliveryVersion.create({
+        data: { projectId, number: 2, status: 'IN_REVIEW', publishedAt: new Date('2026-01-04T00:00:00Z') },
+      });
+      await prisma.project.update({
+        where: { id: projectId },
+        data: { currentVersionId: second.id, approverMemberId: nextApprover.id },
+      });
+      const userId = role === 'DEVELOPER' ? developerId : clientId;
+
+      expect((await service.getDetail(second.id, userId)).approval).toBeNull();
+      expect((await service.getDetail(first.id, userId)).approval).toEqual({
+        approverName: '클라이언트',
+        approvedAt: firstApproval.approvedAt,
+      });
+
+      const secondApproval = await prisma.approval.create({
+        data: {
+          versionId: second.id,
+          approverId: outsiderId,
+          approvedAt: new Date('2026-01-05T07:20:33.456Z'),
+          summary: { issues: [] },
+        },
+      });
+      await prisma.deliveryVersion.update({ where: { id: second.id }, data: { status: 'APPROVED' } });
+
+      expect((await service.getDetail(second.id, userId)).approval).toEqual({
+        approverName: '다른 개발자',
+        approvedAt: secondApproval.approvedAt,
+      });
+      expect((await service.getDetail(first.id, userId)).approval).toEqual({
+        approverName: '클라이언트',
+        approvedAt: firstApproval.approvedAt,
+      });
+      const draft = await service.createDraft(projectId, developerId);
+      expect(draft.approval).toBeNull();
+    },
+  );
+
+  it('loadDetail은 전달된 트랜잭션에서 아직 커밋하지 않은 승인과 DB가 적은 승인 시각을 읽는다', async () => {
+    const version = await prisma.deliveryVersion.create({
+      data: { projectId, number: 1, status: 'IN_REVIEW', publishedAt },
+    });
+
+    await prisma.$transaction(async (tx) => {
+      const approval = await tx.approval.create({
+        data: { versionId: version.id, approverId: clientId, summary: { issues: [] } },
+      });
+      await tx.deliveryVersion.update({ where: { id: version.id }, data: { status: 'APPROVED' } });
+
+      const detail = await service.loadDetail(version.id, tx);
+
+      expect(detail.status).toBe('APPROVED');
+      expect(approval.approvedAt).toBeInstanceOf(Date);
+      expect(detail.approval).toEqual({ approverName: '클라이언트', approvedAt: approval.approvedAt });
+    });
+  });
 
   const versionRequests = [
     { name: 'getDetail', run: (id: string, userId: string) => service.getDetail(id, userId) },
@@ -567,6 +681,7 @@ describe('VersionsService', () => {
       summary: '첫 설명',
       testUrl: 'https://example.com',
       publishedAt: expect.any(Date),
+      approval: null,
       screens: [
         {
           screenId: screen.id,
@@ -947,6 +1062,7 @@ describe('VersionsService', () => {
         summary: '커밋 전',
         testUrl: null,
         publishedAt: null,
+        approval: null,
         screens: [],
       });
     });

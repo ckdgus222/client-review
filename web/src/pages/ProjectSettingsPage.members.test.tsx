@@ -42,6 +42,7 @@ const project: ProjectDetail = {
   name: '초대할 프로젝트',
   myRole: 'DEVELOPER',
   currentVersion: null,
+  isApprover: false,
   approver: { memberId: firstClient.id, name: firstClient.name },
 }
 const memberList: MemberList = { members: [developer, firstClient, secondClient], invitations: [] }

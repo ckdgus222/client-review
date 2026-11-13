@@ -162,7 +162,14 @@ describe('프로젝트 API (e2e)', () => {
       .get(`/api/projects/${project.id}`)
       .set('Cookie', cookie)
       .expect(200)
-      .expect({ id: project.id, name: project.name, myRole: 'DEVELOPER', currentVersion: null, approver: null });
+      .expect({
+        id: project.id,
+        name: project.name,
+        myRole: 'DEVELOPER',
+        currentVersion: null,
+        approver: null,
+        isApprover: false,
+      });
   });
 
   it.each(['가', '가'.repeat(60)])('이름 경계값 %s는 앞뒤 공백을 지운 뒤 허용한다', async (name) => {
@@ -306,7 +313,14 @@ describe('프로젝트 API (e2e)', () => {
       .get(`/api/projects/${project.id}`)
       .set('Cookie', cookie)
       .expect(200)
-      .expect({ id: project.id, name: project.name, myRole: 'CLIENT', currentVersion: null, approver: null });
+      .expect({
+        id: project.id,
+        name: project.name,
+        myRole: 'CLIENT',
+        currentVersion: null,
+        approver: null,
+        isApprover: false,
+      });
   });
 
   it.each([
@@ -354,7 +368,14 @@ describe('프로젝트 API (e2e)', () => {
         .get(`/api/projects/${project.id}`)
         .set('Cookie', memberCookie)
         .expect(200)
-        .expect({ id: project.id, name: project.name, myRole: role, currentVersion: null, approver: null });
+        .expect({
+          id: project.id,
+          name: project.name,
+          myRole: role,
+          currentVersion: null,
+          approver: null,
+          isApprover: false,
+        });
     },
   );
 
@@ -377,6 +398,7 @@ describe('프로젝트 API (e2e)', () => {
           myRole: role,
           currentVersion: null,
           approver: { memberId: member.id, name: '다른 사용자' },
+          isApprover: role === 'CLIENT',
         });
     }
 
@@ -385,7 +407,14 @@ describe('프로젝트 API (e2e)', () => {
       .get(`/api/projects/${project.id}`)
       .set('Cookie', clientCookie)
       .expect(200)
-      .expect({ id: project.id, name: project.name, myRole: 'CLIENT', currentVersion: null, approver: null });
+      .expect({
+        id: project.id,
+        name: project.name,
+        myRole: 'CLIENT',
+        currentVersion: null,
+        approver: null,
+        isApprover: false,
+      });
   });
 
   it('남의 프로젝트, 없는 UUID, 틀린 모양 id는 모두 같은 404 본문을 돌려준다', async () => {

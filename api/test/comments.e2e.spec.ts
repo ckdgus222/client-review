@@ -419,6 +419,7 @@ describe('댓글 API (e2e)', () => {
     const started = await post(`/api/issues/${issueId}/start`).send({ versionId: draft.body.id }).expect(200);
     expect(started.body).toEqual({
       ...original.body,
+      currentVersion: { id: draft.body.id, status: 'IN_REVIEW' },
       status: 'IN_PROGRESS',
       commentCount: 1,
       comments: [response.body],

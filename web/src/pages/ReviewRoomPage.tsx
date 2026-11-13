@@ -21,12 +21,14 @@ import {
   versionLabel,
   type VersionDetail,
   type VersionScreen,
+  type VersionStatus,
   type VersionSummary,
 } from '../api/versions.ts'
 import { Button } from '../components/Button.tsx'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { ProjectNotFound } from '../components/ProjectNotFound.tsx'
 import { useMe } from '../hooks/useMe.ts'
+import { ApprovalReview, ApprovedSummary } from './ApprovalReview.tsx'
 import { IssueComposer } from './IssueComposer.tsx'
 import { IssueDetail } from './IssueDetail.tsx'
 import { IssueList } from './IssueList.tsx'
@@ -47,12 +49,19 @@ type LoadedVersion = { versionId: string; detail?: VersionDetail; missing?: bool
 type VersionPickerProps = {
   versionId: string
   versions: VersionSummary[]
+  status: VersionStatus
   isCurrent: boolean
   onSelectVersion: (versionId: string) => void
 }
 
+// 버전 옆 상태 글자는 세 가지다. 승인된 버전은 현재 버전이든 지난 버전이든 "승인됨"이다.
+const statusText = (status: VersionStatus, isCurrent: boolean) => {
+  if (status === 'APPROVED') return '승인됨'
+  return isCurrent ? '검수 중' : '읽기 전용'
+}
+
 // 제목 옆에 두는 버전 고르기와 상태 표시다.
-const VersionPicker = ({ versionId, versions, isCurrent, onSelectVersion }: VersionPickerProps) => (
+const VersionPicker = ({ versionId, versions, status, isCurrent, onSelectVersion }: VersionPickerProps) => (
   <div className={styles.versionControl}>
     <label className={styles.versionPicker}>
       버전
@@ -68,10 +77,14 @@ const VersionPicker = ({ versionId, versions, isCurrent, onSelectVersion }: Vers
         )}
       </select>
     </label>
-    {/* 색만으로 구분하지 않게 글자와 점 모양(채운 점, 빈 점)도 함께 바뀐다. */}
-    <span className={styles.status} data-current={isCurrent}>
+    {/* 색만으로 구분하지 않게 글자와 점 모양(검수 중은 채운 점, 승인됨은 채운 네모, 읽기 전용은 빈 점)도 함께 바뀐다. */}
+    <span
+      className={styles.status}
+      data-current={isCurrent && status === 'IN_REVIEW'}
+      data-approved={status === 'APPROVED'}
+    >
       <span className={styles.dot} aria-hidden="true" />
-      {isCurrent ? '검수 중' : '읽기 전용'}
+      {statusText(status, isCurrent)}
     </span>
   </div>
 )
@@ -81,30 +94,21 @@ type VersionViewProps = {
   // 왼쪽 목록에서 눌린 화면. 지난 버전 쪽지의 처음 사진을 보는 동안에는 없다.
   selected?: VersionScreen
   isCurrent: boolean
-  // 최신 버전으로 가는 주소의 ? 뒷부분. 고른 버전만 빼고 나머지(열어 둔 쪽지)는 그대로다.
-  latestSearch: string
-  onLeaveVersion: () => void
+  onGoLatest: () => void
   onSelectScreen: (screenId: string) => void
   canvas: ReactNode
 }
 
 // 버전 하나의 틀이다: 위에 설명 줄, 아래에 왼쪽 화면 목록과 사진.
-const VersionView = ({
-  version,
-  selected,
-  isCurrent,
-  latestSearch,
-  onLeaveVersion,
-  onSelectScreen,
-  canvas,
-}: VersionViewProps) => (
+const VersionView = ({ version, selected, isCurrent, onGoLatest, onSelectScreen, canvas }: VersionViewProps) => (
   <>
     {!isCurrent && (
       <p className={styles.notice}>
         지난 버전이에요. 읽기만 할 수 있어요.{' '}
-        <Link to={{ search: latestSearch }} onClick={onLeaveVersion}>
+        {/* 주소에서 버전만 지우면 이 화면이 기억하는 현재 버전으로 간다. 그사이 새 버전이 게시됐을 수 있어서 프로젝트를 다시 읽고 간다. */}
+        <button type="button" className={styles.link} onClick={onGoLatest}>
           최신 버전 보기
-        </Link>
+        </button>
       </p>
     )}
     <div className={styles.info}>
@@ -168,6 +172,14 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const [notFound, setNotFound] = useState(false)
   const [loadError, setLoadError] = useState<ReactNode>()
   const [loaded, setLoaded] = useState<LoadedVersion>()
+  // 이 화면이 한 번이라도 "승인됨"으로 받은 버전들(버전 id → 그 상세). 승인은 되돌아가지 않아서, 여기 있는 버전은
+  // 그 뒤에 어떤 응답이 와도 승인됨으로 보여 준다. 승인보다 먼저 보낸 조회의 "검수 중" 응답이 늦게 와도,
+  // 다른 버전을 보는 사이에 승인 응답이 와도 맞게 보인다. 게시한 버전은 상태 말고는 바뀌지 않아서 이것만 지키면 된다.
+  const [approvedVersions, setApprovedVersions] = useState<Record<string, VersionDetail>>({})
+  const rememberApproved = useCallback((detail: VersionDetail) => {
+    if (detail.status !== 'APPROVED') return
+    setApprovedVersions((known) => ({ ...known, [detail.id]: detail }))
+  }, [])
   const [selectedScreenId, setSelectedScreenId] = useState<string>()
   const [needsApprover, setNeedsApprover] = useState(false)
   const [loadedIssue, setLoadedIssue] = useState<LoadedIssue>()
@@ -177,8 +189,15 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const [draftPin, setDraftPin] = useState<DraftPin>()
   // 쪽지를 보내는 중이거나, 보낸 쪽지가 저장됐는지 몰라 잠긴 동안이다. 이때는 임시 핀을 옮기지도 지우지도 않는다(기획 정할 것 12).
   const [composerLocked, setComposerLocked] = useState(false)
-  // 열어 둔 쪽지에 아직 저장되지 않은 댓글 글이 있는가(쓰는 중, 보내는 중, 잠김). 새 쪽지 쓰기로 넘어가기 전에 묻는 데 쓴다.
-  const [hasCommentDraft, setHasCommentDraft] = useState(false)
+  // 열어 둔 쪽지에 아직 저장되지 않은 글(댓글, 고쳤어요 설명, 사유)이 있는가(쓰는 중, 보내는 중, 잠김).
+  // 새 쪽지 쓰기로 넘어가기 전에 묻는 데 쓴다.
+  const [hasDraft, setHasDraft] = useState(false)
+  // 승인 검토 창을 연 버전. 검토 결과와 승인 요청이 이 버전에 묶인다. 닫혀 있으면 undefined다.
+  const [approvalFor, setApprovalFor] = useState<string>()
+  // 승인 검토에서 골랐는데 이 화면의 쪽지 목록에 아직 없는 쪽지. 목록을 새로 불러오는 동안과 불러오지 못했을 때를 가린다.
+  const [awaitedIssue, setAwaitedIssue] = useState<{ id: string; failed: boolean }>()
+  // 지금 보이는 사진의 화면. 최신 버전으로 갈 때(goLatest) 응답을 받은 뒤에 읽어서, 새 버전에서도 같은 화면을 보여 준다.
+  const shownScreenId = useRef<string>(undefined)
   // 쪽지 목록의 필터. 주소에 넣지 않고 화면 상태로만 둔다. 목록이 새로 와도(15초마다), 쪽지를 열고 닫아도,
   // 쪽지 쓰기 칸을 열었다 닫아도 남는다. 화면을 새로 고치거나 다른 프로젝트로 가면 풀린다.
   const [issueFilter, setIssueFilter] = useState(NO_FILTER)
@@ -231,6 +250,14 @@ const ReviewRoom = ({ id }: { id: string }) => {
     return number
   }, [])
 
+  // 서버에서 받은 쪽지 목록을 화면에 쓴다. 승인 검토에서 고른 쪽지를 기다리던 중이면(awaitedIssue) 이제 답이 나왔다.
+  // 화면에 쓰는 목록은 늘 그 쪽지를 고른 뒤에 시작한 요청의 것이다(먼저 시작한 요청은 번호에 밀려 버려진다).
+  // 그래서 이 목록에도 없으면 정말 없는 쪽지다.
+  const applyList = useCallback((list: IssueSummary[]) => {
+    setIssues(list)
+    setAwaitedIssue(undefined)
+  }, [])
+
   // 로그인 확인을 기다리지 않고 같이 부른다. 하나라도 실패하면 오류 하나로 보여 준다.
   // 쪽지 목록에는 위의 번호를 함께 쓴다. 안 그러면 먼저 시작한 15초 새로 부르기의 늦은 응답이 여기서 받은 목록을
   // 덮어써서, 방금 열린 쪽지가 목록에서 빠지고 그 상세와 쓰던 댓글이 사라진다.
@@ -240,10 +267,10 @@ const ReviewRoom = ({ id }: { id: string }) => {
       ([loadedProject, loadedVersions, loadedIssues]) => {
         setProject(loadedProject)
         setVersions(loadedVersions)
-        if (listRequest.current === request) setIssues(loadedIssues)
+        if (listRequest.current === request) applyList(loadedIssues)
       },
     )
-  }, [id])
+  }, [id, applyList])
 
   useEffect(() => {
     if (!isValidId) return
@@ -274,6 +301,10 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 주소에 고른 버전이 없으면 현재 버전을 본다. 빈 값(?version=)은 고른 것으로 보고 아래에서 틀린 id로 거른다.
   const versionId = requestedVersionId ?? project?.currentVersion?.id
 
+  // 승인 검토 창은 연 버전에 묶인다. 보고 있는 버전이 바뀌면(뒤로 가기, 최신 버전으로 가기) 닫는다.
+  // 그리는 중에 상태를 맞춘다(React 문서가 effect 대신 권하는 방식). 창이 다른 버전 위에 한 번도 그려지지 않는다.
+  if (approvalFor !== undefined && approvalFor !== versionId) setApprovalFor(undefined)
+
   // 올리면 보던 버전과 같은 버전이어도 상세를 다시 부른다. "최신 버전 보기"(goLatest)가 프로젝트를 다시 불러오는 데
   // 성공할 때와, 사진을 못 불러온 화면의 "다시 시도"가 올린다. 이것 없이는 같은 버전이라 다시 부르지 않아서, 사진도
   // 버전 고르기도 없는 화면에서 새로 고침 말고는 빠져나올 길이 없다(쓰던 글이 사라진다).
@@ -292,7 +323,9 @@ const ReviewRoom = ({ id }: { id: string }) => {
         // 둘 다 이 검수실의 버전이 아니라서 없는 버전으로 본다.
         // 주소의 id는 대문자여도 서버가 받지만, 서버가 돌려주는 projectId는 늘 소문자라 맞춰서 비교한다.
         const belongsHere = detail.projectId === id.toLowerCase() && detail.status !== 'DRAFT'
-        setLoaded(belongsHere ? { versionId, detail } : { versionId, missing: true })
+        if (!belongsHere) return setLoaded({ versionId, missing: true })
+        setLoaded({ versionId, detail })
+        rememberApproved(detail)
       })
       .catch((caught) => {
         if (ignore) return
@@ -305,7 +338,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
     return () => {
       ignore = true
     }
-  }, [id, isValidId, versionId, versionReloads])
+  }, [id, isValidId, versionId, versionReloads, rememberApproved])
 
   // 주소의 쪽지는 이 프로젝트의 쪽지 목록에 있을 때만 연다. 두 프로젝트의 멤버면 다른 프로젝트의 쪽지 상세도
   // 서버가 주기 때문에, 상세를 부르기 전에 목록으로 거른다. 주소의 id는 대문자일 수 있어서 소문자로 맞춘다.
@@ -350,20 +383,38 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 프로젝트와 버전은 부르지 않는다. 보던 버전이 저절로 바뀌면 쓰던 글과 핀이 흔들리기 때문이다.
   // 새 버전이 올라왔는지는 쓰기 요청의 409로 안다(기획 정할 것 4).
   // 도움 기능이라 실패해도 보던 내용을 그대로 둔다. 다음 차례에 다시 부른다.
-  const refreshList = useCallback(() => {
+  const refreshList = useCallback(async () => {
     const request = ++listRequest.current
     listInFlight.current = { number: request, since: Date.now() }
-    listIssues(id)
-      .then(
-        (list) => {
-          if (listRequest.current === request) setIssues(list)
-        },
-        () => {},
-      )
-      .finally(() => {
-        if (listInFlight.current.number === request) listInFlight.current = NOT_IN_FLIGHT
-      })
-  }, [id])
+    try {
+      const list = await listIssues(id)
+      if (listRequest.current === request) applyList(list)
+    } catch {
+      // 목록은 15초마다 다시 부르니 보이던 목록을 그대로 둔다. 쪽지를 기다리던 중이면 못 불러왔다고만 알린다.
+      // 더 새 요청에 밀려난 요청의 실패는 알리지 않는다(성공도 쓰지 않는다). 기다리는 답은 그 새 요청이 가져온다.
+      if (listRequest.current === request) setAwaitedIssue((awaited) => awaited && { ...awaited, failed: true })
+    } finally {
+      if (listInFlight.current.number === request) listInFlight.current = NOT_IN_FLIGHT
+    }
+  }, [id, applyList])
+
+  // 서버가 준 버전 상세를 화면에 쓴다(승인 응답, 15초 새로 불러오기). 화면에 쓰는 것은 그 버전을 불러와 둔 때뿐이다.
+  // 승인됐다는 것은 늘 기억한다. 다른 버전을 보는 사이에 승인 응답이 와도, 돌아왔을 때 승인됨이 보인다.
+  const applyVersion = (detail: VersionDetail) => {
+    rememberApproved(detail)
+    setLoaded((shown) => (shown?.detail?.id === detail.id ? { ...shown, detail } : shown))
+  }
+
+  // 보고 있는 버전의 상세(상태와 승인 정보)만 다시 읽는다. 다른 참여자가 승인했으면 여기서 "승인됨"이 보인다.
+  // 프로젝트는 읽지 않아서, 그사이 새 버전이 게시돼도 보던 버전이 저절로 바뀌지 않는다.
+  // 도움 기능이라 실패하면 보이던 상태를 그대로 둔다.
+  const refreshVersion = async (shownVersionId: string) => {
+    try {
+      applyVersion(await getVersion(shownVersionId))
+    } catch {
+      // 다음 차례에 다시 읽는다.
+    }
+  }
 
   // issueId는 부르는 쪽이 보고 있던 쪽지다. 그사이 다른 쪽지를 열었으면 목록만 새로 부른다.
   // 그때 상세까지 부르면 지금 연 쪽지의 요청이 밀려나고, 그 쪽지의 상세와 쓰던 댓글이 화면에서 사라진다.
@@ -401,6 +452,11 @@ const ReviewRoom = ({ id }: { id: string }) => {
       return { ...shown, detail: { ...shown.detail, comments: [...shown.detail.comments, comment] } }
     })
 
+  // 불러온 것이 지금 볼 버전의 것일 때만 쓴다. 버전을 바꾼 직후에는 이전 버전의 것이 남아 있다.
+  const current = loaded?.versionId === versionId ? loaded : undefined
+  // 승인된 것을 아는 버전이면 그 승인된 상세를 쓴다(approvedVersions 참고).
+  const detail = current?.detail && (approvedVersions[current.detail.id] ?? current.detail)
+
   // 타이머는 한 번만 걸고, 울릴 때마다 그때의 쪽지(openIssueId)로 새로 부른다.
   // 처음 불러오기가 끝나기 전에는 부르지 않는다. 먼저 부르면 목록 요청 번호가 올라가서, 처음 불러오기가 받아 온 쪽지 목록이 버려진다.
   // 받아 오는 중인 것은 또 부르지 않는다(listInFlight, detailInFlight). 쪽지를 만들거나 바꾸거나 닫아서 번호만 올라간 뒤에는
@@ -409,6 +465,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const refreshIfVisible = useEffectEvent(() => {
     if (!project || document.visibilityState !== 'visible') return
     if (!isWaiting(listInFlight.current, listRequest.current)) refreshList()
+    // 승인된 버전은 더 바뀌지 않아서 다시 읽지 않는다.
+    if (detail?.status === 'IN_REVIEW') refreshVersion(detail.id)
     const open = detailRequest.current
     if (openIssueId && open.issueId === openIssueId && !isWaiting(detailInFlight.current, open.number)) {
       loadIssue(openIssueId)
@@ -431,8 +489,6 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const isDeveloper = project.myRole === 'DEVELOPER'
   // 현재 버전은 가장 최근에 게시한 버전이라, 다음 차수는 그 번호 + 1이다.
   const nextLabel = versionLabel(project.currentVersion ? project.currentVersion.number + 1 : 0)
-  const current = loaded?.versionId === versionId ? loaded : undefined
-  const detail = current?.detail
   // 볼 버전이 있는가. 게시한 버전이 없거나, 주소의 버전이 틀렸거나 없는 버전이면 거짓이다. 불러오는 중이면 참이다.
   const hasVersion = versionId !== undefined && isUuid(versionId) && !current?.missing
   const isCurrent = detail?.id === project.currentVersion?.id
@@ -450,6 +506,12 @@ const ReviewRoom = ({ id }: { id: string }) => {
   // 보내는 중이거나 잠긴 요청은 쓰기 칸이 처음 보낸 그대로 기억하고 있어서, 여기 값과 상관없이 처음 자리로 다시 간다.
   const shownDraftPin =
     draftPin?.versionId === detail?.id && draftPin?.screenId === selected?.screenId ? draftPin : undefined
+
+  // 그리는 중에 ref를 적는 것은 보통 피하지만, 이 값은 그리기에 쓰지 않고 goLatest가 응답을 받은 뒤 "가장 최근에 보이던 화면"을
+  // 읽는 데만 쓴다. 지난 버전 쪽지의 처음 사진을 보는 중이면 그 사진의 화면이다.
+  // effect로 옮기지 못한다. 이 값은 위의 이른 반환(로그인 확인, 불러오는 중) 뒤에 계산되고, 훅은 그 앞에만 둘 수 있다.
+  // oxlint-disable-next-line react/refs
+  shownScreenId.current = olderVersionOrigin?.screenId ?? selected?.screenId
 
   // 쓰기와 고르기에서 주소의 쪽지·버전을 바꾼다. 다른 값은 그대로 둔다. 지금 주소(latestParams)에서 바꾼다.
   const setParam = (name: 'issue' | 'version', value?: string) => {
@@ -474,7 +536,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
     dropDraftPin()
   }
 
-  // 보던 버전을 떠날 때 한다. 버전 고르기와 지난 버전의 "최신 버전 보기" 링크가 함께 쓴다.
+  // 보던 버전을 떠날 때 한다. 버전 고르기가 쓴다.
   const leaveVersion = () => {
     versionChanges.current += 1
     // 처음에 저절로 보인 첫 화면도 "보던 화면"으로 붙잡아 둔다. 안 그러면 새 버전의 첫 화면으로 바뀐다.
@@ -493,9 +555,26 @@ const ReviewRoom = ({ id }: { id: string }) => {
     setParam('issue', issueId)
   }
 
+  // 승인 요청이 "승인자가 아니에요"(403)를 받았다. 그사이 승인자가 바뀐 것이라 "버전 승인" 버튼을 없앤다.
+  // 프로젝트를 다시 읽지 않고 화면이 아는 값만 고친다(다시 읽으면 보던 버전이 바뀔 수 있다).
+  // 화면을 새로 열거나 "최신 버전 보기"로 프로젝트를 다시 읽으면 서버의 답을 따른다.
+  const forgetApproverRole = () => setProject((known) => known && { ...known, isApprover: false })
+
+  // 승인 검토 창의 쪽지 번호를 눌렀다. 창을 닫고 그 쪽지를 연다.
+  // 다른 사람이 방금 쓴 쪽지는 승인 검토에 먼저 보이고 이 화면의 목록에는 아직 없을 수 있다(목록은 15초마다 온다).
+  // 그러면 목록을 바로 새로 불러오고, 올 때까지 "없는 쪽지예요" 대신 불러오는 중이라고 보여 준다.
+  // 응답을 기다렸다가 고르지 않고 지금 바로 고른다. 기다리는 사이 사용자가 다른 쪽지를 고르면 그 선택이 남는다.
+  const openIssueFromApproval = (issueId: string) => {
+    setApprovalFor(undefined)
+    selectIssue(issueId)
+    if (issues.some((issue) => issue.id === issueId)) return
+    setAwaitedIssue({ id: issueId, failed: false })
+    refreshList()
+  }
+
   const startComposing = (pin?: DraftPin) => {
-    // 새 쪽지를 쓰면 열어 둔 쪽지가 닫혀서 쓰던 댓글이 사라진다. 사진을 잘못 눌러도 글을 잃지 않게 먼저 묻는다(기획 정할 것 13).
-    if (hasCommentDraft && !window.confirm('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')) return
+    // 새 쪽지를 쓰면 열어 둔 쪽지가 닫혀서 쓰던 글이 사라진다. 사진을 잘못 눌러도 글을 잃지 않게 먼저 묻는다(기획 정할 것 13).
+    if (hasDraft && !window.confirm('쓰던 글이 사라져요. 새 쪽지를 쓸까요?')) return
     // 쪽지를 열어서 그 쪽지의 화면을 보던 중이면, 그 화면을 "고른 화면"으로 붙잡아 둔다. 주소에서 쪽지를 지우면
     // 화면을 고른 근거도 사라져서 첫 화면으로 돌아가고, 방금 찍은 핀이 다른 사진의 쪽지로 보내진다.
     if (selected) setSelectedScreenId(selected.screenId)
@@ -529,6 +608,9 @@ const ReviewRoom = ({ id }: { id: string }) => {
         () => {
           setVersionReloads((count) => count + 1)
           if (versionChanges.current !== changesAtPress) return
+          // 이동하는 지금 보이던 화면을 붙잡는다(누른 때의 화면이 아니다). 기다리는 사이 다른 화면이나 쪽지를 골랐으면 그 화면이다.
+          // 쪽지의 화면을 보던 중에는 "고른 화면" 값이 그 전에 고른 다른 화면이라, 붙잡지 않으면 새 버전에서 그 화면으로 바뀐다.
+          if (shownScreenId.current) setSelectedScreenId(shownScreenId.current)
           setShowIssuePlace(false)
           setParam('version')
         },
@@ -591,6 +673,12 @@ const ReviewRoom = ({ id }: { id: string }) => {
     )
   }
 
+  // 주소의 쪽지가 목록에 없을 때의 글. 승인 검토에서 고른 쪽지를 기다리는 중이면 없는 쪽지라고 하지 않는다.
+  const missingIssueText = () => {
+    if (!awaitedIssue || awaitedIssue.id !== requestedIssueId?.toLowerCase()) return '없는 쪽지예요.'
+    return awaitedIssue.failed ? '쪽지를 불러오지 못했어요' : '쪽지를 불러오는 중이에요'
+  }
+
   // 쪽지 칸은 버전을 불러오는 동안에도 그대로 남는다. 그래서 버전 상세가 아니라 고른 버전의 id만 쓴다.
   // 버전을 바꾸는 사이 이 칸이 사라졌다 다시 그려지면 쓰던 글과 잠긴 요청이 지워진다.
   const renderPanel = (shownVersionId: string) => {
@@ -628,7 +716,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
           onSelect={selectIssue}
           onCompose={canWrite ? () => startComposing() : undefined}
         />
-        {requestedIssueId !== null && !openIssue && <p className={styles.panelMessage}>없는 쪽지예요.</p>}
+        {requestedIssueId !== null && !openIssue && <p className={styles.panelMessage}>{missingIssueText()}</p>}
         {shownIssue?.error && (
           <div className={styles.panelMessage}>
             <ErrorText message={shownIssue.error} />
@@ -657,7 +745,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
             onChanged={(issue) => applyChange(issue, detailNumber)}
             onCommented={(comment) => addComment(shownIssue.id, comment)}
             onRefresh={() => refreshIssues(shownIssue.id)}
-            onDraftChange={setHasCommentDraft}
+            onDraftChange={setHasDraft}
             onGoLatest={goLatest}
             onClose={() => setParam('issue')}
           />
@@ -705,15 +793,12 @@ const ReviewRoom = ({ id }: { id: string }) => {
       )
     }
     if (!detail) return <p className={styles.message}>불러오는 중이에요.</p>
-    const searchWithoutVersion = new URLSearchParams(searchParams)
-    searchWithoutVersion.delete('version')
     return (
       <VersionView
         version={detail}
         selected={olderVersionOrigin ? undefined : selected}
         isCurrent={isCurrent}
-        latestSearch={searchWithoutVersion.toString()}
-        onLeaveVersion={leaveVersion}
+        onGoLatest={goLatest}
         onSelectScreen={selectScreen}
         canvas={renderCanvas(detail)}
       />
@@ -729,10 +814,13 @@ const ReviewRoom = ({ id }: { id: string }) => {
             <VersionPicker
               versionId={detail.id}
               versions={versions}
+              status={detail.status}
               isCurrent={isCurrent}
               onSelectVersion={selectVersion}
             />
           )}
+          {/* 승인자에게만, 검수 중인 현재 버전에서만 보인다(서버도 같은 규칙으로 막는다). */}
+          {project.isApprover && canWrite && <Button onClick={() => setApprovalFor(versionId)}>버전 승인</Button>}
         </div>
         <nav className={styles.links}>
           <Link to="/">프로젝트 목록</Link>
@@ -746,6 +834,31 @@ const ReviewRoom = ({ id }: { id: string }) => {
         <p className={styles.notice}>
           승인자를 정해 주세요. <Link to={`/projects/${id}/settings`}>설정으로 가기</Link>
         </p>
+      )}
+      {/* 승인된 버전을 보는 모든 참여자에게 늘 보인다. 누가 언제 승인했는지와 읽기 전용이라는 것을 알린다. */}
+      {detail?.status === 'APPROVED' && (
+        <section className={styles.approved} aria-label="승인 안내">
+          <ApprovedSummary version={detail} />
+          {/* 승인된 화면에는 쓰기 버튼이 없어서 "새 버전이 올라왔어요" 안내가 뜰 일이 없다. 다음 버전으로 가는 길을 여기에 둔다.
+              지난 버전에는 아래 "지난 버전이에요" 안내에 같은 버튼이 있다. */}
+          {isCurrent && (
+            <button type="button" className={styles.link} onClick={goLatest}>
+              최신 버전 보기
+            </button>
+          )}
+        </section>
+      )}
+      {approvalFor !== undefined && detail && (
+        <ApprovalReview
+          version={detail}
+          // 새 쪽지를 쓰는 중에는 쓰기 칸만 보여서 다른 쪽지를 열 수 없다. 넘기지 않으면 창이 번호를 글자로만 보여 준다.
+          onOpenIssue={composing ? undefined : openIssueFromApproval}
+          onApproved={applyVersion}
+          onReloadVersion={() => void refreshVersion(detail.id)}
+          onNotApprover={forgetApproverRole}
+          onGoLatest={goLatest}
+          onClose={() => setApprovalFor(undefined)}
+        />
       )}
       {/* 볼 버전이 있을 때만 쪽지 칸을 둔다(게시한 버전이 없거나 없는 버전이면 쪽지를 쓸 곳이 없다). */}
       {hasVersion ? (

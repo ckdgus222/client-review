@@ -1,0 +1,54 @@
+/* 화면 가운데에 뜨는 창. 좁은 화면에서는 양옆 여백만 남기고 너비를 다 쓴다. 높이는 화면을 넘지 않고, 넘치는 내용은 .body가 스크롤한다. */
+.modal {
+  width: min(640px, calc(100vw - var(--space-3) * 2));
+  max-height: calc(100dvh - var(--space-3) * 2);
+  padding: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* 열려 있을 때만 flex로 바꾼다. 닫힌 dialog는 브라우저가 display: none으로 감추는데, 늘 flex로 두면 그 규칙을 이겨서 닫혀도 보인다. */
+.modal[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 창 뒤의 화면을 어둡게 덮는다. 뒤 화면을 못 누르게 막는 것은 색이 아니라 showModal()이다. */
+.modal::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+/* 머리는 늘 보인다. 내용이 길어도 제목과 닫기가 스크롤에 밀려 올라가지 않는다. */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.header h2 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  overflow-wrap: anywhere;
+}
+
+/* 손가락으로 누르기 좋은 크기(44px). */
+.close {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: var(--font-size-lg);
+  cursor: pointer;
+}
+
+.body {
+  overflow-y: auto;
+  padding: var(--space-4);
+}

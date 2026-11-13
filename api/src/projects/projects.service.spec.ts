@@ -325,9 +325,14 @@ describe('ProjectsService', () => {
       await expect(service.getForMember(project.id, memberUserId)).resolves.toEqual({
         ...detail,
         approver: { memberId: member.id, name: '다른 사용자' },
+        isApprover: role === 'CLIENT',
       });
       await prisma.project.update({ where: { id: project.id }, data: { approverMemberId: null } });
-      await expect(service.getForMember(project.id, memberUserId)).resolves.toEqual({ ...detail, approver: null });
+      await expect(service.getForMember(project.id, memberUserId)).resolves.toEqual({
+        ...detail,
+        approver: null,
+        isApprover: false,
+      });
     },
   );
 
@@ -346,6 +351,7 @@ describe('ProjectsService', () => {
         myRole: role,
         currentVersion: null,
         approver: null,
+        isApprover: false,
       });
     },
   );
@@ -384,9 +390,69 @@ describe('ProjectsService', () => {
         myRole: role,
         currentVersion: { id: currentVersion.id, number: 1 },
         approver: null,
+        isApprover: false,
       });
     },
   );
+
+  it('getForMember는 승인자가 바뀌면 이전 승인자는 거짓, 새 승인자는 참이고 개발자는 계속 거짓이다', async () => {
+    const project = await service.create(userId, '승인자를 바꾸는 프로젝트');
+    const firstApprover = await prisma.projectMember.create({
+      data: { projectId: project.id, userId: otherUserId, role: 'CLIENT' },
+    });
+    const nextUser = await prisma.user.create({ data: { email: 'next@example.com', name: '새 승인자' } });
+    const nextApprover = await prisma.projectMember.create({
+      data: { projectId: project.id, userId: nextUser.id, role: 'CLIENT' },
+    });
+    await prisma.project.update({ where: { id: project.id }, data: { approverMemberId: firstApprover.id } });
+
+    expect((await service.getForMember(project.id, otherUserId)).isApprover).toBe(true);
+    expect((await service.getForMember(project.id, nextUser.id)).isApprover).toBe(false);
+    expect((await service.getForMember(project.id, userId)).isApprover).toBe(false);
+
+    await prisma.project.update({ where: { id: project.id }, data: { approverMemberId: nextApprover.id } });
+
+    expect((await service.getForMember(project.id, otherUserId)).isApprover).toBe(false);
+    expect((await service.getForMember(project.id, nextUser.id)).isApprover).toBe(true);
+    expect((await service.getForMember(project.id, userId)).isApprover).toBe(false);
+  });
+
+  it('getForMember는 다른 프로젝트의 승인자라도 이 프로젝트의 일반 클라이언트나 개발자이면 거짓이다', async () => {
+    const project = await service.create(userId, '승인자가 있는 프로젝트');
+    const approver = await prisma.projectMember.create({
+      data: { projectId: project.id, userId: otherUserId, role: 'CLIENT' },
+    });
+    await prisma.project.update({ where: { id: project.id }, data: { approverMemberId: approver.id } });
+    const otherProject = await service.create(userId, '승인자가 없는 프로젝트');
+    await prisma.projectMember.create({
+      data: { projectId: otherProject.id, userId: otherUserId, role: 'CLIENT' },
+    });
+    const ownedProject = await service.create(otherUserId, '승인자가 개발자인 프로젝트');
+
+    expect((await service.getForMember(project.id, otherUserId)).isApprover).toBe(true);
+    expect((await service.getForMember(otherProject.id, otherUserId)).isApprover).toBe(false);
+    expect((await service.getForMember(ownedProject.id, otherUserId)).isApprover).toBe(false);
+  });
+
+  it('getForMember는 승인자였어도 접근이 철회되면 상세 대신 404를 돌려준다', async () => {
+    const project = await service.create(userId, '승인자 접근 철회');
+    const approver = await prisma.projectMember.create({
+      data: { projectId: project.id, userId: otherUserId, role: 'CLIENT' },
+    });
+    await prisma.project.update({ where: { id: project.id }, data: { approverMemberId: approver.id } });
+    expect((await service.getForMember(project.id, otherUserId)).isApprover).toBe(true);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.project.update({ where: { id: project.id }, data: { approverMemberId: null } });
+      await tx.projectMember.update({ where: { id: approver.id }, data: { revokedAt: new Date() } });
+    });
+
+    await expect(service.getForMember(project.id, otherUserId)).rejects.toMatchObject({
+      status: 404,
+      response: { statusCode: 404, message: '없는 프로젝트예요', error: 'Not Found' },
+    });
+    expect((await service.getForMember(project.id, userId)).isApprover).toBe(false);
+  });
 
   it('getForMember는 다른 프로젝트의 개발자라도 요청한 프로젝트의 멤버가 아니면 404를 던진다', async () => {
     await service.create(userId, '내 프로젝트');

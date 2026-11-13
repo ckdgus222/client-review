@@ -16,6 +16,8 @@ export type ProjectDetail = {
   myRole: ProjectRole
   currentVersion: { id: string; number: number } | null
   approver: Approver
+  // 내가 승인자인가. 서버가 정해서 알려 준다(화면은 내 멤버 id를 몰라서 approver와 비교할 수 없다).
+  isApprover: boolean
 }
 export type Screen = { id: string; name: string; viewport: Viewport; hiddenAt: string | null }
 

@@ -2,6 +2,7 @@ import { type FormEvent, type ReactNode, useId, useState } from 'react'
 import { type IssueDetail as Issue, type IssueStatus, reopenIssue, verifyIssue, withdrawIssue } from '../api/issues.ts'
 import { Button } from '../components/Button.tsx'
 import { ErrorText } from '../components/ErrorText.tsx'
+import { useDraftReport } from '../hooks/useDraftReport.ts'
 import { useIssueRequest } from '../hooks/useIssueRequest.ts'
 import { IssueRequestNotice } from './IssueRequestNotice.tsx'
 import styles from './IssueReview.module.css'
@@ -40,6 +41,8 @@ type IssueReviewProps = {
   // 서버가 돌려준 바뀐 쪽지(바뀐 상태, 고쳤어요 줄의 결과, 사유 댓글이 들어 있다).
   onChanged: (issue: Issue) => void
   onRefresh: () => void
+  // 쓰던 사유가 있거나 보내는 중인지 알린다. 새 쪽지 쓰기가 없는 비교 화면은 넘기지 않는다.
+  onDraftChange?: (hasDraft: boolean) => void
   onGoLatest: () => void
   // 새 버전 안내를 다르게 보여 줄 때 넘긴다(IssueRequestNotice 참고).
   versionChangedNotice?: ReactNode
@@ -56,6 +59,7 @@ export const IssueReview = ({
   fetchCount,
   onChanged,
   onRefresh,
+  onDraftChange,
   onGoLatest,
   versionChangedNotice,
 }: IssueReviewProps) => {
@@ -65,6 +69,8 @@ export const IssueReview = ({
   const [reason, setReason] = useState('')
   const [reasonError, setReasonError] = useState<string>()
   const { sending, error, unconfirmed, stale, send } = useIssueRequest({ fetchCount, onChanged, onRefresh })
+  // 사유 칸이 닫혀 있어도(그사이 새 고쳤어요가 옴) 쓰던 사유는 남아 있어서 그대로 알린다. 확인 완료는 글 없이 보내서 보내는 중도 본다.
+  useDraftReport(reason.trim() !== '' || sending, onDraftChange)
 
   const notice = (
     <IssueRequestNotice

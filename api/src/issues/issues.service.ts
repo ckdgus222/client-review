@@ -66,6 +66,9 @@ export type IssueDetail = IssueSummary & {
   isMine: boolean;
   // 내가 이 쪽지를 확인 완료·재요청·철회·다시 열기 할 수 있는 사람인가. 쪽지 상태와는 상관없다.
   canReview: boolean;
+  // 이 쪽지의 프로젝트의 현재 버전과 그 상태. 비교 화면이 "보고 있는 고쳤어요의 버전이 지금도 현재 버전이고 검수 중인가"를
+  // 아는 데 쓴다. 쪽지는 게시한 버전이 있어야 쓸 수 있어서 실제로는 늘 있다(DB의 칸은 비울 수 있어서 타입은 null도 받는다).
+  currentVersion: { id: string; status: VersionStatus } | null;
   attachments: { id: string; assetId: string; width: number; height: number }[];
   comments: { id: string; authorName: string; versionNumber: number | null; body: string; createdAt: Date }[];
   // 오래된 순.
@@ -167,6 +170,7 @@ const DETAIL_FIELDS = {
   body: true,
   projectId: true,
   authorId: true,
+  project: { select: { currentVersion: { select: { id: true, status: true } } } },
   attachments: {
     select: { id: true, asset: { select: { id: true, width: true, height: true } } },
     orderBy: { createdAt: 'asc' },
@@ -325,7 +329,7 @@ export class IssuesService {
   // 권한을 확인한 뒤에만 부른다.
   async loadDetail(issueId: string, userId: string, db: Prisma.TransactionClient = this.prisma): Promise<IssueDetail> {
     const issue = await db.issue.findUniqueOrThrow({ where: { id: issueId }, select: DETAIL_FIELDS });
-    const { body, projectId, authorId, attachments, comments, attempts, ...summary } = issue;
+    const { body, projectId, authorId, project, attachments, comments, attempts, ...summary } = issue;
     const canReview = await this.canReview(db, issue, userId);
     return {
       ...toSummary(summary),
@@ -333,6 +337,7 @@ export class IssuesService {
       body,
       isMine: authorId === userId,
       canReview,
+      currentVersion: project.currentVersion,
       attachments: attachments.map(({ id, asset: { id: assetId, ...size } }) => ({ id, assetId, ...size })),
       comments: comments.map(toCommentView),
       attempts: attempts.map(toAttemptView),

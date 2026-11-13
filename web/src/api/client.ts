@@ -24,11 +24,13 @@ export const apiGet = async (path: string) => {
   return response
 }
 
-export const apiPost = async (path: string, body: object = {}) => {
+// signal을 넘기면 부르는 쪽이 요청을 끊을 수 있다(승인 요청의 기다리는 한도).
+export const apiPost = async (path: string, body: object = {}, signal?: AbortSignal) => {
   const response = await fetch(`/api${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   })
   if (!response.ok) throw await toApiError(response)
   return response

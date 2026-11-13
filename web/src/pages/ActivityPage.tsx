@@ -38,10 +38,12 @@ const describe = ({ type, actorName, version, memberName, issue }: ActivityItem)
   // 확인 요청을 돌려보낸 재요청과 끝난 쪽지를 다시 연 것이 같은 사건이다. 사유는 쪽지의 댓글에 있다.
   if (type === 'ISSUE_REOPENED') return `${actorName}님이 ${issueLabel}를 다시 열었어요`
   if (type === 'ISSUE_WITHDRAWN') return `${actorName}님이 ${issueLabel}를 철회했어요`
-  if (!version) return `${actorName}님이 버전을 게시했어요`
+  // 남은 두 사건(게시, 승인)은 버전에 한 일이다.
+  const action = type === 'VERSION_APPROVED' ? '승인했어요' : '게시했어요'
+  if (!version) return `${actorName}님이 버전을 ${action}`
   // "초안을", "1차를"처럼 받침에 따라 조사가 다르다. 번호 0이 초안이다.
   const particle = version.number === 0 ? '을' : '를'
-  return `${actorName}님이 ${versionLabel(version.number)}${particle} 게시했어요`
+  return `${actorName}님이 ${versionLabel(version.number)}${particle} ${action}`
 }
 
 const ActivityRow = ({ projectId, item }: { projectId: string; item: ActivityItem }) => {

@@ -68,11 +68,13 @@ export class ProjectsService {
         id: true,
         name: true,
         currentVersion: { select: { id: true, number: true } },
-        approver: { select: APPROVER_FIELDS },
+        approver: { select: { ...APPROVER_FIELDS, userId: true } },
       },
     });
     const { approver, ...rest } = project;
-    return { ...rest, myRole, approver: toApproverView(approver) };
+    // 내가 승인자인지는 서버가 정해서 알려 준다. 화면은 내 멤버 id를 몰라서 스스로 판단할 수 없다.
+    // 멤버 줄은 (프로젝트, 사용자)마다 하나라서, 승인자 줄의 사용자가 나면 내 멤버 줄이 승인자 줄이다.
+    return { ...rest, myRole, approver: toApproverView(approver), isApprover: approver?.userId === userId };
   }
 
   // 같은 프로젝트의 쓰기 명령은 프로젝트 줄을 잠가서 하나씩 차례로 처리한다.

@@ -63,6 +63,23 @@ describe('apiGet', () => {
 })
 
 describe('apiPost', () => {
+  it('세 번째 인자의 signal을 그대로 fetch에 넘긴다', async () => {
+    const controller = new AbortController()
+    const body = { seenAt: '2026-11-13T06:10:22.123456Z' }
+    const response = Response.json({ status: 'APPROVED' })
+    vi.mocked(fetch).mockResolvedValueOnce(response)
+
+    await expect(apiPost('/versions/version-id/approve', body, controller.signal)).resolves.toBe(response)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/versions/version-id/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    expect(vi.mocked(fetch).mock.calls[0][1]?.signal).toBe(controller.signal)
+  })
+
   it('경로 앞에 /api를 붙이고 전달받은 본문을 JSON POST로 한 번 보낸다', async () => {
     const body = { name: '메인 "화면"', viewport: 'PC' }
     const response = new Response(JSON.stringify({ id: 'screen-id', ...body }), { status: 201 })

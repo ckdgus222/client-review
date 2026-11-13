@@ -1,4 +1,4 @@
-import { type ChangeEvent, type FormEvent, useEffect, useId, useState } from 'react'
+import { type ChangeEvent, type FormEvent, useId, useState } from 'react'
 import { ApiError } from '../api/client.ts'
 import {
   attachIssuePhoto,
@@ -19,6 +19,7 @@ import { assetUrl, timeFormat, versionLabel } from '../api/versions.ts'
 import { Button } from '../components/Button.tsx'
 import { ErrorText } from '../components/ErrorText.tsx'
 import { StatusBadge } from '../components/StatusBadge.tsx'
+import { useDraftReport } from '../hooks/useDraftReport.ts'
 import { type SubmitError, toSubmitError, useLockedSubmit } from '../hooks/useLockedSubmit.ts'
 import { AttemptHistory } from './AttemptHistory.tsx'
 import styles from './IssueDetail.module.css'
@@ -53,7 +54,8 @@ type IssueDetailProps = {
   onCommented: (comment: IssueComment) => void
   // 댓글을 썼거나 화면이 아는 것과 서버가 달라져서, 쪽지를 다시 불러와야 하는 경우.
   onRefresh: () => void
-  // 아직 저장되지 않은 댓글 글이 있는지 알린다(쓰는 중, 보내는 중, 잠김). 검수실이 새 쪽지 쓰기로 넘어가기 전에 묻는 데 쓴다.
+  // 아직 저장되지 않은 글(댓글, 고쳤어요 설명, 사유)이 있는지 알린다(쓰는 중, 보내는 중, 잠김).
+  // 검수실이 새 쪽지 쓰기로 넘어가기 전에 묻는 데 쓴다.
   onDraftChange: (hasDraft: boolean) => void
   onGoLatest: () => void
   onClose: () => void
@@ -189,11 +191,7 @@ const CommentForm = ({
   // 보내는 중이거나 잠긴 댓글도 글이 칸에 남아 있어서, 글이 있는지만 보면 된다. 저장되면 칸이 비워진다.
   const hasDraft = body.trim() !== ''
 
-  useEffect(() => {
-    onDraftChange(hasDraft)
-    // 쪽지를 닫거나 다른 쪽지를 열어서 이 칸이 사라지면 쓰던 댓글도 함께 사라진다.
-    return () => onDraftChange(false)
-  }, [hasDraft, onDraftChange])
+  useDraftReport(hasDraft, onDraftChange)
 
   // 취소한 뒤에는 새 번호로 보낸다. 처음 것이 저장돼 있었다면, 같은 번호로 고친 글을 보냈을 때
   // 서버가 처음 댓글을 돌려줘서 고친 글이 저장되지 않는다. 글은 지우지 않고 남긴다.
@@ -269,112 +267,127 @@ export const IssueDetail = ({
   onDraftChange,
   onGoLatest,
   onClose,
-}: IssueDetailProps) => (
-  <article className={styles.detail} aria-label={`쪽지 #${issue.number}`}>
-    <div className={styles.heading}>
-      <span className={styles.number}>#{issue.number}</span>
-      <StatusBadge status={issue.status} />
-      <button type="button" className={styles.link} onClick={onClose}>
-        쪽지 닫기
-      </button>
-    </div>
-    <h2>{issue.title}</h2>
-    <dl className={styles.meta}>
-      <dt>처음 위치</dt>
-      <dd>{originLabel(issue)}</dd>
-      <dt>쓴 사람</dt>
-      <dd>{issue.authorName}</dd>
-      <dt>쓴 시각</dt>
-      <dd>{timeFormat.format(new Date(issue.createdAt))}</dd>
-      <dt>분류</dt>
-      <dd>{ISSUE_CATEGORY_LABELS[issue.category]}</dd>
-      <dt>범위</dt>
-      <dd>{ISSUE_SCOPE_LABELS[issue.scope]}</dd>
-      <dt>마감일</dt>
-      <dd>
-        {issue.dueDate ? dueDateLabel(issue.dueDate) : '없음'}
-        {isOverdue(issue) && <strong className={styles.overdue}> · 마감 지남</strong>}
-      </dd>
-    </dl>
-    {/* 글은 일반 글자로만 보여 준다. 줄바꿈은 CSS(pre-wrap)가 살린다. */}
-    {issue.body && <p className={styles.body}>{issue.body}</p>}
-    {/* 쓸 수 없는 동안에도 늘 둔다. 입력은 이 부품이 감추고, 치던 날짜는 버전을 옮겨 다녀도 남는다. */}
-    <IssueTriage
-      issue={issue}
-      versionId={versionId}
-      canWrite={canWrite}
-      isDeveloper={isDeveloper}
-      fetchCount={fetchCount}
-      onChanged={onChanged}
-      onRefresh={onRefresh}
-      onGoLatest={onGoLatest}
-    />
-    <Actions
-      issue={issue}
-      versionId={versionId}
-      canWrite={canWrite}
-      isDeveloper={isDeveloper}
-      onChanged={onChanged}
-      onRefresh={onRefresh}
-      onGoLatest={onGoLatest}
-    />
-    <AttemptHistory issueId={issue.id} attempts={issue.attempts} />
-    {/* 아래 두 칸도 쓸 수 없는 동안 늘 둔다. 입력은 부품이 감추고, 쓰던 설명과 사유는 버전을 옮겨 다녀도 남는다. */}
-    <ResolutionForm
-      issue={issue}
-      versionId={versionId}
-      canWrite={canWrite}
-      isDeveloper={isDeveloper}
-      screens={screens}
-      fetchCount={fetchCount}
-      onChanged={onChanged}
-      onRefresh={onRefresh}
-      onGoLatest={onGoLatest}
-    />
-    <IssueReview
-      issue={issue}
-      versionId={versionId}
-      canWrite={canWrite}
-      fetchCount={fetchCount}
-      onChanged={onChanged}
-      onRefresh={onRefresh}
-      onGoLatest={onGoLatest}
-    />
-    {/* 개발자가 쓴 쪽지는 개발자 스스로 확인할 수 없다. 승인자가 없으면 끝낼 사람이 없다는 것을 알린다. */}
-    {needsApprover && issue.isMine && isUnresolved(issue.status) && (
-      <p className={styles.readonly}>승인자가 정해지면 확인할 수 있어요.</p>
-    )}
-    <section aria-label="댓글">
-      <h3>댓글 {issue.comments.length}개</h3>
-      <ul className={styles.comments}>
-        {issue.comments.map((comment) => (
-          <li key={comment.id}>
-            <p className={styles.commentMeta}>
-              <strong>{comment.authorName}</strong>
-              <span>
-                {versionLabel(comment.versionNumber)} · {timeFormat.format(new Date(comment.createdAt))}
-              </span>
-            </p>
-            <p className={styles.body}>{comment.body}</p>
-          </li>
-        ))}
-      </ul>
-      <CommentForm
+}: IssueDetailProps) => {
+  // 칸마다 쓰던 글이 있는지를 따로 받아서, 하나라도 있으면 검수실에 있다고 알린다.
+  // 세 칸이 검수실에 바로 알리면 한 칸이 "없음"이라고 알릴 때 다른 칸의 "있음"을 덮어쓴다.
+  const [hasCommentDraft, setHasCommentDraft] = useState(false)
+  const [hasResolutionDraft, setHasResolutionDraft] = useState(false)
+  const [hasReasonDraft, setHasReasonDraft] = useState(false)
+  useDraftReport(hasCommentDraft || hasResolutionDraft || hasReasonDraft, onDraftChange)
+
+  return (
+    <article className={styles.detail} aria-label={`쪽지 #${issue.number}`}>
+      <div className={styles.heading}>
+        <span className={styles.number}>#{issue.number}</span>
+        <StatusBadge status={issue.status} />
+        <button type="button" className={styles.link} onClick={onClose}>
+          쪽지 닫기
+        </button>
+      </div>
+      <h2>{issue.title}</h2>
+      <dl className={styles.meta}>
+        <dt>처음 위치</dt>
+        <dd>{originLabel(issue)}</dd>
+        <dt>쓴 사람</dt>
+        <dd>{issue.authorName}</dd>
+        <dt>쓴 시각</dt>
+        <dd>{timeFormat.format(new Date(issue.createdAt))}</dd>
+        <dt>분류</dt>
+        <dd>{ISSUE_CATEGORY_LABELS[issue.category]}</dd>
+        <dt>범위</dt>
+        <dd>{ISSUE_SCOPE_LABELS[issue.scope]}</dd>
+        <dt>마감일</dt>
+        <dd>
+          {issue.dueDate ? dueDateLabel(issue.dueDate) : '없음'}
+          {isOverdue(issue) && <strong className={styles.overdue}> · 마감 지남</strong>}
+        </dd>
+      </dl>
+      {/* 글은 일반 글자로만 보여 준다. 줄바꿈은 CSS(pre-wrap)가 살린다. */}
+      {issue.body && <p className={styles.body}>{issue.body}</p>}
+      {/* 쓸 수 없는 동안에도 늘 둔다. 입력은 이 부품이 감추고, 치던 날짜는 버전을 옮겨 다녀도 남는다. */}
+      <IssueTriage
         issue={issue}
         versionId={versionId}
         canWrite={canWrite}
-        onCommented={onCommented}
+        isDeveloper={isDeveloper}
+        fetchCount={fetchCount}
+        onChanged={onChanged}
         onRefresh={onRefresh}
-        onDraftChange={onDraftChange}
         onGoLatest={onGoLatest}
       />
-    </section>
-    {!canWrite && (
-      <p className={styles.readonly}>
-        {versionLoaded
-          ? '읽기 전용이에요. 쪽지와 댓글은 바꿀 수 없어요.'
-          : '아직 사진을 불러오지 못했어요. 지금은 쪽지와 댓글을 바꿀 수 없어요.'}
-      </p>
-    )}
-  </article>
-)
+      <Actions
+        issue={issue}
+        versionId={versionId}
+        canWrite={canWrite}
+        isDeveloper={isDeveloper}
+        onChanged={onChanged}
+        onRefresh={onRefresh}
+        onGoLatest={onGoLatest}
+      />
+      <AttemptHistory
+        issueId={issue.id}
+        attempts={issue.attempts}
+        isReadyForReview={issue.status === 'READY_FOR_REVIEW'}
+      />
+      {/* 아래 두 칸도 쓸 수 없는 동안 늘 둔다. 입력은 부품이 감추고, 쓰던 설명과 사유는 버전을 옮겨 다녀도 남는다. */}
+      <ResolutionForm
+        issue={issue}
+        versionId={versionId}
+        canWrite={canWrite}
+        isDeveloper={isDeveloper}
+        screens={screens}
+        fetchCount={fetchCount}
+        onChanged={onChanged}
+        onRefresh={onRefresh}
+        onDraftChange={setHasResolutionDraft}
+        onGoLatest={onGoLatest}
+      />
+      <IssueReview
+        issue={issue}
+        versionId={versionId}
+        canWrite={canWrite}
+        fetchCount={fetchCount}
+        onChanged={onChanged}
+        onRefresh={onRefresh}
+        onDraftChange={setHasReasonDraft}
+        onGoLatest={onGoLatest}
+      />
+      {/* 개발자가 쓴 쪽지는 개발자 스스로 확인할 수 없다. 승인자가 없으면 끝낼 사람이 없다는 것을 알린다. */}
+      {needsApprover && issue.isMine && isUnresolved(issue.status) && (
+        <p className={styles.readonly}>승인자가 정해지면 확인할 수 있어요.</p>
+      )}
+      <section aria-label="댓글">
+        <h3>댓글 {issue.comments.length}개</h3>
+        <ul className={styles.comments}>
+          {issue.comments.map((comment) => (
+            <li key={comment.id}>
+              <p className={styles.commentMeta}>
+                <strong>{comment.authorName}</strong>
+                <span>
+                  {versionLabel(comment.versionNumber)} · {timeFormat.format(new Date(comment.createdAt))}
+                </span>
+              </p>
+              <p className={styles.body}>{comment.body}</p>
+            </li>
+          ))}
+        </ul>
+        <CommentForm
+          issue={issue}
+          versionId={versionId}
+          canWrite={canWrite}
+          onCommented={onCommented}
+          onRefresh={onRefresh}
+          onDraftChange={setHasCommentDraft}
+          onGoLatest={onGoLatest}
+        />
+      </section>
+      {!canWrite && (
+        <p className={styles.readonly}>
+          {versionLoaded
+            ? '읽기 전용이에요. 쪽지와 댓글은 바꿀 수 없어요.'
+            : '아직 사진을 불러오지 못했어요. 지금은 쪽지와 댓글을 바꿀 수 없어요.'}
+        </p>
+      )}
+    </article>
+  )
+}

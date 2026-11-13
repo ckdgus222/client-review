@@ -472,7 +472,10 @@ test('현재 버전이 승인되면 읽기 전용 안내가 보이고 쪽지·�
   await uploadPhoto(page, issue.id)
   await expect(page.getByRole('button', { name: '지우기', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '수정 시작', exact: true })).toBeVisible()
-  await db.deliveryVersion.update({ where: { id: room.version.id }, data: { status: 'APPROVED' } })
+  await db.$transaction([
+    db.deliveryVersion.update({ where: { id: room.version.id }, data: { status: 'APPROVED' } }),
+    db.approval.create({ data: { versionId: room.version.id, approverId: room.approver.id, summary: { issues: [] } } }),
+  ])
   await page.reload()
   await expect(page.getByText('읽기 전용이에요. 쪽지와 댓글은 바꿀 수 없어요.', { exact: true })).toBeVisible()
   await loadedPhoto(page, '참고 사진 1')
@@ -948,7 +951,7 @@ test('댓글을 쓰다가 사진을 누르면 확인 창이 뜨고 취소하면 
   await Promise.all([
     page.waitForEvent('dialog').then(async (dialog) => {
       expect(dialog.type()).toBe('confirm')
-      expect(dialog.message()).toBe('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')
+      expect(dialog.message()).toBe('쓰던 글이 사라져요. 새 쪽지를 쓸까요?')
       await dialog.dismiss()
     }),
     clickPhoto(page, 0.65, 0.65),
@@ -963,7 +966,7 @@ test('댓글을 쓰다가 사진을 누르면 확인 창이 뜨고 취소하면 
   await Promise.all([
     page.waitForEvent('dialog').then(async (dialog) => {
       expect(dialog.type()).toBe('confirm')
-      expect(dialog.message()).toBe('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')
+      expect(dialog.message()).toBe('쓰던 글이 사라져요. 새 쪽지를 쓸까요?')
       await dialog.accept()
     }),
     clickPhoto(page, 0.65, 0.65),

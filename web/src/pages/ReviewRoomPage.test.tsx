@@ -50,9 +50,11 @@ const project: ProjectDetail = {
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
   currentVersion: { id: 'd565474f-17a5-4a8e-9b61-bde406fefdf3', number: 2 },
+  isApprover: false,
   approver: null,
 }
 const currentVersion: VersionDetail = {
+  approval: null,
   id: project.currentVersion!.id,
   projectId: project.id,
   number: 2,
@@ -82,6 +84,7 @@ const firstRevision: VersionDetail = {
   id: '7b13b773-8835-45f0-b46f-c555b5033dc7',
   number: 1,
   status: 'APPROVED',
+  approval: { approverName: '김수정', approvedAt: '2026-11-12T09:00:00.000Z' },
   summary: '지난 버전 설명',
   testUrl: null,
   publishedAt: '2026-11-07T09:00:00.000Z',
@@ -118,6 +121,7 @@ const nextProject: ProjectDetail = {
   name: '다음 프로젝트',
   myRole: 'CLIENT',
   currentVersion: null,
+  isApprover: false,
   approver: null,
 }
 
@@ -605,7 +609,7 @@ describe('ReviewRoomPage 시안 배치', () => {
   })
 
   it.each([currentVersion, initialVersion])(
-    '현재 버전 번호 $number는 검수 중이고 지난 버전 안내가 없다',
+    '현재 버전 번호 $number는 실제 상태를 보이고 지난 버전 안내가 없다',
     async (version) => {
       vi.mocked(getProject).mockResolvedValueOnce({
         ...project,
@@ -613,7 +617,7 @@ describe('ReviewRoomPage 시안 배치', () => {
       })
       renderReview()
 
-      expect(await screen.findByText('검수 중')).toBeDefined()
+      expect(await screen.findByText(version.status === 'APPROVED' ? '승인됨' : '검수 중')).toBeDefined()
       expect(screen.queryByText('읽기 전용')).toBeNull()
       expect(screen.queryByText(/지난 버전이에요/)).toBeNull()
       expect(screen.queryByRole('link', { name: '최신 버전 보기' })).toBeNull()
@@ -623,17 +627,21 @@ describe('ReviewRoomPage 시안 배치', () => {
   it.each(['IN_REVIEW', 'APPROVED'] as const)(
     '지난 버전의 상태가 %s여도 읽기 전용이며 최신 버전으로 돌아갈 수 있다',
     async (status) => {
-      vi.mocked(getVersion).mockResolvedValueOnce({ ...firstRevision, status })
+      vi.mocked(getVersion).mockResolvedValueOnce({
+        ...firstRevision,
+        status,
+        approval: status === 'APPROVED' ? firstRevision.approval : null,
+      })
       renderReview(`/projects/${project.id}?version=${firstRevision.id}`)
 
-      expect(await screen.findByText('읽기 전용')).toBeDefined()
+      expect(await screen.findByText(status === 'APPROVED' ? '승인됨' : '읽기 전용')).toBeDefined()
       expect(screen.queryByText('검수 중')).toBeNull()
       expect(screen.getByText('지난 버전이에요. 읽기만 할 수 있어요.')).toBeDefined()
-      const latest = screen.getByRole('link', { name: '최신 버전 보기' })
-      expect(latest.getAttribute('href')).toBe(`/projects/${project.id}`)
+      const latest = screen.getByRole('button', { name: '최신 버전 보기' })
 
       fireEvent.click(latest)
       expect(await screen.findByText('검수 중')).toBeDefined()
+      expect(getProject).toHaveBeenCalledTimes(2)
       expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${project.id}`)
       expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(currentVersion.id)
       expect(screen.queryByText('읽기 전용')).toBeNull()

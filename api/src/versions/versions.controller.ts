@@ -19,7 +19,9 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import type { AuthenticatedRequest } from '../auth/guards/session.guard.js';
 import { projectNotFound } from '../projects/projects.service.js';
 import { screenNotFound } from '../screens/screens.service.js';
+import { ApprovalService } from './approval.service.js';
 import { DraftScreensService } from './draft-screens.service.js';
+import { ApproveVersionDto } from './dto/approve-version.dto.js';
 import { UpdateDraftDto } from './dto/update-draft.dto.js';
 import { versionNotFound, VersionsService } from './versions.service.js';
 
@@ -34,6 +36,7 @@ export class VersionsController {
   constructor(
     private readonly versions: VersionsService,
     private readonly draftScreens: DraftScreensService,
+    private readonly approval: ApprovalService,
   ) {}
 
   @Get('projects/:id/versions')
@@ -88,5 +91,22 @@ export class VersionsController {
   @HttpCode(HttpStatus.OK)
   publish(@Req() request: AuthenticatedRequest, @Param('id', versionIdPipe) versionId: string) {
     return this.versions.publish(versionId, request.user.id);
+  }
+
+  // 승인자가 승인하기 전에 지금 상태(끝나지 않은 쪽지, 이번 버전의 댓글, 서버 시각)를 본다.
+  @Get('versions/:id/approval-check')
+  approvalCheck(@Req() request: AuthenticatedRequest, @Param('id', versionIdPipe) versionId: string) {
+    return this.approval.check(versionId, request.user.id);
+  }
+
+  // 승인도 게시처럼 버전의 상태를 바꾸는 것이라 200이다.
+  @Post('versions/:id/approve')
+  @HttpCode(HttpStatus.OK)
+  approve(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', versionIdPipe) versionId: string,
+    @Body() body: ApproveVersionDto,
+  ) {
+    return this.approval.approve(versionId, request.user.id, body.seenAt);
   }
 }

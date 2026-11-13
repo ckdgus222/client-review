@@ -17,6 +17,7 @@ const screens: ComponentProps<typeof ResolutionForm>['screens'] = [
   { screenId: 'screen-pc', name: '상품', viewport: 'PC' },
 ]
 const issue: Issue = {
+  currentVersion: { id: versionId, status: 'IN_REVIEW' },
   id: '11111111-1111-4111-8111-111111111111',
   projectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   number: 14,
@@ -58,6 +59,7 @@ const renderForm = (overrides: Partial<ComponentProps<typeof ResolutionForm>> = 
     fetchCount: 3,
     onChanged: vi.fn(),
     onRefresh: vi.fn(),
+    onDraftChange: vi.fn(),
     onGoLatest: vi.fn(),
     ...overrides,
   }
@@ -379,5 +381,71 @@ describe('ResolutionForm', () => {
     await submit()
     expect(submitResolution).not.toHaveBeenCalled()
     expect(screen.getByRole('alert').textContent).toBe('고친 화면을 골라 주세요')
+  })
+})
+
+describe('ResolutionForm 쓰던 글 알림', () => {
+  it('빈 글과 공백은 알리지 않고 설명을 쓰면 알리며 비우면 꺼진다', () => {
+    const { props } = renderForm()
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+    fillSummary(' \n\t ')
+    expect(props.onDraftChange).not.toHaveBeenCalledWith(true)
+    fillSummary('고친 설명')
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    fillSummary(' \n\t ')
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it.each([
+    { name: '읽기 전용', canWrite: false, status: 'OPEN' },
+    { name: '확인 요청', canWrite: true, status: 'READY_FOR_REVIEW' },
+    { name: '확인 완료', canWrite: true, status: 'VERIFIED' },
+    { name: '철회', canWrite: true, status: 'WITHDRAWN' },
+  ] as const)('$name으로 입력이 감춰져도 남은 설명을 알리고 사라지면 꺼진다', ({ canWrite, status }) => {
+    const { props, rerender, unmount } = renderForm()
+    fillSummary('감춰져도 남는 설명')
+    rerender(<ResolutionForm {...props} canWrite={canWrite} issue={{ ...issue, status }} />)
+    expect(screen.queryByRole('textbox', { name: '고친 내용' })).toBeNull()
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    rerender(<ResolutionForm {...props} />)
+    expect(summaryInput().value).toBe('감춰져도 남는 설명')
+    unmount()
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('개발자가 아니면 글이 없다고 알린다', () => {
+    const { props } = renderForm({ isDeveloper: false })
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+    expect(props.onDraftChange).not.toHaveBeenCalledWith(true)
+  })
+
+  it('설명을 보내는 동안 알림이 남고 저장되면 꺼진다', async () => {
+    let resolve!: (value: Issue) => void
+    vi.mocked(submitResolution).mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    const { props } = renderForm()
+    fillSummary('보내는 설명')
+    await submit()
+    expect(submitResolution).toHaveBeenCalledTimes(1)
+    expect(summaryInput().readOnly).toBe(true)
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    await act(async () => {
+      resolve(saved)
+    })
+    expect(summaryInput().value).toBe('')
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('저장 여부를 모르는 실패 뒤에도 쓰던 설명 알림이 남는다', async () => {
+    vi.mocked(submitResolution).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const { props } = renderForm()
+    fillSummary('남겨야 할 설명')
+    await submit()
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+    expect(summaryInput().value).toBe('남겨야 할 설명')
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
   })
 })

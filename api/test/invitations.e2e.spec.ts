@@ -517,6 +517,7 @@ describe('초대 API (e2e)', () => {
       myRole: 'CLIENT',
       currentVersion: null,
       approver: null,
+      isApprover: false,
     });
     const member = await prisma.projectMember.findUniqueOrThrow({
       where: { projectId_userId: { projectId, userId: invited.id } },
@@ -647,7 +648,7 @@ describe('초대 API (e2e)', () => {
     expect(await prisma.projectMember.findUnique({ where: { id: member.id } })).toEqual(member);
     expect(await prisma.projectMember.count({ where: { projectId, userId: invited.id } })).toBe(1);
     const detail = await request(server).get(`/api/projects/${projectId}`).set('Cookie', invitedCookie).expect(200);
-    expect(detail.body).toMatchObject({ myRole: 'CLIENT', approver: null });
+    expect(detail.body).toMatchObject({ myRole: 'CLIENT', approver: null, isApprover: false });
     expect(await prisma.activityEvent.count({ where: { type: 'INVITATION_ACCEPTED', memberId: member.id } })).toBe(2);
   });
 

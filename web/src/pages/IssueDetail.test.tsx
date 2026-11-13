@@ -39,6 +39,7 @@ const photos = [
   { id: 'attachment-3', assetId: 'asset-3', width: 400, height: 300 },
 ]
 const issue: Issue = {
+  currentVersion: { id: versionId, status: 'IN_REVIEW' },
   projectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   canReview: false,
   attempts: [],
@@ -1223,6 +1224,35 @@ describe('IssueDetail 고쳤어요와 확인 연결', () => {
   const reviewButtons = ['확인 완료', '재요청', '철회', '다시 열기']
   const summaryInput = () => screen.getByRole<HTMLTextAreaElement>('textbox', { name: '고친 내용' })
 
+  it.each([
+    ['READY_FOR_REVIEW', '확인 대기 중'],
+    ['IN_PROGRESS', '결과 없음'],
+    ['OPEN', '결과 없음'],
+    ['VERIFIED', '결과 없음'],
+    ['WITHDRAWN', '결과 없음'],
+  ] as const)('%s 쪽지의 가장 최근 결과 없는 줄은 %s으로 보인다', (status, result) => {
+    renderDetail({ issue: { ...ready, status }, screens })
+
+    const history = within(screen.getByRole('region', { name: '고쳤어요 이력' }))
+    expect(history.getByText(`결과: ${result}`)).toBeTruthy()
+    expect(history.queryByText(`결과: ${status === 'READY_FOR_REVIEW' ? '결과 없음' : '확인 대기 중'}`)).toBeNull()
+  })
+
+  it('같은 이력을 둔 채 쪽지 상태가 바뀌면 확인 대기 중 표시도 바뀐다', () => {
+    const { props, rerender } = renderDetail({ issue: ready, screens })
+    expect(screen.getByText('결과: 확인 대기 중')).toBeTruthy()
+
+    rerender(<IssueDetail {...props} issue={{ ...ready, status: 'IN_PROGRESS' }} />)
+
+    expect(screen.getByText('결과: 결과 없음')).toBeTruthy()
+    expect(screen.queryByText('결과: 확인 대기 중')).toBeNull()
+
+    rerender(<IssueDetail {...props} issue={ready} />)
+
+    expect(screen.getByText('결과: 확인 대기 중')).toBeTruthy()
+    expect(screen.queryByText('결과: 결과 없음')).toBeNull()
+  })
+
   it.each(statuses)('개발자에게 %s 상태의 고쳤어요 폼만 규칙대로 보이고 확인하기는 없다', (status) => {
     renderDetail({ issue: { ...issue, status }, screens })
 
@@ -1574,5 +1604,128 @@ describe('IssueDetail 고쳤어요와 확인 연결', () => {
       attemptId: undefined,
     })
     expect(props.onChanged).toHaveBeenCalledExactlyOnceWith({ ...issue, canReview: true })
+  })
+})
+
+describe('IssueDetail 쓰던 글 합치기', () => {
+  it.each(['고친 내용', '철회 사유'])('%s만 써도 알리고 공백만 남기면 꺼지며 쪽지를 닫으면 꺼진다', async (label) => {
+    const { props, unmount } = renderDetail({
+      isDeveloper: label === '고친 내용',
+      issue: { ...issue, canReview: label === '철회 사유' },
+    })
+    if (label === '철회 사유') await click('철회')
+    const input = screen.getByRole('textbox', { name: label })
+    fireEvent.change(input, { target: { value: ' \n\t ' } })
+    expect(props.onDraftChange).not.toHaveBeenCalledWith(true)
+    fireEvent.change(input, { target: { value: '쓰던 글' } })
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    fireEvent.change(input, { target: { value: ' \n\t ' } })
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+    fireEvent.change(input, { target: { value: '닫을 때 남은 글' } })
+    unmount()
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it.each([
+    { label: '고친 내용', first: '댓글' },
+    { label: '고친 내용', first: '고친 내용' },
+    { label: '철회 사유', first: '댓글' },
+    { label: '철회 사유', first: '철회 사유' },
+  ])('댓글과 $label 중 $first만 비우면 알림이 남고 모두 비면 꺼진다', async ({ label, first }) => {
+    const { props } = renderDetail({
+      isDeveloper: label === '고친 내용',
+      issue: { ...issue, canReview: label === '철회 사유' },
+    })
+    if (label === '철회 사유') await click('철회')
+    fillComment('아직 보내지 않은 댓글')
+    fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value: '함께 쓰는 글' } })
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    vi.mocked(props.onDraftChange).mockClear()
+    fireEvent.change(screen.getByRole('textbox', { name: first }), { target: { value: '' } })
+    // 다른 칸이 남아 있으므로 false로 덮어쓰면 안 된다.
+    expect(props.onDraftChange).not.toHaveBeenCalledWith(false)
+    const remaining = first === '댓글' ? label : '댓글'
+    fireEvent.change(screen.getByRole('textbox', { name: remaining }), { target: { value: '' } })
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it.each(['고친 내용', '철회 사유'])('%s 입력이 읽기 전용으로 감춰져도 상세의 알림이 남는다', async (label) => {
+    const { props, rerender } = renderDetail({
+      isDeveloper: label === '고친 내용',
+      issue: { ...issue, canReview: label === '철회 사유' },
+    })
+    if (label === '철회 사유') await click('철회')
+    fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value: '보존할 글' } })
+    rerender(<IssueDetail {...props} canWrite={false} />)
+    expect(screen.queryByRole('textbox', { name: label })).toBeNull()
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    rerender(<IssueDetail {...props} />)
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: label }).value).toBe('보존할 글')
+  })
+
+  it.each([
+    { label: '고친 내용', action: '고쳤어요 보내기', api: submitResolution },
+    { label: '철회 사유', action: '철회하기', api: withdrawIssue },
+  ])('$label을 보내는 동안 알리고 저장돼도 다른 칸의 댓글은 계속 보호한다', async ({ label, action, api }) => {
+    let resolve!: (value: Issue) => void
+    vi.mocked(api).mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    const { props } = renderDetail({
+      isDeveloper: label === '고친 내용',
+      issue: { ...issue, origin: null, canReview: label === '철회 사유' },
+    })
+    if (label === '철회 사유') await click('철회')
+    fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value: '보낼 글' } })
+    await click(action)
+    expect(api).toHaveBeenCalledTimes(1)
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    fillComment('저장 후에도 남을 댓글')
+    vi.mocked(props.onDraftChange).mockClear()
+    await act(async () => {
+      resolve({ ...issue, status: label === '고친 내용' ? 'READY_FOR_REVIEW' : 'WITHDRAWN' })
+    })
+    expect(props.onDraftChange).not.toHaveBeenCalledWith(false)
+    fillComment('')
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it('글이 없는 확인 완료도 상세에서 보내는 중이라고 알리고 끝나면 꺼진다', async () => {
+    let resolve!: (value: Issue) => void
+    vi.mocked(verifyIssue).mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    const ready: Issue = {
+      ...issue,
+      status: 'READY_FOR_REVIEW',
+      canReview: true,
+      attempts: [
+        {
+          id: 'attempt-draft',
+          versionId,
+          versionNumber: 2,
+          screen: null,
+          summary: '고쳤어요',
+          submittedByName: '개발자',
+          createdAt: '2026-11-12T01:00:00.000Z',
+          result: null,
+          reviewedByName: null,
+          reviewedAt: null,
+        },
+      ],
+    }
+    const { props } = renderDetail({ issue: ready, isDeveloper: false })
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
+    await click('확인 완료')
+    expect(verifyIssue).toHaveBeenCalledTimes(1)
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(true)
+    await act(async () => {
+      resolve({ ...ready, status: 'VERIFIED' })
+    })
+    expect(props.onDraftChange).toHaveBeenLastCalledWith(false)
   })
 })

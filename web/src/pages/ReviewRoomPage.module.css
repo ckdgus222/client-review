@@ -84,7 +84,8 @@
   font-size: var(--font-size-sm);
 }
 
-.status[data-current='true'] {
+.status[data-current='true'],
+.status[data-approved='true'] {
   color: var(--color-review-selected);
 }
 
@@ -95,8 +96,14 @@
   border-radius: 50%;
 }
 
-.status[data-current='true'] .dot {
+.status[data-current='true'] .dot,
+.status[data-approved='true'] .dot {
   background: currentColor;
+}
+
+/* 승인됨은 채운 네모다(쪽지의 확인 완료와 같은 모양). 검수 중은 채운 점, 읽기 전용은 빈 점이다. */
+.status[data-approved='true'] .dot {
+  border-radius: 0;
 }
 
 .notice {
@@ -309,4 +316,34 @@
   .inspector:has(> article) > section {
     display: none;
   }
+}
+
+/* 문장 속의 "최신 버전 보기"처럼 화면 상태를 바꾸는 버튼을 링크 모양으로 보인다. */
+.link {
+  composes: linkButton from '../components/LinkButton.module.css';
+}
+
+/* 승인 띠. 승인된 버전을 보는 동안 머리말 아래에 늘 보인다. 안내(.notice)와 같은 자리·여백에, 더 눈에 띄게 테두리를 두른다. */
+.approved {
+  composes: notice;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  border: 1px solid var(--color-review-selected);
+  border-left-width: var(--space-1);
+}
+
+/* 첫 줄("2차가 승인됐어요")은 승인 검토 창에서보다 작게 둔다. ApprovedSummary의 첫 문단이다. */
+.approved p:first-child {
+  font-size: var(--font-size-md);
+}
+
+.approved .link {
+  align-self: flex-start;
+  min-height: 44px;
+}
+
+/* 문단의 기본 바깥 여백을 지운다. 줄 사이는 위의 gap이 띄운다. */
+.approved p {
+  margin: 0;
 }

@@ -26,6 +26,7 @@ model User {
   comments          Comment[]
   submittedAttempts ResolutionAttempt[] @relation("AttemptSubmitter")
   reviewedAttempts  ResolutionAttempt[] @relation("AttemptReviewer")
+  approvals         Approval[]
 
   @@map("users")
 }
@@ -156,6 +157,7 @@ model DeliveryVersion {
   issues      Issue[]
   comments    Comment[]
   attempts    ResolutionAttempt[]
+  approval    Approval?
 
   @@unique([projectId, number])
   // 쪽지의 외래키(Issue.originVersion)가 가리킬 수 있게 (id, project_id)도 고유로 둔다.
@@ -218,6 +220,7 @@ enum ActivityType {
   ISSUE_VERIFIED
   ISSUE_REOPENED
   ISSUE_WITHDRAWN
+  VERSION_APPROVED
 
   @@map("activity_type")
 }
@@ -403,4 +406,19 @@ model ResolutionAttempt {
   // 쪽지의 줄을 오래된 순으로 읽고, 가장 최근 줄을 찾는다.
   @@index([issueId, createdAt])
   @@map("resolution_attempts")
+}
+
+// 버전의 승인 한 번이 한 줄이다. 버전마다 한 번만 승인할 수 있다(version_id 고유). 승인 취소는 없다.
+// summary는 승인한 순간의 쪽지 목록이다. 승인 뒤에 쪽지가 바뀌어도 검수 확인서는 이 목록을 쓴다.
+model Approval {
+  id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  versionId  String          @unique @map("version_id") @db.Uuid
+  version    DeliveryVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  approverId String          @map("approver_id") @db.Uuid
+  approver   User            @relation(fields: [approverId], references: [id], onDelete: Restrict)
+  // 댓글처럼 잠근 뒤의 실제 시각을 DB가 적는다. 코드는 이 칸을 직접 적지 않는다.
+  approvedAt DateTime        @default(dbgenerated("clock_timestamp()")) @map("approved_at") @db.Timestamptz
+  summary    Json
+
+  @@map("approvals")
 }
