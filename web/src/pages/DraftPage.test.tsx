@@ -50,6 +50,8 @@ const user: Me = {
   canCreateProjects: false,
 }
 const project: ProjectDetail = {
+  status: 'ACTIVE',
+  purgeAfter: null,
   id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
@@ -151,8 +153,8 @@ const renderDraft = (id = project.id, basename = '/') => {
 const getCard = (name: string) => screen.getByRole('heading', { name, level: 2 }).closest('li')!
 const expectEditorLocked = () => {
   const editor = screen.getByRole('textbox', { name: '설명' }).closest('section')!
-  for (const control of editor.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement>(
-    'button, input, textarea',
+  for (const control of Array.from(
+    editor.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement>('button, input, textarea'),
   )) {
     expect(control.disabled).toBe(true)
   }

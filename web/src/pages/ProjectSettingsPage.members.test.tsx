@@ -38,6 +38,8 @@ const secondClient: Member = {
   lastSeenAt: null,
 }
 const project: ProjectDetail = {
+  status: 'ACTIVE',
+  purgeAfter: null,
   id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
   name: '초대할 프로젝트',
   myRole: 'DEVELOPER',

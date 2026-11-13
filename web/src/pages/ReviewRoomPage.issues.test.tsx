@@ -62,6 +62,8 @@ vi.mock('../api/issues.ts', async (importOriginal) => ({
 }))
 
 const project: ProjectDetail = {
+  status: 'ACTIVE',
+  purgeAfter: null,
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   name: '쪽지 검수 프로젝트',
   myRole: 'DEVELOPER',

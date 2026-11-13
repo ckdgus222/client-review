@@ -48,6 +48,8 @@ const user: Me = {
 }
 
 const project: ProjectDetail = {
+  status: 'ACTIVE',
+  purgeAfter: null,
   id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
@@ -71,6 +73,8 @@ const createdScreen: Screen = {
 }
 
 const nextProject: ProjectDetail = {
+  status: 'ACTIVE',
+  purgeAfter: null,
   id: '6b62c564-585a-4f05-ae57-8d6b3bc5a47f',
   name: '다음 프로젝트',
   myRole: 'DEVELOPER',

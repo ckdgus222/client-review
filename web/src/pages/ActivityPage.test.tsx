@@ -12,6 +12,8 @@ const user: Me = {
   canCreateProjects: false,
 }
 const project: ProjectDetail = {
+  status: 'ACTIVE',
+  purgeAfter: null,
   id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',

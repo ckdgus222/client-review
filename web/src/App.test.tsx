@@ -94,6 +94,8 @@ describe('App', () => {
       id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
       name: '설정할 프로젝트',
       myRole: 'DEVELOPER' as const,
+      status: 'ACTIVE' as const,
+      purgeAfter: null,
     }
     const prefix = basename === '/' ? '' : basename
     vi.mocked(getMe).mockResolvedValueOnce(user)
@@ -124,6 +126,8 @@ describe('App', () => {
       id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
       name: '이동할 프로젝트',
       myRole: 'DEVELOPER' as const,
+      status: 'ACTIVE' as const,
+      purgeAfter: null,
     }
     const prefix = basename === '/' ? '' : basename
     vi.mocked(getMe).mockResolvedValueOnce(user)

@@ -2,7 +2,15 @@ import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'rea
 import { Link, Navigate, useNavigate } from 'react-router'
 import { logout } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
-import { createProject, listProjects, type MyProject, type ProjectStatus, restoreProject } from '../api/projects.ts'
+import {
+  createProject,
+  daysUntilPurge,
+  listProjects,
+  type MyProject,
+  type ProjectStatus,
+  purgeText,
+  restoreProject,
+} from '../api/projects.ts'
 import { Button } from '../components/Button.tsx'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { TextField } from '../components/TextField.tsx'
@@ -15,11 +23,6 @@ const toMessage = (error: unknown): ReactNode => {
   if (error.status === 422) return '프로젝트 이름은 1~60자로 써 주세요'
   return '잠시 뒤 다시 시도해 주세요'
 }
-
-const DAY_MS = 24 * 60 * 60 * 1000
-
-// 남은 날은 올림이다(1시간 남아도 "1일 뒤"). 0 이하면 정리 작업이 돌기 전이라도 되살릴 수 없다(서버가 7일을 다시 본다).
-const purgeText = (daysLeft: number) => (daysLeft > 0 ? `${daysLeft}일 뒤 완전히 지워져요` : '곧 완전히 지워져요')
 
 const restoreMessage = (error: unknown): ReactNode => {
   if (error instanceof ApiError && error.code === 'RESTORE_PERIOD_OVER') return '되살릴 수 있는 7일이 지났어요'
@@ -34,7 +37,7 @@ const DeletedRow = ({ project, onRestored }: { project: MyProject; onRestored: (
   const [error, setError] = useState<ReactNode>()
   // 줄을 처음 그린 때의 시각으로 센다. 다시 그릴 때마다 시각이 바뀌어 글이 흔들리지 않게 한다.
   const [now] = useState(Date.now)
-  const daysLeft = project.purgeAfter === null ? null : Math.ceil((Date.parse(project.purgeAfter) - now) / DAY_MS)
+  const daysLeft = project.purgeAfter === null ? null : daysUntilPurge(project.purgeAfter, now)
 
   const handleRestore = async () => {
     setSending(true)

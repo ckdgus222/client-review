@@ -5,6 +5,9 @@ import {
   deleteProject,
   restoreProject,
   createProject,
+  daysUntilPurge,
+  purgeText,
+  statusNotice,
   createScreen,
   getProject,
   hideScreen,
@@ -41,6 +44,57 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+
+describe('daysUntilPurge', () => {
+  const now = Date.parse('2026-11-14T12:00:00.000Z')
+
+  it.each([
+    { label: '정확히 7일 남으면', purgeAfter: '2026-11-21T12:00:00.000Z', expected: 7 },
+    { label: '1일보다 1밀리초 더 남으면', purgeAfter: '2026-11-15T12:00:00.001Z', expected: 2 },
+    { label: '정확히 1일 남으면', purgeAfter: '2026-11-15T12:00:00.000Z', expected: 1 },
+    { label: '1밀리초 남으면', purgeAfter: '2026-11-14T12:00:00.001Z', expected: 1 },
+    { label: '남은 시간이 정확히 0이면', purgeAfter: '2026-11-14T12:00:00.000Z', expected: 0 },
+    { label: '정확히 1일 지났으면', purgeAfter: '2026-11-13T12:00:00.000Z', expected: -1 },
+  ])('$label 올림한 $expected일을 돌려준다', ({ purgeAfter, expected }) => {
+    expect(daysUntilPurge(purgeAfter, now)).toBe(expected)
+  })
+
+  it('1밀리초만 지났어도 남은 날은 0 이하다', () => {
+    expect(daysUntilPurge('2026-11-14T11:59:59.999Z', now)).toBeLessThanOrEqual(0)
+  })
+})
+
+describe('purgeText', () => {
+  it.each([1, 2, 7])('%i일 남으면 남은 날을 알려 준다', (daysLeft) => {
+    expect(purgeText(daysLeft)).toBe(`${daysLeft}일 뒤 완전히 지워져요`)
+  })
+
+  it.each([0, -1, -7])('남은 날이 %i이면 곧 완전히 지워진다고 알려 준다', (daysLeft) => {
+    expect(purgeText(daysLeft)).toBe('곧 완전히 지워져요')
+  })
+})
+
+describe('statusNotice', () => {
+  const now = Date.parse('2026-11-14T12:00:00.000Z')
+
+  it('진행 중인 프로젝트에는 띠가 없다', () => {
+    expect(statusNotice({ status: 'ACTIVE', purgeAfter: null }, now)).toBeNull()
+  })
+
+  it('보관한 프로젝트에는 읽기만 할 수 있다는 띠를 보여 준다', () => {
+    expect(statusNotice({ status: 'ARCHIVED', purgeAfter: null }, now)).toBe('보관한 프로젝트예요. 읽기만 할 수 있어요')
+  })
+
+  it.each([
+    { label: '1일보다 1밀리초 더 남으면', purgeAfter: '2026-11-15T12:00:00.001Z', text: '2일 뒤 완전히 지워져요' },
+    { label: '1밀리초 남으면', purgeAfter: '2026-11-14T12:00:00.001Z', text: '1일 뒤 완전히 지워져요' },
+    { label: '남은 시간이 정확히 0이면', purgeAfter: '2026-11-14T12:00:00.000Z', text: '곧 완전히 지워져요' },
+    { label: '1밀리초 지났으면', purgeAfter: '2026-11-14T11:59:59.999Z', text: '곧 완전히 지워져요' },
+    { label: '1일 지났으면', purgeAfter: '2026-11-13T12:00:00.000Z', text: '곧 완전히 지워져요' },
+  ])('삭제 대기에서 $label 알맞은 띠를 보여 준다', ({ purgeAfter, text }) => {
+    expect(statusNotice({ status: 'DELETE_PENDING', purgeAfter }, now)).toBe(`삭제 대기 중인 프로젝트예요. ${text}`)
+  })
 })
 
 describe('listProjects', () => {
@@ -108,6 +162,8 @@ describe('getProject', () => {
     const detail = {
       id: projectId,
       name: project.name,
+      status: 'ACTIVE',
+      purgeAfter: null,
       myRole,
       currentVersion: null,
       isApprover: false,
@@ -124,6 +180,8 @@ describe('getProject', () => {
     const detail = {
       id: projectId,
       name: project.name,
+      status: 'ACTIVE',
+      purgeAfter: null,
       myRole: 'DEVELOPER',
       currentVersion: { id: 'published-version', number: 2 },
       isApprover: false,

@@ -27,6 +27,8 @@ export type ProjectDetail = {
   approver: Approver
   // 내가 승인자인가. 서버가 정해서 알려 준다(화면은 내 멤버 id를 몰라서 approver와 비교할 수 없다).
   isApprover: boolean
+  status: ProjectStatus
+  purgeAfter: string | null
 }
 export type Screen = { id: string; name: string; viewport: Viewport; hiddenAt: string | null }
 
@@ -35,6 +37,24 @@ export const VIEWPORT_LABELS: Record<Viewport, string> = { PC: 'PC', MOBILE: '�
 
 export const screenLabel = (screen: { name: string; viewport: Viewport }) =>
   `${screen.name} · ${VIEWPORT_LABELS[screen.viewport]}`
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+// 목록·검수실·설정이 같은 규칙으로 센다. 남은 날은 올림이다(1시간 남아도 "1일 뒤").
+// 0 이하면 정리 작업이 돌기 전이라도 되살릴 수 없다(서버가 7일을 다시 본다).
+export const daysUntilPurge = (purgeAfter: string, now: number) => Math.ceil((Date.parse(purgeAfter) - now) / DAY_MS)
+
+export const purgeText = (daysLeft: number) =>
+  daysLeft > 0 ? `${daysLeft}일 뒤 완전히 지워져요` : '곧 완전히 지워져요'
+
+// 검수실·설정 화면 위의 띠 글. 진행 중이면 null이다. 쓰기 버튼은 감추지 않고, 누르면 서버의 409를 오류 글로 보인다.
+export const statusNotice = ({ status, purgeAfter }: Pick<ProjectDetail, 'status' | 'purgeAfter'>, now: number) => {
+  if (status === 'ARCHIVED') return '보관한 프로젝트예요. 읽기만 할 수 있어요'
+  if (status === 'DELETE_PENDING' && purgeAfter) {
+    return `삭제 대기 중인 프로젝트예요. ${purgeText(daysUntilPurge(purgeAfter, now))}`
+  }
+  return null
+}
 
 export const listProjects = async (): Promise<MyProject[]> => {
   const response = await apiGet('/projects')
