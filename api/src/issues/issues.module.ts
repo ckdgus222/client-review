@@ -6,10 +6,11 @@ import { IssueAttachmentsService } from './issue-attachments.service.js';
 import { IssueTriageService } from './issue-triage.service.js';
 import { IssuesController } from './issues.controller.js';
 import { IssuesService } from './issues.service.js';
+import { ResolutionService } from './resolution.service.js';
 
 @Module({
   imports: [ProjectsModule, ActivityModule],
   controllers: [IssuesController],
-  providers: [IssuesService, CommentsService, IssueAttachmentsService, IssueTriageService],
+  providers: [IssuesService, CommentsService, IssueAttachmentsService, IssueTriageService, ResolutionService],
 })
 export class IssuesModule {}
