@@ -43,13 +43,6 @@ const toMessage = (error: unknown): ReactNode => {
 
 const isNotFound = (error: unknown) => error instanceof ApiError && error.status === 404
 
-// 화면에 보이던 버전 상세와 방금 받은 상세 중 화면에 쓸 것을 고른다.
-// 승인은 되돌아가지 않는다. 승인됨을 보여 주던 버전이면 보이던 것을 그대로 쓴다. 승인보다 먼저 보낸 요청의
-// "검수 중" 응답이 늦게 와도 화면이 검수 중으로 돌아가지 않는다. 게시한 버전은 상태 말고는 바뀌지 않아서,
-// 버전 상세의 응답이 뒤섞여 와도 이것만 지키면 된다(승인된 뒤에 받은 응답은 보이던 것과 내용이 같다).
-const pickNewer = (shown: VersionDetail | undefined, received: VersionDetail) =>
-  shown?.id === received.id && shown.status === 'APPROVED' ? shown : received
-
 // 어떤 버전을 불러왔는지 함께 적어 둔다. 버전을 바꾼 직후에는 id가 달라서 이전 버전 화면을 보여 주지 않는다.
 type LoadedVersion = { versionId: string; detail?: VersionDetail; missing?: boolean; error?: ReactNode }
 
@@ -179,6 +172,14 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const [notFound, setNotFound] = useState(false)
   const [loadError, setLoadError] = useState<ReactNode>()
   const [loaded, setLoaded] = useState<LoadedVersion>()
+  // 이 화면이 한 번이라도 "승인됨"으로 받은 버전들(버전 id → 그 상세). 승인은 되돌아가지 않아서, 여기 있는 버전은
+  // 그 뒤에 어떤 응답이 와도 승인됨으로 보여 준다. 승인보다 먼저 보낸 조회의 "검수 중" 응답이 늦게 와도,
+  // 다른 버전을 보는 사이에 승인 응답이 와도 맞게 보인다. 게시한 버전은 상태 말고는 바뀌지 않아서 이것만 지키면 된다.
+  const [approvedVersions, setApprovedVersions] = useState<Record<string, VersionDetail>>({})
+  const rememberApproved = useCallback((detail: VersionDetail) => {
+    if (detail.status !== 'APPROVED') return
+    setApprovedVersions((known) => ({ ...known, [detail.id]: detail }))
+  }, [])
   const [selectedScreenId, setSelectedScreenId] = useState<string>()
   const [needsApprover, setNeedsApprover] = useState(false)
   const [loadedIssue, setLoadedIssue] = useState<LoadedIssue>()
@@ -323,7 +324,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
         // 주소의 id는 대문자여도 서버가 받지만, 서버가 돌려주는 projectId는 늘 소문자라 맞춰서 비교한다.
         const belongsHere = detail.projectId === id.toLowerCase() && detail.status !== 'DRAFT'
         if (!belongsHere) return setLoaded({ versionId, missing: true })
-        setLoaded((shown) => ({ versionId, detail: pickNewer(shown?.detail, detail) }))
+        setLoaded({ versionId, detail })
+        rememberApproved(detail)
       })
       .catch((caught) => {
         if (ignore) return
@@ -336,7 +338,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
     return () => {
       ignore = true
     }
-  }, [id, isValidId, versionId, versionReloads])
+  }, [id, isValidId, versionId, versionReloads, rememberApproved])
 
   // 주소의 쪽지는 이 프로젝트의 쪽지 목록에 있을 때만 연다. 두 프로젝트의 멤버면 다른 프로젝트의 쪽지 상세도
   // 서버가 주기 때문에, 상세를 부르기 전에 목록으로 거른다. 주소의 id는 대문자일 수 있어서 소문자로 맞춘다.
@@ -396,11 +398,12 @@ const ReviewRoom = ({ id }: { id: string }) => {
     }
   }, [id, applyList])
 
-  // 서버가 준 버전 상세를 화면에 쓴다(승인 응답, 15초 새로 불러오기). 그 버전을 보여 주고 있을 때만 쓴다.
-  const applyVersion = (detail: VersionDetail) =>
-    setLoaded((shown) =>
-      shown?.detail?.id === detail.id ? { ...shown, detail: pickNewer(shown.detail, detail) } : shown,
-    )
+  // 서버가 준 버전 상세를 화면에 쓴다(승인 응답, 15초 새로 불러오기). 화면에 쓰는 것은 그 버전을 불러와 둔 때뿐이다.
+  // 승인됐다는 것은 늘 기억한다. 다른 버전을 보는 사이에 승인 응답이 와도, 돌아왔을 때 승인됨이 보인다.
+  const applyVersion = (detail: VersionDetail) => {
+    rememberApproved(detail)
+    setLoaded((shown) => (shown?.detail?.id === detail.id ? { ...shown, detail } : shown))
+  }
 
   // 보고 있는 버전의 상세(상태와 승인 정보)만 다시 읽는다. 다른 참여자가 승인했으면 여기서 "승인됨"이 보인다.
   // 프로젝트는 읽지 않아서, 그사이 새 버전이 게시돼도 보던 버전이 저절로 바뀌지 않는다.
@@ -451,7 +454,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
 
   // 불러온 것이 지금 볼 버전의 것일 때만 쓴다. 버전을 바꾼 직후에는 이전 버전의 것이 남아 있다.
   const current = loaded?.versionId === versionId ? loaded : undefined
-  const detail = current?.detail
+  // 승인된 것을 아는 버전이면 그 승인된 상세를 쓴다(approvedVersions 참고).
+  const detail = current?.detail && (approvedVersions[current.detail.id] ?? current.detail)
 
   // 타이머는 한 번만 걸고, 울릴 때마다 그때의 쪽지(openIssueId)로 새로 부른다.
   // 처음 불러오기가 끝나기 전에는 부르지 않는다. 먼저 부르면 목록 요청 번호가 올라가서, 처음 불러오기가 받아 온 쪽지 목록이 버려진다.

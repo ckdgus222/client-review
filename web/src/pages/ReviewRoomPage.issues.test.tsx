@@ -5067,6 +5067,84 @@ describe('ReviewRoomPage 승인 연결', () => {
     },
   )
 
+  it('최신 버전 보기의 상세로 승인됨을 받은 뒤 먼저 시작한 15초 조회가 검수 중으로 와도 읽기 전용이 남는다', async () => {
+    vi.useFakeTimers()
+    const pendingRefresh = deferred<VersionDetail>()
+    await renderRoom(`?issue=${productIssue.id}`)
+    expect(screen.getByText('검수 중')).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: '댓글' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '버전 승인' })).toBeTruthy()
+
+    vi.mocked(getVersion).mockReturnValueOnce(pendingRefresh.promise)
+    await advance()
+    expect(vi.mocked(getVersion).mock.calls).toEqual([[current.id], [current.id]])
+    expect(listIssues).toHaveBeenCalledTimes(2)
+    expect(getIssue).toHaveBeenCalledTimes(2)
+
+    await chooseVersion(initial.id)
+    expect(banner().getByText(/초안이 승인됐어요/)).toBeTruthy()
+    vi.mocked(getVersion).mockImplementation(async (id) => (id === current.id ? approved : initial))
+    await click('최신 버전 보기')
+    expect(getProject).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(getVersion).mock.calls.filter(([id]) => id === current.id)).toHaveLength(3)
+    expect(getVersion).toHaveBeenLastCalledWith(current.id)
+    expect(screen.getByText('승인됨')).toBeTruthy()
+    expect(banner().getByText(/1차가 승인됐어요/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '버전 승인' })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+
+    await act(async () => pendingRefresh.resolve(current))
+
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(current.id)
+    expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+    expect(screen.getByText('승인됨')).toBeTruthy()
+    expect(screen.queryByText('검수 중')).toBeNull()
+    expect(banner().getByText(/1차가 승인됐어요/)).toBeTruthy()
+    expect(banner().getByText(/김승인/)).toBeTruthy()
+    expect(banner().getByText('이 버전은 읽기 전용이에요. 새 요청은 다음 차수에서 할 수 있어요.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '버전 승인' })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '쪽지 쓰기' })).toBeNull()
+    expect(approveVersion).not.toHaveBeenCalled()
+  })
+
+  it('처음부터 승인된 버전은 최신 버전 보기의 늦은 검수 중 상세에도 승인 띠와 읽기 전용이 남는다', async () => {
+    vi.useFakeTimers()
+    const firstVersion = deferred<VersionDetail>()
+    const pendingReload = deferred<VersionDetail>()
+    vi.mocked(getVersion).mockReturnValueOnce(firstVersion.promise)
+    await renderRoom(`?issue=${productIssue.id}`)
+    await advance()
+    expect(getVersion).toHaveBeenCalledExactlyOnceWith(current.id)
+    expect(screen.getByText('불러오는 중이에요.')).toBeTruthy()
+
+    await act(async () => firstVersion.resolve(approved))
+    expect(screen.getByText('승인됨')).toBeTruthy()
+    expect(banner().getByText(/1차가 승인됐어요/)).toBeTruthy()
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+    await advance()
+    expect(getVersion).toHaveBeenCalledExactlyOnceWith(current.id)
+
+    vi.mocked(getVersion).mockReturnValueOnce(pendingReload.promise)
+    await click('최신 버전 보기')
+    expect(getProject).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(getVersion).mock.calls).toEqual([[current.id], [current.id]])
+    expect(screen.getByText('승인됨')).toBeTruthy()
+    await act(async () => pendingReload.resolve(current))
+
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(current.id)
+    expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+    expect(screen.getByText('승인됨')).toBeTruthy()
+    expect(screen.queryByText('검수 중')).toBeNull()
+    expect(banner().getByText(/1차가 승인됐어요/)).toBeTruthy()
+    expect(banner().getByText(/김승인/)).toBeTruthy()
+    expect(banner().getByText('이 버전은 읽기 전용이에요. 새 요청은 다음 차수에서 할 수 있어요.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '버전 승인' })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '쪽지 쓰기' })).toBeNull()
+    expect(approveVersion).not.toHaveBeenCalled()
+  })
+
   it('최신 버전 보기로 다시 부른 같은 버전의 늦은 상세는 방금 받은 승인됨을 덮지 않는다', async () => {
     const pending = deferred<VersionDetail>()
     vi.mocked(createComment).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
@@ -5187,6 +5265,122 @@ describe('ReviewRoomPage 승인 연결', () => {
     expect(screen.queryByRole('button', { name: '버전 승인' })).toBeNull()
     expect(screen.queryByRole('button', { name: '쪽지 쓰기' })).toBeNull()
     expect(getProject).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['승인 응답', '검수 중 상세'] as const)(
+    '승인 중 뒤로·앞으로 돌아와 상세를 기다릴 때 %s부터 도착해도 승인됨과 읽기 전용이 남는다',
+    async (firstResponse) => {
+      const pendingApproval = deferred<VersionDetail>()
+      const pendingVersion = deferred<VersionDetail>()
+      vi.mocked(approveVersion).mockReturnValueOnce(pendingApproval.promise)
+      await renderRoom(`?version=${initial.id}&issue=${productIssue.id}`)
+      await chooseVersion(current.id)
+      expect(screen.getByRole('textbox', { name: '댓글' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: '쪽지 쓰기' })).toBeTruthy()
+      await openApproval()
+      await approve()
+      expect(approveVersion).toHaveBeenCalledExactlyOnceWith(current.id, check.serverTime)
+      expect(modal().getByRole<HTMLButtonElement>('button', { name: '승인 확정' }).disabled).toBe(true)
+
+      await click('브라우저 뒤로 가기')
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(initial.id)
+      expect(photo().getAttribute('src')).toBe('/api/assets/old-current-product')
+      expect(banner().getByText(/초안이 승인됐어요/)).toBeTruthy()
+
+      vi.mocked(getVersion).mockReturnValueOnce(pendingVersion.promise)
+      await click('브라우저 앞으로 가기')
+      expect(queryParams().get('version')).toBe(current.id)
+      expect(vi.mocked(getVersion).mock.calls).toEqual([[initial.id], [current.id], [initial.id], [current.id]])
+      expect(screen.getByText('불러오는 중이에요.')).toBeTruthy()
+      expect(screen.queryByRole('region', { name: '승인 안내' })).toBeNull()
+      expect(screen.queryByRole('dialog')).toBeNull()
+
+      if (firstResponse === '승인 응답') {
+        await act(async () => pendingApproval.resolve(approved))
+        await act(async () => pendingVersion.resolve(current))
+      }
+      if (firstResponse === '검수 중 상세') {
+        await act(async () => pendingVersion.resolve(current))
+        expect(screen.getByText('검수 중')).toBeTruthy()
+        expect(screen.getByRole('textbox', { name: '댓글' })).toBeTruthy()
+        await act(async () => pendingApproval.resolve(approved))
+      }
+
+      expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(current.id)
+      expect(photo().getAttribute('src')).toBe('/api/assets/current-product')
+      expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+      expect(screen.getByText('승인됨')).toBeTruthy()
+      expect(screen.queryByText('검수 중')).toBeNull()
+      expect(banner().getByText(/1차가 승인됐어요/)).toBeTruthy()
+      expect(
+        banner().getByText(`승인자 김승인 · ${timeFormat.format(new Date(approved.approval!.approvedAt))}`),
+      ).toBeTruthy()
+      expect(banner().getByText('이 버전은 읽기 전용이에요. 새 요청은 다음 차수에서 할 수 있어요.')).toBeTruthy()
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(screen.queryByRole('button', { name: '버전 승인' })).toBeNull()
+      expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+      expect(screen.queryByRole('button', { name: '쪽지 쓰기' })).toBeNull()
+    },
+  )
+
+  it('15초 조회로 승인됨을 받은 버전을 떠났다 돌아와 늦은 검수 중 상세를 받아도 승인됨이 남는다', async () => {
+    vi.useFakeTimers()
+    const pendingVersion = deferred<VersionDetail>()
+    await renderRoom(`?issue=${productIssue.id}`)
+    expect(screen.getByRole('textbox', { name: '댓글' })).toBeTruthy()
+    vi.mocked(getVersion).mockResolvedValueOnce(approved)
+    await advance()
+    expect(screen.getByText('승인됨')).toBeTruthy()
+    expect(banner().getByText(/1차가 승인됐어요/)).toBeTruthy()
+
+    await chooseVersion(initial.id)
+    expect(photo().getAttribute('src')).toBe('/api/assets/old-current-product')
+    expect(banner().getByText(/초안이 승인됐어요/)).toBeTruthy()
+    vi.mocked(getVersion).mockReturnValueOnce(pendingVersion.promise)
+    await click('브라우저 뒤로 가기')
+    expect(queryParams().get('version')).toBeNull()
+    expect(getVersion).toHaveBeenLastCalledWith(current.id)
+    expect(screen.getByText('불러오는 중이에요.')).toBeTruthy()
+    await act(async () => pendingVersion.resolve(current))
+
+    expect(photo().getAttribute('src')).toBe('/api/assets/current-product')
+    expect(screen.getByText('승인됨')).toBeTruthy()
+    expect(screen.queryByText('검수 중')).toBeNull()
+    expect(banner().getByText(/1차가 승인됐어요/)).toBeTruthy()
+    expect(banner().getByText(/김승인/)).toBeTruthy()
+    expect(banner().queryByText(/김수정/)).toBeNull()
+    expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '버전 승인' })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '댓글' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '쪽지 쓰기' })).toBeNull()
+  })
+
+  it('지난 버전의 승인을 기억해도 현재 버전에는 그 승인 정보가 섞이지 않고 검수 중으로 쓸 수 있다', async () => {
+    await renderRoom(`?version=${initial.id}&issue=${productIssue.id}`)
+    expect(screen.getByText('승인됨')).toBeTruthy()
+    expect(banner().getByText(/초안이 승인됐어요/)).toBeTruthy()
+    expect(
+      banner().getByText(`승인자 김수정 · ${timeFormat.format(new Date(initial.approval!.approvedAt))}`),
+    ).toBeTruthy()
+
+    await chooseVersion(current.id)
+    expect(getVersion).toHaveBeenLastCalledWith(current.id)
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(current.id)
+    expect(photo().getAttribute('src')).toBe('/api/assets/current-product')
+    expect(screen.getByText('검수 중')).toBeTruthy()
+    expect(screen.queryByText('승인됨')).toBeNull()
+    expect(screen.queryByRole('region', { name: '승인 안내' })).toBeNull()
+    expect(screen.queryByText(/초안이 승인됐어요/)).toBeNull()
+    expect(screen.getByRole('button', { name: '버전 승인' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: '댓글' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '쪽지 쓰기' })).toBeTruthy()
+
+    await click('브라우저 뒤로 가기')
+    expect(screen.getByText('승인됨')).toBeTruthy()
+    expect(banner().getByText(/초안이 승인됐어요/)).toBeTruthy()
+    expect(banner().getByText(/김수정/)).toBeTruthy()
+    expect(banner().queryByText(/1차가 승인됐어요/)).toBeNull()
   })
 
   it.each(['검토 조회', '승인 요청'] as const)(
