@@ -891,3 +891,53 @@ test('15초 버전 조회가 실패해도 보던 사진과 쓰던 댓글은 그�
   await expect(page.getByText('검수 중', { exact: true })).toBeVisible()
   expect(page.url()).toBe(address)
 })
+
+test('범위 밖 확인 요청 쪽지를 남긴 채 승인하면 비교 화면에 확인 버튼이 없고 사진은 보인다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  const latest = await publishVersion(room.project.id, [room.main.id, room.product.id], 1)
+  const attempt = await db.resolutionAttempt.create({ data: {
+    issueId: issue.id,
+    versionId: latest.id,
+    versionScreenId: latest.screens[1].id,
+    summary: '상품 화면의 버튼 색을 고쳤어요',
+    submittedById: room.developer.id,
+  } })
+  await db.issue.update({
+    where: { id: issue.id }, data: { scope: 'OUT_OF_SCOPE', status: 'READY_FOR_REVIEW' },
+  })
+  await loginAs(room.approver.id)
+  await page.goto(`/app/issues/${issue.id}/compare`)
+  await expect(page.getByRole('button', { name: '확인 완료', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '재요청', exact: true })).toBeVisible()
+
+  await page.getByRole('link', { name: '검수실로 돌아가기', exact: true }).click()
+  await expect(photo(page)).toBeVisible()
+  await openApproval(page)
+  await expect(dialog(page).getByText('범위 밖(추가 요청) 쪽지 1개는 이번 승인에서 빼요', { exact: true })).toBeVisible()
+  await approveAndWait(page, latest.id)
+  await expect(dialog(page)).toHaveAccessibleName('1차 승인 완료')
+  await closeApproval(page)
+  await detail(page).getByRole('link', { name: '비교해서 보기', exact: true }).click()
+
+  await expect(page).toHaveURL(new RegExp(`/app/issues/${issue.id}/compare$`))
+  await expect(page.getByRole('heading', { name: `#1 ${issue.title}`, exact: true })).toBeVisible()
+  await expect(page.getByText('확인 요청', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '확인 완료', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '재요청', exact: true })).toHaveCount(0)
+  await expect(page.getByText(attempt.summary, { exact: false })).toBeVisible()
+  const before = page.getByRole('img', { name: '처음 사진 메인 · PC', exact: true })
+  const after = page.getByRole('img', { name: '고친 사진 상품 상세 · PC', exact: true })
+  await expect(before).toBeVisible()
+  await expect(after).toBeVisible()
+  await expect(before).toHaveAttribute('src', `/api/assets/${room.version.screens[0].assetId}`)
+  await expect(after).toHaveAttribute('src', `/api/assets/${latest.screens[1].assetId}`)
+  await expect.poll(async () => before.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1200)
+  await expect.poll(async () => after.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1200)
+  expect(await db.issue.findUniqueOrThrow({ where: { id: issue.id } })).toMatchObject({
+    scope: 'OUT_OF_SCOPE', status: 'READY_FOR_REVIEW',
+  })
+  expect(await db.approval.findUniqueOrThrow({ where: { versionId: latest.id } })).toMatchObject({
+    approverId: room.approver.id,
+  })
+})

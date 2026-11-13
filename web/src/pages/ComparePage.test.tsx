@@ -350,6 +350,89 @@ describe('ComparePage 사진과 내용', () => {
   })
 })
 
+describe('ComparePage 현재 버전의 검수 상태', () => {
+  it('현재 버전이 검수 중이고 가장 최근 고쳤어요가 그 버전이면 확인 완료와 재요청 버튼이 보인다', async () => {
+    renderCompare()
+
+    expect(await screen.findByRole('button', { name: '확인 완료' })).toBeDefined()
+    expect(screen.getByRole('button', { name: '재요청' })).toBeDefined()
+    expect(screen.getByText(latestAttempt.summary, { exact: false })).toBeDefined()
+    expect(screen.queryByText(olderAttempt.summary, { exact: false })).toBeNull()
+  })
+
+  it('현재 버전이 승인됐으면 확인 완료와 재요청 버튼 없이 두 사진과 고친 내용이 보인다', async () => {
+    vi.mocked(getIssue).mockResolvedValueOnce({
+      ...issue,
+      scope: 'OUT_OF_SCOPE',
+      currentVersion: { id: latestAttempt.versionId, status: 'APPROVED' },
+    })
+    renderCompare()
+
+    expect(await screen.findByRole('heading', { name: '#14 주문 버튼을 옮겨 주세요' })).toBeDefined()
+    expect(screen.getByText('확인 요청').getAttribute('data-status')).toBe('READY_FOR_REVIEW')
+    expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '재요청' })).toBeNull()
+    expect(screen.getAllByRole('img')).toHaveLength(2)
+    expect(screen.getByRole('img', { name: /^처음 사진 / }).getAttribute('src')).toBe('/api/assets/origin-photo')
+    expect(screen.getByRole('img', { name: /^고친 사진 / }).getAttribute('src')).toBe('/api/assets/fixed-photo')
+    expect(screen.getByText(latestAttempt.summary, { exact: false })).toBeDefined()
+    expect(screen.getByRole('link', { name: '검수실로 돌아가기' }).getAttribute('href')).toBe(roomUrl)
+  })
+
+  it('현재 버전이 검수 중이어도 가장 최근 고쳤어요가 지난 버전이면 버튼 없이 사진이 보인다', async () => {
+    vi.mocked(getIssue).mockResolvedValueOnce({
+      ...issue,
+      currentVersion: { id: '99999999-9999-4999-8999-999999999999', status: 'IN_REVIEW' },
+    })
+    renderCompare()
+
+    expect(await screen.findByRole('heading', { name: '#14 주문 버튼을 옮겨 주세요' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '재요청' })).toBeNull()
+    expect(screen.getAllByRole('img')).toHaveLength(2)
+    expect(screen.getByRole('img', { name: /^처음 사진 / }).getAttribute('src')).toBe('/api/assets/origin-photo')
+    expect(screen.getByRole('img', { name: /^고친 사진 / }).getAttribute('src')).toBe('/api/assets/fixed-photo')
+    expect(screen.getByText(latestAttempt.summary, { exact: false })).toBeDefined()
+  })
+
+  it('currentVersion이 null이어도 화면이 그려지고 확인 완료와 재요청 버튼은 없다', async () => {
+    vi.mocked(getIssue).mockResolvedValueOnce({ ...issue, currentVersion: null })
+    renderCompare()
+
+    expect(await screen.findByRole('heading', { name: '#14 주문 버튼을 옮겨 주세요' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '재요청' })).toBeNull()
+    expect(screen.getAllByRole('img')).toHaveLength(2)
+    expect(screen.getByText(latestAttempt.summary, { exact: false })).toBeDefined()
+  })
+
+  it('새 버전을 다시 받아 확인 버튼이 사라져도 새 버전 안내와 검수실 링크와 사진이 남는다', async () => {
+    const refreshed = deferred<Issue>()
+    vi.mocked(getIssue).mockResolvedValueOnce(issue).mockReturnValueOnce(refreshed.promise)
+    vi.mocked(verifyIssue).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    renderCompare()
+    fireEvent.click(await screen.findByRole('button', { name: '확인 완료' }))
+    await screen.findByText('새 버전이 올라왔어요.', { exact: false })
+
+    await act(async () =>
+      refreshed.resolve({
+        ...issue,
+        status: 'IN_PROGRESS',
+        currentVersion: { id: '99999999-9999-4999-8999-999999999999', status: 'IN_REVIEW' },
+      }),
+    )
+
+    expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '재요청' })).toBeNull()
+    expect(screen.getByText('새 버전이 올라왔어요.', { exact: false })).toBeDefined()
+    expect(screen.getByRole('link', { name: '검수실에서 최신 버전 보기' }).getAttribute('href')).toBe(roomUrl)
+    expect(screen.getByRole('heading', { name: '#14 주문 버튼을 옮겨 주세요' })).toBeDefined()
+    expect(screen.getAllByRole('img')).toHaveLength(2)
+    expect(screen.getByText(latestAttempt.summary, { exact: false })).toBeDefined()
+    expect(getIssue).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('ComparePage 확인하기', () => {
   it('확인할 수 있는 확인 요청 쪽지는 재요청과 확인 완료만 보인다', async () => {
     renderCompare()

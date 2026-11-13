@@ -112,6 +112,9 @@ const Compare = ({ id }: { id: string }) => {
   }
 
   const { origin } = issue
+  // 확인 완료와 재요청은 보고 있는 고쳤어요 줄의 버전이 현재 버전이고 검수 중일 때만 할 수 있다.
+  // 범위 밖 쪽지는 확인 요청인 채로 버전이 승인될 수 있어서, 늘 버튼을 그리면 승인된 버전에서는 누를 때마다 409다.
+  const canReviewNow = issue.currentVersion?.id === latest.versionId && issue.currentVersion.status === 'IN_REVIEW'
   const fixedPlace = screenLabel({ name: latest.screen.screenName, viewport: latest.screen.viewport })
   return (
     <section className={styles.page}>
@@ -123,7 +126,7 @@ const Compare = ({ id }: { id: string }) => {
       <IssueReview
         issue={issue}
         versionId={latest.versionId}
-        canWrite
+        canWrite={canReviewNow}
         reviewOnly
         fetchCount={fetchCount}
         // 누른 때의 차례를 넘긴다(applyChange).
