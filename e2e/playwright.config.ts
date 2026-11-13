@@ -73,7 +73,8 @@ export default defineConfig({
       // 지난 실행이 남긴 컨테이너를 먼저 지운다. 끝낼 때는 SIGTERM을 docker가 컨테이너로 넘기고 --rm이 지운다.
       command: [
         `docker rm -f ${NGINX_CONTAINER} >/dev/null 2>&1;`,
-        `exec docker run --rm --name ${NGINX_CONTAINER} -p ${NGINX_PORT}:80`,
+        // 127.0.0.1에만 연다. 모든 주소로 열면 같은 망의 다른 기기가 nginx를 거쳐 개발 서버에 닿는다.
+        `exec docker run --rm --name ${NGINX_CONTAINER} -p 127.0.0.1:${NGINX_PORT}:80`,
         '--add-host=host.docker.internal:host-gateway',
         `-v ${repoPath('landing')}:/usr/share/nginx/html:ro`,
         `-v ${repoPath('nginx/landing.conf')}:/etc/nginx/landing.conf:ro`,
