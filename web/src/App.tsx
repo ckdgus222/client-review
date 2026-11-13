@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router'
 import { PageLayout } from './components/PageLayout.tsx'
 import { ActivityPage } from './pages/ActivityPage.tsx'
+import { CertificatePage } from './pages/CertificatePage.tsx'
 import { ComparePage } from './pages/ComparePage.tsx'
 import { DraftPage } from './pages/DraftPage.tsx'
 import { InvitePage } from './pages/InvitePage.tsx'
@@ -20,6 +21,8 @@ const App = () => (
       <Route path="/projects/:id/activity" element={<ActivityPage />} />
       {/* 쪽지의 처음 사진과 고친 사진을 나란히 본다. 쪽지 id만으로 열어서 프로젝트 id는 서버가 알려 준다. */}
       <Route path="/issues/:id/compare" element={<ComparePage />} />
+      {/* 승인된 버전의 검수 확인서. 버전 id만으로 열어서 프로젝트 id는 서버가 알려 준다. */}
+      <Route path="/versions/:id/certificate" element={<CertificatePage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/invite/:token" element={<InvitePage />} />
       {/* 다른 어느 주소와도 맞지 않으면 여기로 온다. */}
