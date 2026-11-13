@@ -1,5 +1,5 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPutForm } from './client.ts'
-import type { IssueStatus } from './issues.ts'
+import type { IssueCategory, IssueScope, IssueStatus } from './issues.ts'
 import type { Viewport } from './projects.ts'
 
 export type VersionStatus = 'DRAFT' | 'IN_REVIEW' | 'APPROVED'
@@ -45,6 +45,19 @@ export type ApprovalCheck = {
     body: string
     createdAt: string
   }[]
+}
+
+// 승인된 버전의 검수 확인서. issues는 승인한 때 저장한 쪽지 목록(번호 순)이라 그 뒤에 쪽지가 바뀌어도 그대로다.
+// counts는 서버가 센다: 범위 안의 확인 완료·철회, 범위 밖 전부.
+export type Certificate = {
+  certificateNumber: string
+  project: { id: string; name: string }
+  version: { id: string; number: number; publishedAt: string }
+  approval: { approverName: string; approvedAt: string }
+  developerName: string
+  screens: { name: string; viewport: Viewport }[]
+  counts: { verified: number; withdrawn: number; outOfScope: number }
+  issues: { number: number; title: string; category: IssueCategory; scope: IssueScope; status: IssueStatus }[]
 }
 
 // 일지는 게시된 버전만 가리켜서 번호가 늘 있다.
@@ -138,6 +151,12 @@ export const approveVersion = async (versionId: string, seenAt: string): Promise
   } finally {
     clearTimeout(timer)
   }
+}
+
+// 승인되지 않은 버전, 없는 버전, 멤버가 아닌 사람에게는 서버가 모두 404 "없는 확인서예요"로 답한다.
+export const getCertificate = async (versionId: string): Promise<Certificate> => {
+  const response = await apiGet(`/versions/${encodeURIComponent(versionId)}/certificate`)
+  return response.json()
 }
 
 export const listActivity = async (projectId: string): Promise<ActivityItem[]> => {

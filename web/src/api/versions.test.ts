@@ -7,6 +7,7 @@ import {
   createDraft,
   getVersion,
   getApprovalCheck,
+  getCertificate,
   listActivity,
   listVersions,
   publishVersion,
@@ -15,6 +16,7 @@ import {
   updateDraft,
   type ActivityItem,
   type ApprovalCheck,
+  type Certificate,
   type DraftChanges,
   type VersionDetail,
   type VersionSummary,
@@ -67,6 +69,24 @@ const approved: VersionDetail = {
   ...published,
   status: 'APPROVED',
   approval: { approverName: '김승인', approvedAt: '2026-11-13T06:11:00.000Z' },
+}
+const certificate: Certificate = {
+  certificateNumber: '057cab8c-808d-4a41-b488-15d4318f1949',
+  project: { id: projectId, name: '쇼핑몰 리뉴얼' },
+  version: { id: versionId, number: 2, publishedAt: '2026-11-10T01:00:00.000Z' },
+  approval: { approverName: '김승인', approvedAt: '2026-11-13T06:10:22.123Z' },
+  developerName: '김개발',
+  screens: [
+    { name: '메인', viewport: 'PC' },
+    { name: '로그인', viewport: 'MOBILE' },
+  ],
+  counts: { verified: 1, withdrawn: 1, outOfScope: 2 },
+  issues: [
+    { number: 1, title: '  <b>버튼 색</b>\n수정  ', category: 'BUG', scope: 'IN_SCOPE', status: 'VERIFIED' },
+    { number: 3, title: '화면 추가', category: 'DESIGN', scope: 'OUT_OF_SCOPE', status: 'OPEN' },
+    { number: 5, title: '문구 변경', category: 'COPY', scope: 'IN_SCOPE', status: 'WITHDRAWN' },
+    { number: 8, title: '추가 요청 완료', category: 'OTHER', scope: 'OUT_OF_SCOPE', status: 'VERIFIED' },
+  ],
 }
 const approvalCheck: ApprovalCheck = {
   serverTime: '2026-11-13T06:10:22.123456Z',
@@ -304,6 +324,7 @@ describe.each([
   },
   { name: 'publishVersion', call: publishVersion, prefix: '/api/versions/', suffix: '/publish' },
   { name: 'getApprovalCheck', call: getApprovalCheck, prefix: '/api/versions/', suffix: '/approval-check' },
+  { name: 'getCertificate', call: getCertificate, prefix: '/api/versions/', suffix: '/certificate' },
   {
     name: 'approveVersion',
     call: (id: string) => approveVersion(id, approvalCheck.serverTime),
@@ -325,6 +346,7 @@ describe.each([
 describe.each([
   { name: 'listVersions', call: () => listVersions(projectId), statuses: [401, 404], codes: [] },
   { name: 'getVersion', call: () => getVersion(versionId), statuses: [401, 404], codes: [] },
+  { name: 'getCertificate', call: () => getCertificate(versionId), statuses: [401, 404, 500], codes: [] },
   {
     name: 'getApprovalCheck',
     call: () => getApprovalCheck(versionId),
@@ -439,6 +461,50 @@ describe('getApprovalCheck', () => {
     await expect(getApprovalCheck(versionId)).resolves.toEqual(body)
 
     expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/versions/${versionId}/approval-check`)
+  })
+})
+
+describe('getCertificate', () => {
+  it.each([0, 2])('%i번 버전의 확인서를 GET하고 모든 칸과 목록 순서를 그대로 돌려준다', async (number) => {
+    const body: Certificate = { ...certificate, version: { ...certificate.version, number } }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(body))
+
+    await expect(getCertificate(versionId)).resolves.toEqual(body)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/versions/${versionId}/certificate`)
+  })
+
+  it('쪽지가 없는 확인서는 0인 집계와 빈 목록을 그대로 돌려준다', async () => {
+    const body: Certificate = {
+      ...certificate,
+      counts: { verified: 0, withdrawn: 0, outOfScope: 0 },
+      issues: [],
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(body))
+
+    await expect(getCertificate(versionId)).resolves.toEqual(body)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/versions/${versionId}/certificate`)
+  })
+
+  it('대문자 UUID도 바꾸지 않고 서버에 보낸다', async () => {
+    const uppercaseId = versionId.toUpperCase()
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(certificate))
+
+    await expect(getCertificate(uppercaseId)).resolves.toEqual(certificate)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/versions/${uppercaseId}/certificate`)
+  })
+
+  it('200 응답의 본문을 읽다가 연결이 끊겨도 원래 오류를 전달한다', async () => {
+    const error = new TypeError('응답을 읽지 못했어요')
+    const response = Response.json(certificate)
+    vi.spyOn(response, 'json').mockRejectedValueOnce(error)
+    vi.mocked(fetch).mockResolvedValueOnce(response)
+
+    await expect(getCertificate(versionId)).rejects.toBe(error)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/versions/${versionId}/certificate`)
   })
 })
 
