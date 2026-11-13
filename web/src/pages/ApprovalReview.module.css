@@ -1,0 +1,106 @@
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* 기본 바깥 여백을 지운다. :where는 우선순위가 0이라 아래 클래스의 여백이 이긴다. */
+.review :where(p, h3, ul) {
+  margin: 0;
+}
+
+.review h3 {
+  font-size: var(--font-size-md);
+}
+
+.approvedTitle {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+}
+
+.hint {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* 쪽지 한 줄: 번호, 제목, 상태. 제목이 길면 줄을 바꾸고 번호와 상태는 한 줄로 둔다. */
+.issues {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  list-style: none;
+}
+
+.issues li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  /* 번호를 손가락으로 누르기 쉽게 줄 높이를 44px로 둔다. */
+  min-height: 44px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.link {
+  composes: linkButton from '../components/LinkButton.module.css';
+  /* 줄 전체 높이가 눌리는 자리가 된다. */
+  align-self: stretch;
+}
+
+.issueTitle {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.comments {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.commentMeta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.commentMeta strong {
+  color: var(--color-text);
+}
+
+.commentBody {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 댓글이 많아 목록이 길어도 승인하기와 실패 안내가 늘 보이게 창 아래에 붙인다.
+   Modal의 .body가 스크롤하고 그 안쪽 여백이 --space-4라서, 그만큼 내려 여백 자리까지 덮는다. */
+.footer {
+  position: sticky;
+  bottom: calc(var(--space-4) * -1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: calc(var(--space-4) * -1);
+  padding: var(--space-3) 0 var(--space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
