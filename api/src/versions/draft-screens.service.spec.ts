@@ -193,6 +193,7 @@ describe('DraftScreensService', () => {
         summary: '초안 설명',
         testUrl: 'https://example.com',
         publishedAt: null,
+        approval: null,
         screens: [
           {
             screenId: screen.id,

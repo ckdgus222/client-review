@@ -30,6 +30,7 @@ describe('버전 API (e2e)', () => {
   let prisma: PrismaService;
   let directory: string;
   let developerId: string;
+  let clientId: string;
   let projectId: string;
   let otherProjectId: string;
   let cookie: string;
@@ -114,6 +115,7 @@ describe('버전 API (e2e)', () => {
     const developer = await prisma.user.create({ data: { email: 'developer@example.com', name: '개발자' } });
     const client = await prisma.user.create({ data: { email: 'client@example.com', name: '클라이언트' } });
     developerId = developer.id;
+    clientId = client.id;
     const project = await prisma.project.create({
       data: {
         name: '버전 검수 프로젝트',
@@ -169,6 +171,7 @@ describe('버전 API (e2e)', () => {
       summary: '',
       testUrl: null,
       publishedAt: null,
+      approval: null,
       screens: [],
     });
     await getDetail(draft.body.id).expect(200).expect(draft.body);
@@ -235,6 +238,84 @@ describe('버전 API (e2e)', () => {
     ]);
   });
 
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    'DB에 만든 승인은 %s의 버전 상세에 승인자 이름과 저장된 시각만 나오고 승인 전에는 null이다',
+    async (role) => {
+      const version = await prisma.deliveryVersion.create({
+        data: {
+          projectId,
+          number: 1,
+          status: 'IN_REVIEW',
+          publishedAt: new Date('2026-01-01T00:00:00Z'),
+          summary: '버전 설명',
+        },
+      });
+      await prisma.project.update({ where: { id: projectId }, data: { currentVersionId: version.id } });
+      const memberCookie = role === 'DEVELOPER' ? cookie : clientCookie;
+      const before = await getDetail(version.id, memberCookie).expect(200);
+      expect(before.body.approval).toBeNull();
+      const approvedAt = new Date('2026-01-03T06:10:22.123Z');
+      const approval = await prisma.approval.create({
+        data: {
+          versionId: version.id,
+          approverId: clientId,
+          approvedAt,
+          summary: {
+            issues: [{ number: 1, title: '승인 당시 쪽지', category: 'BUG', scope: 'IN_SCOPE', status: 'VERIFIED' }],
+          },
+        },
+      });
+      await prisma.deliveryVersion.update({ where: { id: version.id }, data: { status: 'APPROVED' } });
+
+      const detail = await getDetail(version.id, memberCookie).expect(200);
+
+      expect(approval.approvedAt).toEqual(approvedAt);
+      expect(detail.body).toEqual({
+        ...before.body,
+        status: 'APPROVED',
+        approval: { approverName: '클라이언트', approvedAt: approval.approvedAt.toISOString() },
+      });
+    },
+  );
+
+  it('지난 승인은 다음 버전의 생성·수정·사진 올리기·빼기·게시·조회 응답에 섞이지 않는다', async () => {
+    const first = await prisma.deliveryVersion.create({
+      data: { projectId, number: 1, status: 'APPROVED', publishedAt: new Date('2026-01-01T00:00:00Z') },
+    });
+    const approval = await prisma.approval.create({
+      data: {
+        versionId: first.id,
+        approverId: clientId,
+        approvedAt: new Date('2026-01-03T06:10:22.123Z'),
+        summary: { issues: [] },
+      },
+    });
+    await prisma.project.update({ where: { id: projectId }, data: { currentVersionId: first.id } });
+
+    const draft = await createDraft();
+    expect(draft.body.approval).toBeNull();
+    const updated = await patch(draft.body.id).send({ summary: '다음 차수' }).expect(200);
+    expect(updated.body.approval).toBeNull();
+    const screen = await createScreen();
+    const uploaded = await putPhoto(draft.body.id, screen.id).attach('file', photo, 'screen.png').expect(200);
+    expect(uploaded.body.approval).toBeNull();
+    const removed = await removeScreen(draft.body.id, screen.id).expect(200);
+    expect(removed.body.approval).toBeNull();
+    await putPhoto(draft.body.id, screen.id).attach('file', photo, 'screen.png').expect(200);
+    const published = await post(`/api/versions/${draft.body.id}/publish`).expect(200);
+    expect(published.body).toMatchObject({ number: 2, status: 'IN_REVIEW', approval: null });
+
+    for (const memberCookie of [cookie, clientCookie]) {
+      const current = await getDetail(draft.body.id, memberCookie).expect(200);
+      expect(current.body.approval).toBeNull();
+      const previous = await getDetail(first.id, memberCookie).expect(200);
+      expect(previous.body.approval).toEqual({
+        approverName: '클라이언트',
+        approvedAt: approval.approvedAt.toISOString(),
+      });
+    }
+  });
+
   it.each([
     { label: '일반 주소', testUrl: 'https://example.com/review' },
     { label: '2000자 주소', testUrl: httpsPrefix + 'a'.repeat(2000 - httpsPrefix.length) },
@@ -266,7 +347,13 @@ describe('버전 API (e2e)', () => {
     '프로젝트 상세는 %s에게 게시 전 null, 1차 게시 뒤 1차, 2차 게시 뒤 2차를 돌려준다',
     async (role) => {
       const memberCookie = role === 'DEVELOPER' ? cookie : clientCookie;
-      const projectDetail = { id: projectId, name: '버전 검수 프로젝트', myRole: role, approver: null, isApprover: false };
+      const projectDetail = {
+        id: projectId,
+        name: '버전 검수 프로젝트',
+        myRole: role,
+        approver: null,
+        isApprover: false,
+      };
       await request(server)
         .get(`/api/projects/${projectId}`)
         .set('Cookie', memberCookie)
@@ -483,6 +570,7 @@ describe('버전 API (e2e)', () => {
       summary: '',
       testUrl: null,
       publishedAt: null,
+      approval: null,
       screens: copied,
     });
     expect(await prisma.asset.count()).toBe(3);

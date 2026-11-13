@@ -21,6 +21,8 @@ export type VersionDetail = {
   summary: string;
   testUrl: string | null;
   publishedAt: Date | null;
+  // 승인된 버전이면 누가 언제 승인했는지. 승인 전에는 null이다.
+  approval: { approverName: string; approvedAt: Date } | null;
   screens: {
     screenId: string;
     name: string;
@@ -161,7 +163,7 @@ export class VersionsService {
 
   // 권한을 확인한 뒤에만 부른다.
   async loadDetail(versionId: string, db: Prisma.TransactionClient = this.prisma): Promise<VersionDetail> {
-    const { screens, ...version } = await db.deliveryVersion.findUniqueOrThrow({
+    const { screens, approval, ...version } = await db.deliveryVersion.findUniqueOrThrow({
       where: { id: versionId },
       select: {
         id: true,
@@ -171,6 +173,7 @@ export class VersionsService {
         summary: true,
         testUrl: true,
         publishedAt: true,
+        approval: { select: { approvedAt: true, approver: { select: { name: true } } } },
         screens: {
           select: {
             screen: { select: { id: true, name: true, viewport: true, hiddenAt: true } },
@@ -182,6 +185,7 @@ export class VersionsService {
     });
     return {
       ...version,
+      approval: approval && { approverName: approval.approver.name, approvedAt: approval.approvedAt },
       screens: screens.map(({ screen: { id, ...screen }, asset }) => ({ screenId: id, ...screen, asset })),
     };
   }
