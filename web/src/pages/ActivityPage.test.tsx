@@ -342,6 +342,121 @@ describe.each([
   })
 })
 
+describe.each([
+  { type: 'RESOLUTION_SUBMITTED', action: '에 고쳤어요를 보냈어요' },
+  { type: 'ISSUE_VERIFIED', action: '를 확인 완료했어요' },
+  { type: 'ISSUE_REOPENED', action: '를 다시 열었어요' },
+  { type: 'ISSUE_WITHDRAWN', action: '를 철회했어요' },
+] satisfies { type: ActivityItem['type']; action: string }[])('ActivityPage $type 기록', ({ type, action }) => {
+  const issueId = 'a728f97e-4d83-49b2-b50d-38e72d3901c9'
+
+  it.each([13, 14])('#%i 쪽지의 문장과 조사를 그대로 표시하고 그 쪽지로 연결한다', async (number) => {
+    const event: ActivityItem = {
+      ...items[0],
+      type,
+      actorName: '김수정',
+      issue: { id: issueId, number },
+      version: null,
+    }
+    responses.set(activityUrl, () => Response.json([event]))
+    renderActivity()
+
+    const row = within(await screen.findByRole('list')).getByRole('listitem')
+    expect(row.querySelector('span')?.textContent).toBe(`김수정님이 #${number} 쪽지${action}`)
+    expect(within(row).getByRole('link').getAttribute('href')).toBe(`/projects/${project.id}?issue=${issueId}`)
+    expect(row.querySelector('time')?.getAttribute('datetime')).toBe(event.createdAt)
+  })
+
+  it.each(['/', '/app'])('basename %s에서 버전이 함께 있어도 쪽지를 연 검수실로 연결한다', async (basename) => {
+    responses.set(activityUrl, () => Response.json([{ ...items[0], type, issue: { id: issueId, number: 14 } }]))
+    renderActivity(activityPath, basename)
+
+    const row = within(await screen.findByRole('list')).getByRole('listitem')
+    expect(row.querySelector('span')?.textContent).toBe(`최개발님이 #14 쪽지${action}`)
+    expect(within(row).getAllByRole('link')).toHaveLength(1)
+    const prefix = basename === '/' ? '' : basename
+    expect(within(row).getByRole('link').getAttribute('href')).toBe(`${prefix}/projects/${project.id}?issue=${issueId}`)
+  })
+
+  it('쪽지와 버전이 모두 null이면 번호 없는 문장을 링크 없이 표시한다', async () => {
+    responses.set(activityUrl, () => Response.json([{ ...items[0], type, issue: null, version: null }]))
+    renderActivity()
+
+    const row = within(await screen.findByRole('list')).getByRole('listitem')
+    expect(row.querySelector('span')?.textContent).toBe(`최개발님이 쪽지${action}`)
+    expect(within(row).queryByRole('link')).toBeNull()
+    expect(row.querySelector('time')?.getAttribute('datetime')).toBe(items[0].createdAt)
+  })
+})
+
+describe('ActivityPage 고쳤어요와 확인 기록 순서', () => {
+  it.each(['최신순', '같은 시각'])(
+    '%s으로 받은 새 사건과 기존 사건을 서버 순서와 문장 그대로 표시한다',
+    async (order) => {
+      const events = (
+        [
+          {
+            ...items[0],
+            id: 'withdrawn',
+            type: 'ISSUE_WITHDRAWN',
+            actorName: '김수정',
+            issue: { id: 'issue-14', number: 14 },
+          },
+          {
+            ...items[0],
+            id: 'verified',
+            type: 'ISSUE_VERIFIED',
+            actorName: '이승인',
+            issue: { id: 'issue-13', number: 13 },
+          },
+          {
+            ...items[0],
+            id: 'reopened',
+            type: 'ISSUE_REOPENED',
+            actorName: '김수정',
+            issue: { id: 'issue-13', number: 13 },
+          },
+          { ...items[0], id: 'submitted', type: 'RESOLUTION_SUBMITTED', issue: { id: 'issue-13', number: 13 } },
+          { ...items[0], id: 'started', type: 'ISSUE_STARTED', issue: { id: 'issue-13', number: 13 } },
+          {
+            ...items[0],
+            id: 'created',
+            type: 'ISSUE_CREATED',
+            actorName: '김수정',
+            issue: { id: 'issue-13', number: 13 },
+          },
+          items[0],
+        ] satisfies ActivityItem[]
+      ).map((event, index) => ({
+        ...event,
+        createdAt: order === '같은 시각' ? items[0].createdAt : `2026-11-09T09:0${6 - index}:00.000Z`,
+      }))
+      responses.set(activityUrl, () => Response.json(events))
+      renderActivity()
+
+      const rows = within(await screen.findByRole('list')).getAllByRole('listitem')
+      expect(rows.map((row) => row.querySelector('span')?.textContent)).toEqual([
+        '김수정님이 #14 쪽지를 철회했어요',
+        '이승인님이 #13 쪽지를 확인 완료했어요',
+        '김수정님이 #13 쪽지를 다시 열었어요',
+        '최개발님이 #13 쪽지에 고쳤어요를 보냈어요',
+        '최개발님이 #13 쪽지 수정을 시작했어요',
+        '김수정님이 #13 쪽지를 남겼어요',
+        '최개발님이 2차를 게시했어요',
+      ])
+      expect(rows.map((row) => within(row).getByRole('link').getAttribute('href'))).toEqual([
+        `/projects/${project.id}?issue=issue-14`,
+        `/projects/${project.id}?issue=issue-13`,
+        `/projects/${project.id}?issue=issue-13`,
+        `/projects/${project.id}?issue=issue-13`,
+        `/projects/${project.id}?issue=issue-13`,
+        `/projects/${project.id}?issue=issue-13`,
+        `/projects/${project.id}?version=${project.currentVersion!.id}`,
+      ])
+    },
+  )
+})
+
 describe('ActivityPage 로그인과 불러오기', () => {
   it('로그인 확인 중에는 이미 받은 일지와 프로젝트 이름을 보여 주지 않는다', async () => {
     const pending = deferred<Response>()
