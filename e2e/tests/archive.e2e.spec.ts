@@ -208,3 +208,41 @@ test('보관한 프로젝트에서 화면을 만들려 하면 보관한 프로�
   await expect(page.getByRole('alert')).toHaveCount(0)
   expect(await db.screen.count({ where: { projectId: project.id } })).toBe(1)
 })
+
+test('개발자는 삭제 대기 프로젝트의 활동 일지에서 기록 메일 실패를 본다', async ({ page, baseURL, loginAs }) => {
+  const developer = await createUser('archive-developer@example.com', '개발자')
+  const project = await createProject(developer.id, '삭제 기록 확인 프로젝트')
+  await loginAs(developer.id)
+  const deleteResponse = await page.request.post(`/api/projects/${project.id}/delete`, {
+    headers: { Origin: new URL(baseURL!).origin },
+    data: { name: project.name },
+  })
+  expect(deleteResponse.status()).toBe(204)
+
+  // 실제 API가 만든 기록 메일을 실패 상태로 바꾼다. 다섯 번 재시도하는 동작은 api e2e에서 확인한다.
+  const failedMail = await db.notificationDelivery.updateMany({
+    where: {
+      event: { projectId: project.id, type: 'PROJECT_DELETE_REQUESTED' },
+      toEmail: developer.email,
+    },
+    data: { status: 'FAILED', attempts: 5, sentAt: null },
+  })
+  expect(failedMail.count).toBe(1)
+
+  await page.goto('/app/')
+  await page
+    .getByRole('region', { name: '삭제 대기', exact: true })
+    .getByRole('link', { name: project.name, exact: true })
+    .click()
+  await expect(page.getByRole('status')).toHaveText('삭제 대기 중인 프로젝트예요. 7일 뒤 완전히 지워져요')
+  await page.getByRole('link', { name: '활동 일지', exact: true }).click()
+
+  await expect(page).toHaveURL(`/app/projects/${project.id}/activity`)
+  await expect(page.getByRole('heading', { name: `${project.name} 활동 일지`, exact: true })).toBeVisible()
+  const deleteMessage = '개발자님이 프로젝트를 지웠어요(7일 뒤 완전히 지워져요)'
+  const deletedRow = page.getByRole('listitem').filter({ hasText: deleteMessage })
+  await expect(deletedRow).toHaveCount(1)
+  await expect(deletedRow.getByText(deleteMessage, { exact: true })).toBeVisible()
+  await expect(deletedRow.getByText(`메일 실패: ${developer.email}`, { exact: true })).toBeVisible()
+  await expect(deletedRow.getByRole('link')).toHaveCount(0)
+})

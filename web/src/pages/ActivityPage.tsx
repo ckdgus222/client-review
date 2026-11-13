@@ -29,6 +29,11 @@ const describe = ({ type, actorName, version, memberName, issue }: ActivityItem)
     if (!memberName) return `${actorName}님이 승인자를 비웠어요`
     return `${actorName}님이 ${memberName}님을 승인자로 정했어요`
   }
+  // 프로젝트 자체에 한 일(docs/archive.md 정할 것 10). 가리키는 쪽지·버전이 없어서 링크가 아니다.
+  if (type === 'PROJECT_ARCHIVED') return `${actorName}님이 프로젝트를 보관했어요`
+  if (type === 'PROJECT_UNARCHIVED') return `${actorName}님이 프로젝트 보관을 풀었어요`
+  if (type === 'PROJECT_DELETE_REQUESTED') return `${actorName}님이 프로젝트를 지웠어요(7일 뒤 완전히 지워져요)`
+  if (type === 'PROJECT_RESTORED') return `${actorName}님이 프로젝트를 되살렸어요`
   // 번호를 "쪽지" 앞에 둬서 조사가 늘 "쪽지를"이다. 번호 뒤에 조사를 붙이면 13은 "을", 14는 "를"로 갈린다.
   const issueLabel = issue ? `#${issue.number} 쪽지` : '쪽지'
   if (type === 'ISSUE_CREATED') return `${actorName}님이 ${issueLabel}를 남겼어요`

@@ -289,6 +289,33 @@ describe('ActivityPage 기록 표시', () => {
   })
 })
 
+describe('ActivityPage 보관과 삭제 기록', () => {
+  it.each([
+    { type: 'PROJECT_ARCHIVED', message: '개발 담당님이 프로젝트를 보관했어요' },
+    { type: 'PROJECT_UNARCHIVED', message: '개발 담당님이 프로젝트 보관을 풀었어요' },
+    { type: 'PROJECT_DELETE_REQUESTED', message: '개발 담당님이 프로젝트를 지웠어요(7일 뒤 완전히 지워져요)' },
+    { type: 'PROJECT_RESTORED', message: '개발 담당님이 프로젝트를 되살렸어요' },
+  ] satisfies { type: ActivityItem['type']; message: string }[])(
+    '$type 기록은 "$message"를 링크 없이 표시한다',
+    async ({ type, message }) => {
+      const event: ActivityItem = {
+        ...items[0],
+        type,
+        actorName: '개발 담당',
+        issue: null,
+        version: null,
+      }
+      responses.set(activityUrl, () => Response.json([event]))
+      renderActivity()
+
+      const row = within(await screen.findByRole('list')).getByRole('listitem')
+      expect(within(row).getByText(message, { exact: true })).toBeDefined()
+      expect(within(row).queryByRole('link')).toBeNull()
+      expect(row.querySelector('time')?.getAttribute('datetime')).toBe(event.createdAt)
+    },
+  )
+})
+
 describe('ActivityPage 메일 실패 표시', () => {
   it('실패한 주소 목록을 해당 사건 줄 안에 쉼표로 나누어 표시한다', async () => {
     responses.set(activityUrl, () => Response.json([{ ...items[0], mailFailedTo: ['a@b.com', 'c@d.com'] }, items[1]]))
