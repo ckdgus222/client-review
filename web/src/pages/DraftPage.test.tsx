@@ -50,6 +50,8 @@ const user: Me = {
   canCreateProjects: false,
 }
 const project: ProjectDetail = {
+  status: 'ACTIVE',
+  purgeAfter: null,
   id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
@@ -151,8 +153,8 @@ const renderDraft = (id = project.id, basename = '/') => {
 const getCard = (name: string) => screen.getByRole('heading', { name, level: 2 }).closest('li')!
 const expectEditorLocked = () => {
   const editor = screen.getByRole('textbox', { name: '설명' }).closest('section')!
-  for (const control of editor.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement>(
-    'button, input, textarea',
+  for (const control of Array.from(
+    editor.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement>('button, input, textarea'),
   )) {
     expect(control.disabled).toBe(true)
   }
@@ -888,6 +890,76 @@ describe('DraftPage 불러오기 오류', () => {
 })
 
 describe('DraftPage 작업 오류와 재시도', () => {
+  describe.each([
+    ['PROJECT_ARCHIVED', '보관한 프로젝트예요. 보관을 풀어야 바꿀 수 있어요'],
+    ['PROJECT_DELETE_PENDING', '삭제 대기 중인 프로젝트예요. 되살려야 바꿀 수 있어요'],
+  ])('409 %s', (code, message) => {
+    it('게시 전 버전을 만들 수 없으면 상태 안내와 준비 시작 버튼을 남긴다', async () => {
+      vi.mocked(listVersions).mockResolvedValueOnce([versions[1]])
+      vi.mocked(createDraft).mockRejectedValueOnce(new ApiError(409, code))
+      renderDraft()
+      fireEvent.click(await screen.findByRole('button', { name: '1차 준비 시작' }))
+
+      expect((await screen.findByRole('alert')).textContent).toBe(message)
+      expect(createDraft).toHaveBeenCalledExactlyOnceWith(project.id)
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: '1차 준비 시작' }).disabled).toBe(false)
+      expect(screen.queryByRole('textbox')).toBeNull()
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${project.id}/draft`)
+    })
+
+    it('사진 올리기가 거절되면 상태 안내와 원래 사진을 남긴다', async () => {
+      vi.mocked(putScreenPhoto).mockRejectedValueOnce(new ApiError(409, code))
+      renderDraft()
+      fireEvent.change(await screen.findByLabelText('메인 · PC 사진 바꾸기'), { target: { files: [photo] } })
+
+      expect((await screen.findByRole('alert')).textContent).toBe(message)
+      expect(putScreenPhoto).toHaveBeenCalledExactlyOnceWith(draft.id, screens[0].id, photo)
+      expect(screen.getByRole('img', { name: '메인 · PC' }).getAttribute('src')).toBe('/api/assets/pc-photo')
+      expect(screen.getByLabelText<HTMLInputElement>('메인 · PC 사진 바꾸기').disabled).toBe(false)
+    })
+
+    it('사진 빼기가 거절되면 상태 안내와 원래 사진을 남긴다', async () => {
+      vi.mocked(removeDraftScreen).mockRejectedValueOnce(new ApiError(409, code))
+      renderDraft()
+      await screen.findByRole('img', { name: '메인 · PC' })
+      fireEvent.click(within(getCard('메인 · PC')).getByRole('button', { name: '빼기' }))
+
+      expect((await screen.findByRole('alert')).textContent).toBe(message)
+      expect(removeDraftScreen).toHaveBeenCalledExactlyOnceWith(draft.id, screens[0].id)
+      expect(screen.getByRole('img', { name: '메인 · PC' }).getAttribute('src')).toBe('/api/assets/pc-photo')
+      expect(within(getCard('메인 · PC')).getByRole<HTMLButtonElement>('button', { name: '빼기' }).disabled).toBe(false)
+    })
+
+    it('저장이 거절되면 상태 안내와 쓰던 설명을 남긴다', async () => {
+      vi.mocked(updateDraft).mockRejectedValueOnce(new ApiError(409, code))
+      renderDraft()
+      fireEvent.change(await screen.findByRole('textbox', { name: '설명' }), {
+        target: { value: '저장하지 못한 설명' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: '저장' }))
+
+      expect((await screen.findByRole('alert')).textContent).toBe(message)
+      expect(updateDraft).toHaveBeenCalledExactlyOnceWith(draft.id, {
+        summary: '저장하지 못한 설명',
+        testUrl: draft.testUrl,
+      })
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '설명' }).value).toBe('저장하지 못한 설명')
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: '저장' }).disabled).toBe(false)
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: '1차 게시' }).disabled).toBe(true)
+    })
+
+    it('게시가 거절되면 상태 안내를 보여 주고 검수실로 가지 않는다', async () => {
+      vi.mocked(publishVersion).mockRejectedValueOnce(new ApiError(409, code))
+      renderDraft()
+      fireEvent.click(await screen.findByRole('button', { name: '1차 게시' }))
+
+      expect((await screen.findByRole('alert')).textContent).toBe(message)
+      expect(publishVersion).toHaveBeenCalledExactlyOnceWith(draft.id)
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: '1차 게시' }).disabled).toBe(false)
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${project.id}/draft`)
+    })
+  })
+
   it.each([
     { error: new ApiError(413), message: '사진 크기(픽셀)가 너무 크거나 프로젝트 사진 용량(1 GB)이 찼어요' },
     { error: new ApiError(415), message: 'PNG, JPG, WebP 사진만 올릴 수 있어요(움직이는 사진 제외)' },

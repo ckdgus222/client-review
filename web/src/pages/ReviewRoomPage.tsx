@@ -12,7 +12,7 @@ import {
   originLabel,
 } from '../api/issues.ts'
 import { listMembers } from '../api/members.ts'
-import { getProject, type ProjectDetail, screenLabel } from '../api/projects.ts'
+import { getProject, type ProjectDetail, screenLabel, statusNotice } from '../api/projects.ts'
 import {
   assetUrl,
   getVersion,
@@ -168,6 +168,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const isValidId = isUuid(id)
   const { user, error: meError } = useMe()
   const [project, setProject] = useState<ProjectDetail>()
+  // 삭제 대기 띠의 남은 날을 화면을 연 때의 시각으로 센다. 다시 그릴 때마다 글이 흔들리지 않게 한다.
+  const [openedAt] = useState(Date.now)
   const [versions, setVersions] = useState<VersionSummary[]>([])
   const [issues, setIssues] = useState<IssueSummary[]>([])
   const [notFound, setNotFound] = useState(false)
@@ -492,6 +494,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
   if (!project) return <p>불러오는 중이에요.</p>
 
   const isDeveloper = project.myRole === 'DEVELOPER'
+  const notice = statusNotice(project, openedAt)
   // 현재 버전은 가장 최근에 게시한 버전이라, 다음 차수는 그 번호 + 1이다.
   const nextLabel = versionLabel(project.currentVersion ? project.currentVersion.number + 1 : 0)
   // 볼 버전이 있는가. 게시한 버전이 없거나, 주소의 버전이 틀렸거나 없는 버전이면 거짓이다. 불러오는 중이면 참이다.
@@ -834,6 +837,12 @@ const ReviewRoom = ({ id }: { id: string }) => {
           {isDeveloper && <Link to={`/projects/${id}/settings`}>설정</Link>}
         </nav>
       </div>
+      {/* 보관·삭제 대기 띠(docs/archive.md 정할 것 18). 삭제 대기 프로젝트는 개발자만 열 수 있다. */}
+      {notice && (
+        <p className={styles.notice} role="status">
+          {notice}
+        </p>
+      )}
       {/* 프로젝트를 다시 불러와 승인자가 생겼으면 알리지 않는다. */}
       {needsApprover && !project.approver && (
         <p className={styles.notice}>

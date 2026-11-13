@@ -200,6 +200,8 @@ describe('승인 API (e2e)', () => {
             id: projectId,
             name: '승인 검수 프로젝트',
             myRole: viewer.role,
+            status: 'ACTIVE',
+            purgeAfter: null,
             currentVersion: null,
             approver: approver ? { memberId: approver.memberId, name: approver.name } : null,
             isApprover: approver !== null && viewer.memberId === approver.memberId,

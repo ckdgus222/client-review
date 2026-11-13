@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
+import { projectStatusError } from '../api/projects.ts'
 import { ErrorText } from '../components/ErrorText.tsx'
 import type { SubmitError } from '../hooks/useLockedSubmit.ts'
 import styles from './SubmitErrorText.module.css'
@@ -45,7 +46,9 @@ export const SubmitErrorText = ({ error, locked, onGoLatest }: SubmitErrorTextPr
     }
     if (error.kind === 'rejected' && error.status === 422) return '입력한 내용을 확인해 주세요'
     if (error.kind === 'rejected' && error.status === 404) return '찾을 수 없어요. 화면을 새로 고쳐 주세요'
-    return '잠시 뒤 다시 시도해 주세요'
+    // 보관·삭제 대기 프로젝트의 쓰기는 서버가 409로 막는다. 승인 창도 모르는 409를 여기로 넘겨서 같은 문구가 보인다.
+    const statusError = error.kind === 'conflict' ? projectStatusError(error.code) : undefined
+    return statusError ?? '잠시 뒤 다시 시도해 주세요'
   }
 
   return <ErrorText message={describe()} />

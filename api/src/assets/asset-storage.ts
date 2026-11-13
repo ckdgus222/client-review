@@ -24,3 +24,9 @@ export const saveAsset = async (projectId: string, extension: string, data: Buff
 export const deleteAsset = async (storageKey: string) => {
   await rm(assetPath(storageKey), { force: true });
 };
+
+// 프로젝트의 사진 폴더를 통째로 지운다(9번 정리 작업). 폴더 이름은 DB가 준 프로젝트 id라 다른 폴더를 가리킬 수 없다.
+// 이미 없으면 지운 것으로 친다.
+export const deleteProjectAssets = async (projectId: string) => {
+  await rm(assetPath(projectId), { recursive: true, force: true });
+};

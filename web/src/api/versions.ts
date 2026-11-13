@@ -78,6 +78,10 @@ export type ActivityItem = {
     | 'ISSUE_REOPENED'
     | 'ISSUE_WITHDRAWN'
     | 'VERSION_APPROVED'
+    | 'PROJECT_ARCHIVED'
+    | 'PROJECT_UNARCHIVED'
+    | 'PROJECT_DELETE_REQUESTED'
+    | 'PROJECT_RESTORED'
   createdAt: string
   actorName: string
   version: { id: string; number: number } | null

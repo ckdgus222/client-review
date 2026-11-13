@@ -6,6 +6,7 @@ import { assetNotFound } from '../assets/assets.service.js';
 import { processImage } from '../assets/image.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { assertWritable } from '../projects/projects.service.js';
 import { conflict } from '../versions/versions.service.js';
 import { type IssueDetail, issueNotFound, IssuesService } from './issues.service.js';
 
@@ -87,6 +88,7 @@ export class IssueAttachmentsService {
   private async lockForAuthor(tx: Prisma.TransactionClient, issueId: string, userId: string) {
     const issue = await this.issues.lockIssue(tx, issueId, userId);
     if (issue.authorId !== userId) throw notAuthor();
+    assertWritable(issue.projectStatus);
     await this.issues.requireVersionInReview(tx, issue.projectId);
   }
 

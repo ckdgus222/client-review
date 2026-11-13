@@ -1278,6 +1278,7 @@ describe('IssuesService', () => {
           authorId: client.id,
           status: 'IN_PROGRESS',
           role: role === '개발자' ? 'DEVELOPER' : 'CLIENT',
+          projectStatus: 'ACTIVE',
         });
         expect(await readState()).toEqual(before);
       },

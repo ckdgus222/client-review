@@ -125,3 +125,11 @@
   overflow-wrap: anywhere;
   font-size: var(--font-size-sm);
 }
+
+/* 보관·삭제 대기 띠. 제목 아래에서 이 화면이 읽기만 된다는 것을 먼저 알린다. */
+.notice {
+  padding: var(--space-3);
+  border-left: 2px solid var(--color-review-selected);
+  background: var(--color-bg);
+  font-size: var(--font-size-sm);
+}

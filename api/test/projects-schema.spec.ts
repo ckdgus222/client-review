@@ -320,6 +320,9 @@ describe('프로젝트와 화면 테이블', () => {
       currentVersionId: null,
       approverMemberId: null,
       createdAt: expect.any(Date),
+      status: 'ACTIVE',
+      statusBeforeDelete: null,
+      deleteRequestedAt: null,
     });
   });
 

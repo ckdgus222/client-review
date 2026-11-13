@@ -12,7 +12,7 @@ import {
   type Viewport,
 } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { ProjectsService } from '../projects/projects.service.js';
+import { assertWritable, ProjectsService } from '../projects/projects.service.js';
 import { screenNotFound } from '../screens/screens.service.js';
 import { conflict, isUniqueViolation } from '../versions/versions.service.js';
 
@@ -231,7 +231,7 @@ export class IssuesService {
   async create(projectId: string, userId: string, input: NewIssue): Promise<IssueDetail> {
     return this.prisma.$transaction(async (tx) => {
       // 같은 프로젝트의 쓰기를 하나씩 처리한다. 그래서 아래 검사와 번호 정하기 사이에 게시나 다른 쪽지가 끼어들지 못한다.
-      await this.projects.lockProject(tx, projectId);
+      const projectStatus = await this.projects.lockProject(tx, projectId);
       await this.projects.requireMemberRole(projectId, userId, tx);
 
       // 다시 보낸 요청이면 처음 만든 쪽지를 그대로 돌려준다. 버전 검사보다 먼저 본다. 쪽지가 저장된 직후
@@ -241,6 +241,8 @@ export class IssuesService {
         select: { id: true },
       });
       if (existing) return this.loadDetail(existing.id, userId, tx);
+      // 보관·삭제 대기는 새로 쓸 때만 막는다. 저장된 쪽지를 다시 보낸 요청은 위에서 그 쪽지를 받는다.
+      assertWritable(projectStatus);
 
       const versionId = await this.requireVersionInReview(tx, projectId, input.versionId);
       const pin = input.pin ? await this.findPin(tx, versionId, input.pin) : {};
@@ -280,6 +282,7 @@ export class IssuesService {
     return this.prisma.$transaction(async (tx) => {
       const issue = await this.lockIssue(tx, issueId, userId);
       if (issue.role !== ProjectRole.DEVELOPER) throw new ForbiddenException('개발자만 할 수 있어요');
+      assertWritable(issue.projectStatus);
       await this.requireVersionInReview(tx, issue.projectId, viewedVersionId);
       // 두 번 눌러도 두 번째는 여기서 멈춘다. 그래서 다시 보낸 요청을 따로 가려내지 않는다.
       if (issue.status !== IssueStatus.OPEN) throw conflict('ISSUE_NOT_OPEN', '접수 상태의 쪽지만 시작할 수 있어요');
@@ -296,17 +299,17 @@ export class IssuesService {
   }
 
   // 쪽지 id로 오는 쓰기는 모두 여기서 시작한다. 쪽지로 프로젝트를 알아내 그 줄을 잠그고, 잠근 뒤의 쪽지와 내 역할을 읽는다.
-  // 잠그기 전에 읽은 상태는 그사이 바뀌었을 수 있어서 쪽지를 다시 읽는다.
+  // 잠그기 전에 읽은 상태는 그사이 바뀌었을 수 있어서 쪽지를 다시 읽는다. 부른 쪽은 자기 권한을 본 뒤 projectStatus를 assertWritable에 넘긴다.
   async lockIssue(tx: Prisma.TransactionClient, issueId: string, userId: string) {
     const found = await tx.issue.findUnique({ where: { id: issueId }, select: { projectId: true } });
     if (!found) throw issueNotFound();
-    await this.projects.lockProject(tx, found.projectId);
+    const projectStatus = await this.projects.lockProject(tx, found.projectId);
     const role = await this.requireMember(found.projectId, userId, tx);
     const issue = await tx.issue.findUniqueOrThrow({
       where: { id: issueId },
       select: { projectId: true, authorId: true, status: true },
     });
-    return { ...issue, role };
+    return { ...issue, role, projectStatus };
   }
 
   // 쪽지·댓글 쓰기와 상태 변경은 현재 버전이 검수 중일 때만 받는다. 프로젝트 줄을 잠근 뒤에 부른다.

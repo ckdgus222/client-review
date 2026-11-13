@@ -46,6 +46,8 @@ const user: Me = {
   canCreateProjects: false,
 }
 const project: ProjectDetail = {
+  status: 'ACTIVE',
+  purgeAfter: null,
   id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
@@ -117,6 +119,8 @@ const draft: VersionSummary = {
 }
 const versions: VersionSummary[] = [draft, currentVersion, firstRevision, initialVersion]
 const nextProject: ProjectDetail = {
+  status: 'ACTIVE',
+  purgeAfter: null,
   id: '6b62c564-585a-4f05-ae57-8d6b3bc5a47f',
   name: '다음 프로젝트',
   myRole: 'CLIENT',
@@ -179,6 +183,125 @@ beforeEach(() => {
       if (!detail) throw new ApiError(404)
       return detail
     })
+})
+
+describe('ReviewRoomPage 보관과 삭제 대기 띠', () => {
+  const openedAt = Date.parse('2026-11-14T12:00:00.000Z')
+
+  beforeEach(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(openedAt)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    '보관한 프로젝트는 %s에게 머리말 아래 읽기 전용 띠를 보여 준다',
+    async (myRole) => {
+      vi.mocked(getProject).mockResolvedValueOnce({ ...project, myRole, status: 'ARCHIVED' })
+      renderReview()
+      await screen.findByRole('img', { name: '메인 · PC' })
+
+      const notice = screen.getByRole('status', { name: '' })
+      expect(notice.textContent).toBe('보관한 프로젝트예요. 읽기만 할 수 있어요')
+      const heading = screen.getByRole('heading', { level: 1, name: project.name })
+      expect(heading.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+      expect(
+        notice.compareDocumentPosition(screen.getByRole('img', { name: '메인 · PC' })) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).not.toBe(0)
+      const writeButton = screen.getByRole<HTMLButtonElement>('button', { name: '쪽지 쓰기' })
+      expect(writeButton.disabled).toBe(false)
+      fireEvent.click(writeButton)
+      expect(await screen.findByRole('heading', { name: '쪽지 쓰기' })).toBeDefined()
+      if (myRole === 'DEVELOPER') {
+        expect(screen.getByRole('link', { name: '3차 준비' }).getAttribute('href')).toBe(
+          `/projects/${project.id}/draft`,
+        )
+      }
+    },
+  )
+
+  it.each([
+    { label: '1일보다 1밀리초 더 남으면', purgeAfter: '2026-11-15T12:00:00.001Z', text: '2일 뒤 완전히 지워져요' },
+    { label: '1밀리초 남으면', purgeAfter: '2026-11-14T12:00:00.001Z', text: '1일 뒤 완전히 지워져요' },
+    { label: '남은 시간이 정확히 0이면', purgeAfter: '2026-11-14T12:00:00.000Z', text: '곧 완전히 지워져요' },
+    { label: '1밀리초 지났으면', purgeAfter: '2026-11-14T11:59:59.999Z', text: '곧 완전히 지워져요' },
+  ])('삭제 대기에서 $label 띠를 보여 주고 쓰기 버튼을 남긴다', async ({ purgeAfter, text }) => {
+    vi.mocked(getProject).mockResolvedValueOnce({ ...project, status: 'DELETE_PENDING', purgeAfter })
+    renderReview()
+    await screen.findByRole('img', { name: '메인 · PC' })
+
+    expect(screen.getByRole('status', { name: '' }).textContent).toBe(`삭제 대기 중인 프로젝트예요. ${text}`)
+    expect(screen.getByRole('link', { name: '3차 준비' }).getAttribute('href')).toBe(`/projects/${project.id}/draft`)
+    const writeButton = screen.getByRole<HTMLButtonElement>('button', { name: '쪽지 쓰기' })
+    expect(writeButton.disabled).toBe(false)
+    fireEvent.click(writeButton)
+    expect(await screen.findByRole('heading', { name: '쪽지 쓰기' })).toBeDefined()
+  })
+
+  it('진행 중인 프로젝트는 상태 띠 없이 쓰기 버튼을 보여 준다', async () => {
+    renderReview()
+    await screen.findByRole('img', { name: '메인 · PC' })
+
+    expect(screen.queryByRole('status', { name: '' })).toBeNull()
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '쪽지 쓰기' }).disabled).toBe(false)
+  })
+
+  it('보관해도 승인자에게 버전 승인 버튼을 보여 준다', async () => {
+    vi.mocked(getProject).mockResolvedValueOnce({ ...project, myRole: 'CLIENT', isApprover: true, status: 'ARCHIVED' })
+    renderReview()
+    await screen.findByRole('img', { name: '메인 · PC' })
+
+    expect(screen.getByRole('status', { name: '' }).textContent).toBe('보관한 프로젝트예요. 읽기만 할 수 있어요')
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '버전 승인' }).disabled).toBe(false)
+  })
+
+  it.each([
+    { status: 'ARCHIVED' as const, purgeAfter: null, text: '보관한 프로젝트예요. 읽기만 할 수 있어요' },
+    {
+      status: 'DELETE_PENDING' as const,
+      purgeAfter: '2026-11-15T12:00:00.000Z',
+      text: '삭제 대기 중인 프로젝트예요. 1일 뒤 완전히 지워져요',
+    },
+  ])('게시한 버전이 없어도 $status 띠를 보여 준다', async ({ status, purgeAfter, text }) => {
+    vi.mocked(getProject).mockResolvedValueOnce({ ...project, currentVersion: null, status, purgeAfter })
+    vi.mocked(listVersions).mockResolvedValueOnce([draft])
+    renderReview()
+    await screen.findByRole('heading', { name: '아직 게시한 버전이 없어요.' })
+
+    expect(screen.getByRole('status', { name: '' }).textContent).toBe(text)
+    expect(within(screen.getByRole('navigation')).getByRole('link', { name: '초안 준비' }).getAttribute('href')).toBe(
+      `/projects/${project.id}/draft`,
+    )
+  })
+
+  it('조회 응답이 늦거나 화면을 다시 그려도 검수실을 연 시각으로 남은 날을 센다', async () => {
+    const pending = deferred<ProjectDetail>()
+    vi.mocked(getProject).mockReturnValueOnce(pending.promise)
+    renderReview()
+    await waitFor(() => expect(getProject).toHaveBeenCalledExactlyOnceWith(project.id))
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-11-15T12:00:00.000Z'))
+
+    await act(async () =>
+      pending.resolve({
+        ...project,
+        status: 'DELETE_PENDING',
+        purgeAfter: '2026-11-15T12:00:00.001Z',
+      }),
+    )
+    await screen.findByRole('img', { name: '메인 · PC' })
+    expect(screen.getByRole('status', { name: '' }).textContent).toBe(
+      '삭제 대기 중인 프로젝트예요. 2일 뒤 완전히 지워져요',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '메인 · 모바일' }))
+    await screen.findByRole('img', { name: '메인 · 모바일' })
+    expect(screen.getByRole('status', { name: '' }).textContent).toBe(
+      '삭제 대기 중인 프로젝트예요. 2일 뒤 완전히 지워져요',
+    )
+  })
 })
 
 describe('ReviewRoomPage 승인자 알림', () => {

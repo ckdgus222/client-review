@@ -1,6 +1,14 @@
 import { ApiError } from './client.ts'
 import {
+  archiveProject,
+  unarchiveProject,
+  deleteProject,
+  restoreProject,
   createProject,
+  daysUntilPurge,
+  purgeText,
+  statusNotice,
+  projectStatusError,
   createScreen,
   getProject,
   hideScreen,
@@ -18,6 +26,8 @@ const project = {
   name: '새 프로젝트',
   myRole: 'DEVELOPER',
   createdAt: '2026-11-04T09:00:00.000Z',
+  status: 'ACTIVE',
+  purgeAfter: null,
 }
 const screen = { id: screenId, name: '메인', viewport: 'PC', hiddenAt: null }
 const hiddenScreen = { ...screen, hiddenAt: '2026-11-04T10:00:00.000Z' }
@@ -37,11 +47,85 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('projectStatusError', () => {
+  it.each([
+    ['PROJECT_ARCHIVED', '보관한 프로젝트예요. 보관을 풀어야 바꿀 수 있어요'],
+    ['PROJECT_DELETE_PENDING', '삭제 대기 중인 프로젝트예요. 되살려야 바꿀 수 있어요'],
+  ])('%s를 상태에 맞는 안내 문구로 바꾼다', (code, message) => {
+    expect(projectStatusError(code)).toBe(message)
+  })
+
+  it.each([undefined, '', 'SCREEN_EXISTS', 'PROJECT_NAME_MISMATCH', 'UNKNOWN_CODE'])(
+    '상태 오류가 아닌 %s는 각 화면의 기존 오류 처리에 맡긴다',
+    (code) => {
+      expect(projectStatusError(code)).toBeUndefined()
+    },
+  )
+})
+
+describe('daysUntilPurge', () => {
+  const now = Date.parse('2026-11-14T12:00:00.000Z')
+
+  it.each([
+    { label: '정확히 7일 남으면', purgeAfter: '2026-11-21T12:00:00.000Z', expected: 7 },
+    { label: '1일보다 1밀리초 더 남으면', purgeAfter: '2026-11-15T12:00:00.001Z', expected: 2 },
+    { label: '정확히 1일 남으면', purgeAfter: '2026-11-15T12:00:00.000Z', expected: 1 },
+    { label: '1밀리초 남으면', purgeAfter: '2026-11-14T12:00:00.001Z', expected: 1 },
+    { label: '남은 시간이 정확히 0이면', purgeAfter: '2026-11-14T12:00:00.000Z', expected: 0 },
+    { label: '정확히 1일 지났으면', purgeAfter: '2026-11-13T12:00:00.000Z', expected: -1 },
+  ])('$label 올림한 $expected일을 돌려준다', ({ purgeAfter, expected }) => {
+    expect(daysUntilPurge(purgeAfter, now)).toBe(expected)
+  })
+
+  it('1밀리초만 지났어도 남은 날은 0 이하다', () => {
+    expect(daysUntilPurge('2026-11-14T11:59:59.999Z', now)).toBeLessThanOrEqual(0)
+  })
+})
+
+describe('purgeText', () => {
+  it.each([1, 2, 7])('%i일 남으면 남은 날을 알려 준다', (daysLeft) => {
+    expect(purgeText(daysLeft)).toBe(`${daysLeft}일 뒤 완전히 지워져요`)
+  })
+
+  it.each([0, -1, -7])('남은 날이 %i이면 곧 완전히 지워진다고 알려 준다', (daysLeft) => {
+    expect(purgeText(daysLeft)).toBe('곧 완전히 지워져요')
+  })
+})
+
+describe('statusNotice', () => {
+  const now = Date.parse('2026-11-14T12:00:00.000Z')
+
+  it('진행 중인 프로젝트에는 띠가 없다', () => {
+    expect(statusNotice({ status: 'ACTIVE', purgeAfter: null }, now)).toBeNull()
+  })
+
+  it('보관한 프로젝트에는 읽기만 할 수 있다는 띠를 보여 준다', () => {
+    expect(statusNotice({ status: 'ARCHIVED', purgeAfter: null }, now)).toBe('보관한 프로젝트예요. 읽기만 할 수 있어요')
+  })
+
+  it.each([
+    { label: '1일보다 1밀리초 더 남으면', purgeAfter: '2026-11-15T12:00:00.001Z', text: '2일 뒤 완전히 지워져요' },
+    { label: '1밀리초 남으면', purgeAfter: '2026-11-14T12:00:00.001Z', text: '1일 뒤 완전히 지워져요' },
+    { label: '남은 시간이 정확히 0이면', purgeAfter: '2026-11-14T12:00:00.000Z', text: '곧 완전히 지워져요' },
+    { label: '1밀리초 지났으면', purgeAfter: '2026-11-14T11:59:59.999Z', text: '곧 완전히 지워져요' },
+    { label: '1일 지났으면', purgeAfter: '2026-11-13T12:00:00.000Z', text: '곧 완전히 지워져요' },
+  ])('삭제 대기에서 $label 알맞은 띠를 보여 준다', ({ purgeAfter, text }) => {
+    expect(statusNotice({ status: 'DELETE_PENDING', purgeAfter }, now)).toBe(`삭제 대기 중인 프로젝트예요. ${text}`)
+  })
+})
+
 describe('listProjects', () => {
   it('옵션 없이 GET을 한 번 요청하고 역할과 서버의 목록 순서를 그대로 돌려준다', async () => {
     const projects = [
       project,
-      { id: 'another-project', name: '이전 프로젝트', myRole: 'CLIENT', createdAt: '2026-11-03T09:00:00.000Z' },
+      {
+        id: 'another-project',
+        name: '이전 프로젝트',
+        myRole: 'CLIENT',
+        createdAt: '2026-11-03T09:00:00.000Z',
+        status: 'ACTIVE',
+        purgeAfter: null,
+      },
     ]
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(projects), { status: 200 }))
 
@@ -95,6 +179,8 @@ describe('getProject', () => {
     const detail = {
       id: projectId,
       name: project.name,
+      status: 'ACTIVE',
+      purgeAfter: null,
       myRole,
       currentVersion: null,
       isApprover: false,
@@ -111,6 +197,8 @@ describe('getProject', () => {
     const detail = {
       id: projectId,
       name: project.name,
+      status: 'ACTIVE',
+      purgeAfter: null,
       myRole: 'DEVELOPER',
       currentVersion: { id: 'published-version', number: 2 },
       isApprover: false,
@@ -252,6 +340,10 @@ describe.each([
 
 describe.each([
   { name: 'listProjects', call: listProjects, statuses: [401] },
+  { name: 'archiveProject', call: () => archiveProject(projectId), statuses: [401, 403, 404, 409] },
+  { name: 'unarchiveProject', call: () => unarchiveProject(projectId), statuses: [401, 403, 404, 409] },
+  { name: 'deleteProject', call: () => deleteProject(projectId, project.name), statuses: [401, 403, 404, 409, 422] },
+  { name: 'restoreProject', call: () => restoreProject(projectId), statuses: [401, 403, 404, 409] },
   { name: 'createProject', call: () => createProject(project.name), statuses: [401, 403, 422] },
   { name: 'getProject', call: () => getProject(projectId), statuses: [401, 404] },
   { name: 'listScreens', call: () => listScreens(projectId), statuses: [401, 404] },
@@ -302,5 +394,85 @@ describe('화면 이름표', () => {
     { name: '상품 상세', viewport: 'PC' as const, label: '상품 상세 · PC' },
   ])('$label 이름표를 만든다', ({ name, viewport, label }) => {
     expect(screenLabel({ name, viewport })).toBe(label)
+  })
+})
+
+describe('listProjects의 보관과 삭제 상태', () => {
+  it('진행·보관·삭제 대기의 상태와 purgeAfter를 서버 순서와 값 그대로 돌려준다', async () => {
+    const projects = [
+      { ...project, id: 'deleted', status: 'DELETE_PENDING', purgeAfter: '2026-11-21T00:00:00.000Z' },
+      { ...project, id: 'archived', status: 'ARCHIVED', myRole: 'CLIENT' },
+      project,
+    ]
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(projects))
+
+    await expect(listProjects()).resolves.toEqual(projects)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/projects')
+  })
+})
+
+describe.each([
+  { name: 'archiveProject', call: archiveProject, action: 'archive', body: {} },
+  { name: 'unarchiveProject', call: unarchiveProject, action: 'unarchive', body: {} },
+  {
+    name: 'deleteProject',
+    call: (id: string) => deleteProject(id, '  외주 "리뉴얼" \\ 시안\n두 번째 줄  '),
+    action: 'delete',
+    body: { name: '  외주 "리뉴얼" \\ 시안\n두 번째 줄  ' },
+  },
+  { name: 'restoreProject', call: restoreProject, action: 'restore', body: {} },
+])('$name 상태 변경 요청', ({ call, action, body }) => {
+  it('정해진 주소에 JSON POST를 한 번 보내고 본문 없는 204를 처리한다', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 204 }))
+
+    await expect(call(projectId)).resolves.toBeUndefined()
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/projects/${projectId}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  })
+
+  it.each(encodedIds)('$id를 $encoded 한 덩어리로 보내고 본문을 유지한다', async ({ id, encoded }) => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 204 }))
+
+    await expect(call(id)).resolves.toBeUndefined()
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/projects/${encoded}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  })
+})
+
+describe('프로젝트 상태 변경 오류 코드', () => {
+  it.each([
+    { name: 'archiveProject', call: () => archiveProject(projectId), status: 409, code: 'PROJECT_ARCHIVED' },
+    { name: 'unarchiveProject', call: () => unarchiveProject(projectId), status: 409, code: 'PROJECT_NOT_ARCHIVED' },
+    {
+      name: 'deleteProject',
+      call: () => deleteProject(projectId, '다른 이름'),
+      status: 422,
+      code: 'PROJECT_NAME_MISMATCH',
+    },
+    {
+      name: 'deleteProject',
+      call: () => deleteProject(projectId, project.name),
+      status: 409,
+      code: 'PROJECT_DELETE_PENDING',
+    },
+    { name: 'restoreProject', call: () => restoreProject(projectId), status: 409, code: 'PROJECT_NOT_DELETED' },
+    { name: 'restoreProject', call: () => restoreProject(projectId), status: 409, code: 'RESTORE_PERIOD_OVER' },
+  ])('$name의 $code를 ApiError에 담아 전달한다', async ({ call, status, code }) => {
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ code }, { status }))
+
+    const result = call()
+
+    await expect(result).rejects.toBeInstanceOf(ApiError)
+    await expect(result).rejects.toMatchObject({ status, code })
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 })

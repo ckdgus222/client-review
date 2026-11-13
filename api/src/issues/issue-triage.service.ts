@@ -1,6 +1,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { type IssueCategory, type IssueScope, type Prisma, ProjectRole } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { assertWritable } from '../projects/projects.service.js';
 import { type IssueDetail, IssuesService, toDateText } from './issues.service.js';
 
 // 보낸 칸만 바꾼다. dueDate는 "YYYY-MM-DD" 글자이고 null은 마감일을 지운다는 뜻이다(입력 검사 DTO).
@@ -33,7 +34,7 @@ export class IssueTriageService {
   // 바꿀 때마다 바꾸기 전과 뒤 값을 댓글로 남긴다. 쪽지 저장과 댓글이 한 트랜잭션이라 기록 없이 값만 바뀌지 않는다.
   async update(issueId: string, userId: string, change: IssueChange): Promise<IssueDetail> {
     return this.prisma.$transaction(async (tx) => {
-      const { projectId, authorId, role } = await this.issues.lockIssue(tx, issueId, userId);
+      const { projectId, authorId, role, projectStatus } = await this.issues.lockIssue(tx, issueId, userId);
 
       // 칸마다 권한을 먼저 다 본다. 하나라도 안 되면 바꿀 수 있는 칸도 저장하지 않는다.
       const isDeveloper = role === ProjectRole.DEVELOPER;
@@ -43,6 +44,7 @@ export class IssueTriageService {
       if (changesScopeOrDueDate && !isDeveloper) throw new ForbiddenException('개발자만 할 수 있어요');
       // 분류는 개발자와 쓴 사람이 바꾼다. 위를 지난 개발자 아닌 사람의 요청에는 분류만 남아 있다.
       if (!isDeveloper && !isAuthor) throw new ForbiddenException('쓴 사람과 개발자만 할 수 있어요');
+      assertWritable(projectStatus);
       const versionId = await this.issues.requireVersionInReview(tx, projectId, change.versionId);
 
       // 잠근 뒤에 읽은 값과 비교해서 달라진 칸만 고른다. 같은 값이면 쪽지도 댓글도 쓰지 않아서,

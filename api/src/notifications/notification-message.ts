@@ -23,7 +23,14 @@ const versionSubject = (number: number | null) => {
   return number === 0 ? '초안이' : `${number}차가`;
 };
 
-// 기록 메일(접근 철회, 초대 수락)은 사람이 아니라 복원 절차가 읽는다. 11번 복원 때 이 줄들을 시간순으로 다시 적용한다.
+// 기록 메일(접근 철회, 초대 수락, 삭제 대기, 되살리기)은 사람이 아니라 복원 절차가 읽는다. 11번 복원 때 이 줄들을 시간순으로 다시 적용한다.
+export const RECORD_TYPES: ActivityType[] = [
+  ActivityType.MEMBER_REVOKED,
+  ActivityType.INVITATION_ACCEPTED,
+  ActivityType.PROJECT_DELETE_REQUESTED,
+  ActivityType.PROJECT_RESTORED,
+];
+
 const recordMessage = (event: NotificationEvent): NotificationMessage => ({
   subject: `[Client Review 기록] ${event.type}`,
   text: [
@@ -35,9 +42,7 @@ const recordMessage = (event: NotificationEvent): NotificationMessage => ({
 });
 
 export const buildNotificationMessage = (event: NotificationEvent, appUrl: string): NotificationMessage => {
-  if (event.type === ActivityType.MEMBER_REVOKED || event.type === ActivityType.INVITATION_ACCEPTED) {
-    return recordMessage(event);
-  }
+  if (RECORD_TYPES.includes(event.type)) return recordMessage(event);
 
   const project = oneLine(event.projectName);
   const roomUrl = `${appUrl}/app/projects/${event.projectId}`;

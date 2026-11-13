@@ -157,6 +157,20 @@ afterEach(() => {
 })
 
 describe('ApprovalReview', () => {
+  it('승인 409 PROJECT_ARCHIVED는 보관 안내를 보여 주고 승인 성공을 알리지 않는다', async () => {
+    vi.mocked(approveVersion).mockRejectedValueOnce(new ApiError(409, 'PROJECT_ARCHIVED'))
+    const { props } = renderReview()
+    await submitApproval()
+
+    expect(screen.getByRole('alert').textContent).toBe('보관한 프로젝트예요. 보관을 풀어야 바꿀 수 있어요')
+    expect(approveVersion).toHaveBeenCalledExactlyOnceWith(version.id, emptyCheck.serverTime)
+    expect(props.onApproved).not.toHaveBeenCalled()
+    expect(props.onReloadVersion).not.toHaveBeenCalled()
+    expect(props.onGoLatest).not.toHaveBeenCalled()
+    expect(screen.queryByText(confirmation)).toBeNull()
+    expect(button('승인하기').disabled).toBe(false)
+  })
+
   it.each([
     [2, '2차 승인 검토'],
     [0, '초안 승인 검토'],

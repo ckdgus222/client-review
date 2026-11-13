@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import {
   APPROVER_FIELDS,
   type ApproverView,
+  assertWritable,
   ProjectsService,
   toApproverView,
 } from '../projects/projects.service.js';
@@ -64,7 +65,8 @@ export class MembersService {
 
     await this.prisma.$transaction(async (tx) => {
       // 남의 프로젝트 참여자면 "없는 프로젝트" 대신 "없는 참여자"로 답해서, 그 id가 있는지 드러나지 않게 한다.
-      await this.projects.lockForDeveloper(tx, projectId, userId).catch((error: unknown) => {
+      // 보관한 프로젝트에서도 사람은 뺄 수 있다. 누가 볼 수 있는지는 끝난 뒤에도 바꿀 수 있어야 한다(docs/archive.md 정할 것 4).
+      const status = await this.projects.lockAsDeveloper(tx, projectId, userId).catch((error: unknown) => {
         throw error instanceof NotFoundException ? memberNotFound() : error;
       });
       const member = await tx.projectMember.findUniqueOrThrow({
@@ -73,6 +75,8 @@ export class MembersService {
       });
       if (member.revokedAt) throw memberNotFound();
       if (member.role === ProjectRole.DEVELOPER) throw new ForbiddenException('개발자의 접근은 철회할 수 없어요');
+      // 상태 409는 이 API의 404·403 뒤에 본다(정할 것 3).
+      assertWritable(status, { allowArchived: true });
 
       await tx.projectMember.update({ where: { id: memberId }, data: { revokedAt: new Date() } });
       // 그 사람 이메일로 된 쓰지 않은 초대도 무효로 한다. 예전 링크로 다시 들어오지 못한다.

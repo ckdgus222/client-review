@@ -2,7 +2,15 @@ import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'rea
 import { Link, Navigate, useNavigate } from 'react-router'
 import { logout } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
-import { createProject, listProjects, type MyProject } from '../api/projects.ts'
+import {
+  createProject,
+  daysUntilPurge,
+  listProjects,
+  type MyProject,
+  type ProjectStatus,
+  purgeText,
+  restoreProject,
+} from '../api/projects.ts'
 import { Button } from '../components/Button.tsx'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { TextField } from '../components/TextField.tsx'
@@ -16,20 +24,89 @@ const toMessage = (error: unknown): ReactNode => {
   return '잠시 뒤 다시 시도해 주세요'
 }
 
-const ProjectList = ({ projects, error }: { projects?: MyProject[]; error?: ReactNode }) => {
+const restoreMessage = (error: unknown): ReactNode => {
+  if (error instanceof ApiError && error.code === 'RESTORE_PERIOD_OVER') return '되살릴 수 있는 7일이 지났어요'
+  return toMessage(error)
+}
+
+const ProjectLink = ({ project }: { project: MyProject }) => <Link to={`/projects/${project.id}`}>{project.name}</Link>
+
+// 삭제 대기 줄은 개발자에게만 온다(클라이언트 목록에서는 서버가 뺀다).
+const DeletedRow = ({ project, onRestored }: { project: MyProject; onRestored: () => Promise<unknown> }) => {
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<ReactNode>()
+  // 줄을 처음 그린 때의 시각으로 센다. 다시 그릴 때마다 시각이 바뀌어 글이 흔들리지 않게 한다.
+  const [now] = useState(Date.now)
+  const daysLeft = project.purgeAfter === null ? null : daysUntilPurge(project.purgeAfter, now)
+
+  const handleRestore = async () => {
+    setSending(true)
+    setError(undefined)
+    try {
+      await restoreProject(project.id)
+      // 목록을 다시 받을 때까지 버튼을 잠가 두어, 그사이 한 번 더 누르지 못하게 한다.
+      await onRestored()
+    } catch (caught) {
+      setError(restoreMessage(caught))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <li className={styles.deleted}>
+      <ProjectLink project={project} />
+      {daysLeft !== null && <span className={styles.purge}>{purgeText(daysLeft)}</span>}
+      {daysLeft !== null && daysLeft > 0 && (
+        <Button variant="secondary" onClick={handleRestore} disabled={sending}>
+          되살리기
+        </Button>
+      )}
+      {error && <ErrorText message={error} />}
+    </li>
+  )
+}
+
+const GROUPS: { status: ProjectStatus; title: string }[] = [
+  { status: 'ACTIVE', title: '진행 중' },
+  { status: 'ARCHIVED', title: '보관함' },
+  { status: 'DELETE_PENDING', title: '삭제 대기' },
+]
+
+const ProjectList = ({
+  projects,
+  error,
+  onRestored,
+}: {
+  projects?: MyProject[]
+  error?: ReactNode
+  onRestored: () => Promise<unknown>
+}) => {
   if (error) return <ErrorText message={error} />
   if (!projects) return <p>불러오는 중이에요.</p>
   if (projects.length === 0) return <p>아직 프로젝트가 없어요.</p>
 
-  return (
-    <ul className={styles.list}>
-      {projects.map((project) => (
-        <li key={project.id}>
-          <Link to={`/projects/${project.id}`}>{project.name}</Link>
-        </li>
-      ))}
-    </ul>
-  )
+  // 프로젝트가 없는 묶음은 제목도 보이지 않는다.
+  return GROUPS.map(({ status, title }) => {
+    const inGroup = projects.filter((project) => project.status === status)
+    if (inGroup.length === 0) return null
+    return (
+      <section key={status} className={styles.group} aria-label={title}>
+        <h2>{title}</h2>
+        <ul className={styles.list}>
+          {inGroup.map((project) =>
+            status === 'DELETE_PENDING' ? (
+              <DeletedRow key={project.id} project={project} onRestored={onRestored} />
+            ) : (
+              <li key={project.id}>
+                <ProjectLink project={project} />
+              </li>
+            ),
+          )}
+        </ul>
+      </section>
+    )
+  })
 }
 
 export const ProjectListPage = () => {
@@ -51,11 +128,25 @@ export const ProjectListPage = () => {
     }
   }, [])
 
+  // 되살린 뒤에도 다시 부른다. 여러 줄을 잇달아 되살리면 응답이 순서와 다르게 올 수 있어서, 마지막 요청의 응답만 쓴다.
+  const latestLoad = useRef(0)
+  const loadProjects = () => {
+    latestLoad.current += 1
+    const load = latestLoad.current
+    return listProjects()
+      .then((loaded) => {
+        if (load !== latestLoad.current) return
+        setProjects(loaded)
+        setListError(undefined)
+      })
+      .catch((caught) => {
+        if (load === latestLoad.current) setListError(toMessage(caught))
+      })
+  }
+
   // 로그인 확인을 기다리지 않고 같이 부른다. 로그인 안 했으면 401로 실패하지만, 그때 화면은 로그인 화면으로 간다.
   useEffect(() => {
-    listProjects()
-      .then(setProjects)
-      .catch((caught) => setListError(toMessage(caught)))
+    void loadProjects()
   }, [])
 
   const handleCreate = async (event: FormEvent) => {
@@ -109,7 +200,7 @@ export const ProjectListPage = () => {
         </form>
       )}
       {createError && <ErrorText message={createError} />}
-      <ProjectList projects={projects} error={listError} />
+      <ProjectList projects={projects} error={listError} onRestored={loadProjects} />
     </section>
   )
 }

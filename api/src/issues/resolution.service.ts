@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, UnprocessableEntityException } from '@n
 import { ActivityService } from '../activity/activity.service.js';
 import { ActivityType, IssueStatus, type Prisma, ProjectRole, ResolutionResult } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { assertWritable } from '../projects/projects.service.js';
 import { screenNotFound } from '../screens/screens.service.js';
 import { conflict } from '../versions/versions.service.js';
 import { type IssueDetail, IssuesService } from './issues.service.js';
@@ -36,6 +37,7 @@ export class ResolutionService {
     return this.prisma.$transaction(async (tx) => {
       const issue = await this.issues.lockIssue(tx, issueId, userId);
       if (issue.role !== ProjectRole.DEVELOPER) throw new ForbiddenException('개발자만 할 수 있어요');
+      assertWritable(issue.projectStatus);
       const versionId = await this.issues.requireVersionInReview(tx, issue.projectId, input.versionId);
       requireStatus(issue.status, [IssueStatus.OPEN, IssueStatus.IN_PROGRESS]);
       const versionScreenId = await this.findVersionScreen(tx, issueId, versionId, input.screenId);
@@ -124,6 +126,7 @@ export class ResolutionService {
     if (!(await this.issues.canReview(tx, issue, userId))) {
       throw new ForbiddenException('쪽지를 쓴 사람과 승인자만 할 수 있어요');
     }
+    assertWritable(issue.projectStatus);
     const versionId = await this.issues.requireVersionInReview(tx, issue.projectId, viewedVersionId);
     return { issue, versionId };
   }

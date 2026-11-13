@@ -81,6 +81,10 @@ model Project {
   approverMemberId String?           @map("approver_member_id") @db.Uuid
   approver         ProjectMember?    @relation("Approver", fields: [approverMemberId, id], references: [id, projectId], onDelete: NoAction)
   createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  // 삭제 대기일 때만 되돌아갈 상태와 삭제한 시각이 있다. 셋이 함께 있거나 함께 없는 것은 마이그레이션의 CHECK가 지킨다.
+  status             ProjectStatus  @default(ACTIVE)
+  statusBeforeDelete ProjectStatus? @map("status_before_delete")
+  deleteRequestedAt  DateTime?      @map("delete_requested_at") @db.Timestamptz
   members          ProjectMember[]
   screens          Screen[]
   versions         DeliveryVersion[]
@@ -90,6 +94,15 @@ model Project {
   issues           Issue[]
 
   @@map("projects")
+}
+
+// 보관은 읽기만 하는 상태, 삭제 대기는 7일 뒤 정리 작업이 지우는 상태다(docs/archive.md).
+enum ProjectStatus {
+  ACTIVE
+  ARCHIVED
+  DELETE_PENDING
+
+  @@map("project_status")
 }
 
 // 개발자는 Project에 따로 적지 않고 여기 DEVELOPER 줄로만 적는다. 적는 곳이 하나라 두 값이 어긋나지 않는다.
@@ -221,6 +234,10 @@ enum ActivityType {
   ISSUE_REOPENED
   ISSUE_WITHDRAWN
   VERSION_APPROVED
+  PROJECT_ARCHIVED
+  PROJECT_UNARCHIVED
+  PROJECT_DELETE_REQUESTED
+  PROJECT_RESTORED
 
   @@map("activity_type")
 }

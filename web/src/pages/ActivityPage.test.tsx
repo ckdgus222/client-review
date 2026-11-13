@@ -12,6 +12,8 @@ const user: Me = {
   canCreateProjects: false,
 }
 const project: ProjectDetail = {
+  status: 'ACTIVE',
+  purgeAfter: null,
   id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
@@ -285,6 +287,33 @@ describe('ActivityPage 기록 표시', () => {
     expect(screen.getByRole('img', { name: '메인 · PC' }).getAttribute('src')).toBe('/api/assets/photo-0')
     expect(screen.queryByText('2번 버전 설명')).toBeNull()
   })
+})
+
+describe('ActivityPage 보관과 삭제 기록', () => {
+  it.each([
+    { type: 'PROJECT_ARCHIVED', message: '개발 담당님이 프로젝트를 보관했어요' },
+    { type: 'PROJECT_UNARCHIVED', message: '개발 담당님이 프로젝트 보관을 풀었어요' },
+    { type: 'PROJECT_DELETE_REQUESTED', message: '개발 담당님이 프로젝트를 지웠어요(7일 뒤 완전히 지워져요)' },
+    { type: 'PROJECT_RESTORED', message: '개발 담당님이 프로젝트를 되살렸어요' },
+  ] satisfies { type: ActivityItem['type']; message: string }[])(
+    '$type 기록은 "$message"를 링크 없이 표시한다',
+    async ({ type, message }) => {
+      const event: ActivityItem = {
+        ...items[0],
+        type,
+        actorName: '개발 담당',
+        issue: null,
+        version: null,
+      }
+      responses.set(activityUrl, () => Response.json([event]))
+      renderActivity()
+
+      const row = within(await screen.findByRole('list')).getByRole('listitem')
+      expect(within(row).getByText(message, { exact: true })).toBeDefined()
+      expect(within(row).queryByRole('link')).toBeNull()
+      expect(row.querySelector('time')?.getAttribute('datetime')).toBe(event.createdAt)
+    },
+  )
 })
 
 describe('ActivityPage 메일 실패 표시', () => {
