@@ -266,21 +266,45 @@ describe('CertificatePage', () => {
   })
 
   it('게시·승인 시각은 보는 사람의 기본 시간대 대신 Asia/Seoul 기준으로 표시한다', async () => {
-    renderCertificate()
-    await screen.findByRole('heading', { name: '검수 확인서' })
-    const kst = new Intl.DateTimeFormat('ko-KR', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-      timeZone: 'Asia/Seoul',
-    })
-    const overseas = new Intl.DateTimeFormat('ko-KR', {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-      timeZone: 'America/Los_Angeles',
-    })
-    for (const iso of [certificate.version.publishedAt, certificate.approval.approvedAt]) {
-      expect(screen.getByText(kst.format(new Date(iso)))).toBeDefined()
-      expect(screen.queryByText(overseas.format(new Date(iso)))).toBeNull()
+    const originalTimeZone = process.env.TZ
+    process.env.TZ = 'America/Los_Angeles'
+
+    try {
+      expect(new Intl.DateTimeFormat().resolvedOptions().timeZone).toBe('America/Los_Angeles')
+
+      // 모듈을 읽을 때 만들어지는 시각 표기기도 바뀐 시간대로 다시 만든다.
+      vi.resetModules()
+      vi.doMock('../api/versions.ts', async () => {
+        const actual = await vi.importActual<typeof import('../api/versions.ts')>('../api/versions.ts')
+        return { ...actual, getCertificate: vi.fn().mockResolvedValue(structuredClone(certificate)) }
+      })
+      const { timeFormat } = await import('../api/versions.ts')
+      expect(timeFormat.format(new Date(certificate.version.publishedAt))).toBe('2026. 11. 10. 오전 8:05')
+      expect(timeFormat.format(new Date(certificate.approval.approvedAt))).toBe('2026. 11. 12. 오후 10:10')
+
+      const { CertificatePage: OverseasCertificatePage } = await import('./CertificatePage.tsx')
+      render(
+        <MemoryRouter initialEntries={[`/versions/${certificate.version.id}/certificate`]}>
+          <Routes>
+            <Route path="/versions/:id/certificate" element={<OverseasCertificatePage />} />
+          </Routes>
+        </MemoryRouter>,
+      )
+      await screen.findByRole('heading', { name: '검수 확인서' })
+
+      expect(
+        screen
+          .getAllByRole('definition')
+          .slice(2, 4)
+          .map((item) => item.textContent),
+      ).toEqual(['2026. 11. 11. 오전 1:05', '2026. 11. 13. 오후 3:10'])
+      expect(screen.queryByText('2026. 11. 10. 오전 8:05')).toBeNull()
+      expect(screen.queryByText('2026. 11. 12. 오후 10:10')).toBeNull()
+    } finally {
+      if (originalTimeZone === undefined) delete process.env.TZ
+      else process.env.TZ = originalTimeZone
+      vi.doUnmock('../api/versions.ts')
+      vi.resetModules()
     }
   })
 
