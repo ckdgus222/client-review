@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import {
   type ApprovalCheck,
   type ApprovalCheckIssue,
@@ -37,6 +38,8 @@ export const ApprovedSummary = ({ version }: { version: VersionDetail }) => (
       </p>
     )}
     <p>이 버전은 읽기 전용이에요. 새 요청은 다음 차수에서 할 수 있어요.</p>
+    {/* 승인된 버전만 이 글이 보여서 링크도 그때만 있다. 확인서는 승인한 때의 쪽지 목록을 보여 준다. */}
+    <Link to={`/versions/${version.id}/certificate`}>검수 확인서 보기</Link>
   </>
 )
 

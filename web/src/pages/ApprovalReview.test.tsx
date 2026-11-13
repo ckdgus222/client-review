@@ -899,7 +899,7 @@ describe('ApprovedSummary', () => {
     [1, '1차가 승인됐어요'],
     [2, '2차가 승인됐어요'],
   ])('번호 %i를 맞는 조사로 알리고 승인자·시각·읽기 전용 안내를 보여 준다', (number, message) => {
-    render(<ApprovedSummary version={{ ...approved, number }} />)
+    render(<ApprovedSummary version={{ ...approved, number }} />, { wrapper: MemoryRouter })
 
     expect(screen.getByText(message, { exact: false })).toBeDefined()
     expect(
@@ -910,10 +910,23 @@ describe('ApprovedSummary', () => {
   })
 
   it('approval이 null이어도 승인 문장과 읽기 전용 안내는 남고 승인자 줄만 없다', () => {
-    render(<ApprovedSummary version={{ ...approved, approval: null }} />)
+    render(<ApprovedSummary version={{ ...approved, approval: null }} />, { wrapper: MemoryRouter })
 
     expect(screen.getByText('2차가 승인됐어요', { exact: false })).toBeDefined()
     expect(screen.getByText(readonlyMessage)).toBeDefined()
     expect(screen.queryByText(/승인자/)).toBeNull()
+  })
+
+  it.each(['/', '/app'])('basename이 %s이면 그 경로 아래의 버전 확인서로 연결한다', (basename) => {
+    render(
+      <MemoryRouter basename={basename} initialEntries={[basename]}>
+        <ApprovedSummary version={approved} />
+      </MemoryRouter>,
+    )
+
+    const prefix = basename === '/' ? '' : basename
+    expect(screen.getByRole('link', { name: '검수 확인서 보기' }).getAttribute('href')).toBe(
+      `${prefix}/versions/${approved.id}/certificate`,
+    )
   })
 })

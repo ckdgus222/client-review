@@ -180,6 +180,186 @@ test.beforeEach(async () => {
   await resetDatabase();
 });
 
+test("승인자가 승인하면 승인 완료 안내의 링크로 확인서가 열리고 승인자·개발자·쪽지 수·쪽지 목록이 보인다", async ({
+  page,
+  loginAs,
+}) => {
+  const room = await prepareRoom();
+  await loginAs(room.approver.id);
+  await page.goto(`/app/projects/${room.project.id}`);
+  await page.getByRole("button", { name: "버전 승인", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toHaveAccessibleName("1차 승인 검토");
+  await expect(
+    dialog.getByRole("link", { name: "검수 확인서 보기" }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "승인하기", exact: true }).click();
+  await expect(
+    dialog.getByText("이 버전을 승인할까요? 승인하면 되돌릴 수 없어요.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "승인 확정", exact: true }).click();
+  await expect(dialog).toHaveAccessibleName("1차 승인 완료");
+  const link = dialog.getByRole("link", { name: "검수 확인서 보기" });
+  await expect(link).toHaveAttribute(
+    "href",
+    `/app/versions/${room.version.id}/certificate`,
+  );
+
+  await link.click();
+
+  await expect(page).toHaveURL(`/app/versions/${room.version.id}/certificate`);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "검수 확인서" }),
+  ).toBeVisible();
+  const approval = await db.approval.findUniqueOrThrow({
+    where: { versionId: room.version.id },
+  });
+  const approvalTime = new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Seoul",
+  }).format(approval.approvedAt);
+  await expect(
+    page.getByText(`확인서 번호 ${approval.id}`, { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("definition")).toHaveText([
+    "쇼핑몰 리뉴얼",
+    "1차",
+    "2026. 11. 11. 오전 1:05",
+    approvalTime,
+    "홍승인",
+    "김개발",
+  ]);
+  await expect(page.getByRole("listitem")).toHaveText([
+    "홈 · PC",
+    "결제 · 모바일",
+  ]);
+  await expect(
+    page.getByText("확인 완료 1건 · 철회 1건 · 범위 밖(추가 요청) 2건", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole("table")).toHaveCount(2);
+  await expect(page.getByRole("cell")).toHaveText([
+    "#1",
+    "버튼 색",
+    "버그",
+    "확인 완료",
+    "#10",
+    "안내 문장",
+    "문구",
+    "철회",
+    "#2",
+    "배너 추가",
+    "디자인",
+    "접수",
+    "#11",
+    "추가 요청",
+    "기타",
+    "수정 중",
+  ]);
+});
+
+test("개발자와 다른 클라이언트도 승인 띠의 링크로 같은 확인서를 본다", async ({
+  page,
+  loginAs,
+}) => {
+  const room = await prepareRoom();
+  const approval = await seedApproval(room);
+  await loginAs(room.approver.id);
+  await openCertificate(page, room.version.id);
+  const certificateText = await page.getByRole("article").innerText();
+
+  for (const user of [room.developer, room.client]) {
+    await loginAs(user.id);
+    await page.goto(`/app/projects/${room.project.id}`);
+    const banner = page.getByRole("region", { name: "승인 안내", exact: true });
+    await expect(banner).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    const link = banner.getByRole("link", { name: "검수 확인서 보기" });
+    await expect(link).toHaveAttribute(
+      "href",
+      `/app/versions/${room.version.id}/certificate`,
+    );
+
+    await link.click();
+
+    await expect(page).toHaveURL(
+      `/app/versions/${room.version.id}/certificate`,
+    );
+    await expect(
+      page.getByRole("heading", { level: 1, name: "검수 확인서" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(`확인서 번호 ${approval.id}`, { exact: true }),
+    ).toBeVisible();
+    expect(await page.getByRole("article").innerText()).toBe(certificateText);
+  }
+});
+
+test("검수 중에는 확인서 링크가 없고 지난 승인 버전을 고르면 그 버전의 확인서가 열린다", async ({
+  page,
+  loginAs,
+}) => {
+  const room = await prepareRoom();
+  const approval = await seedApproval(room);
+  const next = await db.deliveryVersion.create({
+    data: {
+      projectId: room.project.id,
+      number: 2,
+      status: "IN_REVIEW",
+      publishedAt: new Date("2026-11-14T00:00:00Z"),
+    },
+  });
+  const screens = await db.versionScreen.findMany({
+    where: { versionId: room.version.id },
+  });
+  await db.versionScreen.createMany({
+    data: screens.map(({ screenId, assetId }) => ({
+      versionId: next.id,
+      screenId,
+      assetId,
+    })),
+  });
+  await db.project.update({
+    where: { id: room.project.id },
+    data: { currentVersionId: next.id },
+  });
+  await loginAs(room.client.id);
+  await page.goto(`/app/projects/${room.project.id}`);
+  const picker = page.getByRole("combobox", { name: "버전", exact: true });
+  await expect(picker).toHaveValue(next.id);
+  await expect(page.getByText("검수 중", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "검수 확인서 보기" }),
+  ).toHaveCount(0);
+
+  await picker.selectOption(room.version.id);
+  const link = page
+    .getByRole("region", { name: "승인 안내", exact: true })
+    .getByRole("link", { name: "검수 확인서 보기" });
+  await expect(link).toHaveAttribute(
+    "href",
+    `/app/versions/${room.version.id}/certificate`,
+  );
+  await link.click();
+
+  await expect(page).toHaveURL(`/app/versions/${room.version.id}/certificate`);
+  await expect(
+    page.getByText(`확인서 번호 ${approval.id}`, { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "검수실로 돌아가기" }).click();
+  await expect(picker).toHaveValue(room.version.id);
+  await expect(link).toBeVisible();
+  await picker.selectOption(next.id);
+  await expect(page.getByText("검수 중", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "검수 확인서 보기" }),
+  ).toHaveCount(0);
+});
+
 test("승인 뒤 다음 버전에서 쪽지를 다시 열어도 확인서의 쪽지 목록은 승인 때 그대로다", async ({
   page,
   loginAs,
