@@ -127,7 +127,9 @@ describe('App', () => {
     }
     const prefix = basename === '/' ? '' : basename
     vi.mocked(getMe).mockResolvedValueOnce(user)
-    vi.mocked(listProjects).mockResolvedValue([{ ...project, createdAt: '2026-11-05T00:00:00.000Z' }])
+    vi.mocked(listProjects).mockResolvedValue([
+      { ...project, createdAt: '2026-11-05T00:00:00.000Z', status: 'ACTIVE', purgeAfter: null },
+    ])
     const version = {
       approval: null,
       id: 'de167c5a-1eae-44cb-969a-818bb9875044',

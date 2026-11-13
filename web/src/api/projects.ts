@@ -3,8 +3,17 @@ import { apiGet, apiPost } from './client.ts'
 export type ProjectRole = 'DEVELOPER' | 'CLIENT'
 export type Viewport = 'PC' | 'MOBILE'
 
-// 시각은 JSON으로 와서 글자(ISO 문자열)다.
-export type MyProject = { id: string; name: string; myRole: ProjectRole; createdAt: string }
+// 진행 중, 보관(읽기만), 삭제 대기(7일 안에 되살릴 수 있음).
+export type ProjectStatus = 'ACTIVE' | 'ARCHIVED' | 'DELETE_PENDING'
+// 시각은 JSON으로 와서 글자(ISO 문자열)다. purgeAfter는 삭제 대기일 때만 있는 "완전히 지워지는 때"다.
+export type MyProject = {
+  id: string
+  name: string
+  myRole: ProjectRole
+  createdAt: string
+  status: ProjectStatus
+  purgeAfter: string | null
+}
 // 서버의 클라이언트 정원과 같다(전체 기획 5장). 바꾸면 서버도 함께 바꾼다.
 export const MAX_CLIENTS = 5
 // 승인자는 이 프로젝트의 클라이언트 한 명이다. 정하지 않았으면 null이다.
@@ -43,6 +52,24 @@ export const createProject = async (name: string): Promise<MyProject> => {
 export const getProject = async (id: string): Promise<ProjectDetail> => {
   const response = await apiGet(`/projects/${encodeURIComponent(id)}`)
   return response.json()
+}
+
+// 보관·보관 풀기·지우기·되살리기는 개발자만 한다. 성공하면 본문 없이 204가 온다.
+export const archiveProject = async (id: string) => {
+  await apiPost(`/projects/${encodeURIComponent(id)}/archive`)
+}
+
+export const unarchiveProject = async (id: string) => {
+  await apiPost(`/projects/${encodeURIComponent(id)}/unarchive`)
+}
+
+// 실수로 지우지 않게 서버가 프로젝트 이름을 다시 본다.
+export const deleteProject = async (id: string, name: string) => {
+  await apiPost(`/projects/${encodeURIComponent(id)}/delete`, { name })
+}
+
+export const restoreProject = async (id: string) => {
+  await apiPost(`/projects/${encodeURIComponent(id)}/restore`)
 }
 
 export const listScreens = async (projectId: string): Promise<Screen[]> => {

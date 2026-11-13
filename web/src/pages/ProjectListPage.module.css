@@ -57,15 +57,36 @@
   border-top: 1px solid var(--color-border);
 }
 
+.list li {
+  border-bottom: 1px solid var(--color-border);
+}
+
 /* 줄 전체를 눌러 들어갈 수 있게 링크를 줄 폭으로 넓힌다. */
 .list a {
   display: block;
   padding: var(--space-3) 0;
-  border-bottom: 1px solid var(--color-border);
   text-decoration: none;
   overflow-wrap: anywhere;
 }
 
 .list a:hover {
   text-decoration: underline;
+}
+
+/* 묶음 제목과 목록 사이를 붙이고, 묶음끼리는 panel의 gap으로 띄운다. */
+.group h2 {
+  margin: 0 0 var(--space-2);
+  font-size: 1rem;
+}
+
+/* 삭제 대기 줄: 이름, 남은 날, 되살리기 버튼을 한 줄에, 좁으면 다음 줄로. */
+.deleted {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-3);
+}
+
+.purge {
+  color: var(--color-text-muted);
 }

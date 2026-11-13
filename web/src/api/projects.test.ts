@@ -1,5 +1,9 @@
 import { ApiError } from './client.ts'
 import {
+  archiveProject,
+  unarchiveProject,
+  deleteProject,
+  restoreProject,
   createProject,
   createScreen,
   getProject,
@@ -18,6 +22,8 @@ const project = {
   name: '새 프로젝트',
   myRole: 'DEVELOPER',
   createdAt: '2026-11-04T09:00:00.000Z',
+  status: 'ACTIVE',
+  purgeAfter: null,
 }
 const screen = { id: screenId, name: '메인', viewport: 'PC', hiddenAt: null }
 const hiddenScreen = { ...screen, hiddenAt: '2026-11-04T10:00:00.000Z' }
@@ -41,7 +47,14 @@ describe('listProjects', () => {
   it('옵션 없이 GET을 한 번 요청하고 역할과 서버의 목록 순서를 그대로 돌려준다', async () => {
     const projects = [
       project,
-      { id: 'another-project', name: '이전 프로젝트', myRole: 'CLIENT', createdAt: '2026-11-03T09:00:00.000Z' },
+      {
+        id: 'another-project',
+        name: '이전 프로젝트',
+        myRole: 'CLIENT',
+        createdAt: '2026-11-03T09:00:00.000Z',
+        status: 'ACTIVE',
+        purgeAfter: null,
+      },
     ]
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(projects), { status: 200 }))
 
@@ -252,6 +265,10 @@ describe.each([
 
 describe.each([
   { name: 'listProjects', call: listProjects, statuses: [401] },
+  { name: 'archiveProject', call: () => archiveProject(projectId), statuses: [401, 403, 404, 409] },
+  { name: 'unarchiveProject', call: () => unarchiveProject(projectId), statuses: [401, 403, 404, 409] },
+  { name: 'deleteProject', call: () => deleteProject(projectId, project.name), statuses: [401, 403, 404, 409, 422] },
+  { name: 'restoreProject', call: () => restoreProject(projectId), statuses: [401, 403, 404, 409] },
   { name: 'createProject', call: () => createProject(project.name), statuses: [401, 403, 422] },
   { name: 'getProject', call: () => getProject(projectId), statuses: [401, 404] },
   { name: 'listScreens', call: () => listScreens(projectId), statuses: [401, 404] },
@@ -302,5 +319,85 @@ describe('화면 이름표', () => {
     { name: '상품 상세', viewport: 'PC' as const, label: '상품 상세 · PC' },
   ])('$label 이름표를 만든다', ({ name, viewport, label }) => {
     expect(screenLabel({ name, viewport })).toBe(label)
+  })
+})
+
+describe('listProjects의 보관과 삭제 상태', () => {
+  it('진행·보관·삭제 대기의 상태와 purgeAfter를 서버 순서와 값 그대로 돌려준다', async () => {
+    const projects = [
+      { ...project, id: 'deleted', status: 'DELETE_PENDING', purgeAfter: '2026-11-21T00:00:00.000Z' },
+      { ...project, id: 'archived', status: 'ARCHIVED', myRole: 'CLIENT' },
+      project,
+    ]
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(projects))
+
+    await expect(listProjects()).resolves.toEqual(projects)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/projects')
+  })
+})
+
+describe.each([
+  { name: 'archiveProject', call: archiveProject, action: 'archive', body: {} },
+  { name: 'unarchiveProject', call: unarchiveProject, action: 'unarchive', body: {} },
+  {
+    name: 'deleteProject',
+    call: (id: string) => deleteProject(id, '  외주 "리뉴얼" \\ 시안\n두 번째 줄  '),
+    action: 'delete',
+    body: { name: '  외주 "리뉴얼" \\ 시안\n두 번째 줄  ' },
+  },
+  { name: 'restoreProject', call: restoreProject, action: 'restore', body: {} },
+])('$name 상태 변경 요청', ({ call, action, body }) => {
+  it('정해진 주소에 JSON POST를 한 번 보내고 본문 없는 204를 처리한다', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 204 }))
+
+    await expect(call(projectId)).resolves.toBeUndefined()
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/projects/${projectId}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  })
+
+  it.each(encodedIds)('$id를 $encoded 한 덩어리로 보내고 본문을 유지한다', async ({ id, encoded }) => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 204 }))
+
+    await expect(call(id)).resolves.toBeUndefined()
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/projects/${encoded}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  })
+})
+
+describe('프로젝트 상태 변경 오류 코드', () => {
+  it.each([
+    { name: 'archiveProject', call: () => archiveProject(projectId), status: 409, code: 'PROJECT_ARCHIVED' },
+    { name: 'unarchiveProject', call: () => unarchiveProject(projectId), status: 409, code: 'PROJECT_NOT_ARCHIVED' },
+    {
+      name: 'deleteProject',
+      call: () => deleteProject(projectId, '다른 이름'),
+      status: 422,
+      code: 'PROJECT_NAME_MISMATCH',
+    },
+    {
+      name: 'deleteProject',
+      call: () => deleteProject(projectId, project.name),
+      status: 409,
+      code: 'PROJECT_DELETE_PENDING',
+    },
+    { name: 'restoreProject', call: () => restoreProject(projectId), status: 409, code: 'PROJECT_NOT_DELETED' },
+    { name: 'restoreProject', call: () => restoreProject(projectId), status: 409, code: 'RESTORE_PERIOD_OVER' },
+  ])('$name의 $code를 ApiError에 담아 전달한다', async ({ call, status, code }) => {
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ code }, { status }))
+
+    const result = call()
+
+    await expect(result).rejects.toBeInstanceOf(ApiError)
+    await expect(result).rejects.toMatchObject({ status, code })
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 })
