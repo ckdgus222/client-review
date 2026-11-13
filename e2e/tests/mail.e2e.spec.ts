@@ -1,9 +1,19 @@
 import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { assertTestDatabaseUrl } from '../../api/test/test-database-url.ts'
 import browserConfig from '../playwright.config.ts'
-import { test, expect, db, resetDatabase, createUser, createProject } from './fixtures.ts'
+import {
+  test,
+  expect,
+  db,
+  resetDatabase,
+  createUser,
+  createProject,
+  KNOWN_LOGIN_CODE,
+  useKnownLoginCode,
+} from './fixtures.ts'
 
 const prepareFailedMailActivity = async () => {
   await resetDatabase()
@@ -210,4 +220,55 @@ test('브라우저 테스트의 api와 api 테스트는 메일을 log 모드로 
   expect(result.error).toBeUndefined()
   expect(result.status).toBe(0)
   expect(JSON.parse(result.stdout)).toEqual({ mailMode: 'log' })
+})
+
+test('로그인하지 않은 사람이 메일 속 쪽지 링크를 열면 로그인한 뒤 그 쪽지로 돌아온다', async ({ page, context }) => {
+  await resetDatabase()
+  const developer = await createUser('developer@example.com', '개발자')
+  const client = await createUser('mail-link@example.com', '메일 받은 클라이언트')
+  const project = await createProject(developer.id, '메일 링크 검수 프로젝트')
+  await db.projectMember.create({
+    data: { projectId: project.id, userId: client.id, role: 'CLIENT' },
+  })
+  const version = await db.deliveryVersion.create({
+    data: { projectId: project.id, number: 0, status: 'IN_REVIEW', publishedAt: new Date() },
+  })
+  await db.project.update({
+    where: { id: project.id },
+    data: { currentVersionId: version.id },
+  })
+  const issue = await db.issue.create({
+    data: {
+      projectId: project.id,
+      originVersionId: version.id,
+      authorId: client.id,
+      number: 1,
+      title: '메일에서 확인할 수정 요청',
+      body: '로그인을 마친 뒤 이 쪽지 내용이 보여야 해요.',
+      requestId: randomUUID(),
+    },
+  })
+  const nextPath = `/projects/${project.id}?issue=${issue.id}`
+  const mailPath = `/app${nextPath}`
+  await context.clearCookies()
+  await page.goto(mailPath)
+
+  await expect(page).toHaveURL(`/app/login?next=${encodeURIComponent(nextPath)}`)
+  await expect(page.getByRole('heading', { name: '로그인', exact: true })).toBeVisible()
+  await page.getByLabel('이메일', { exact: true }).fill(client.email)
+  const codeResponsePromise = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === '/api/auth/email-code' && response.request().method() === 'POST',
+  )
+  await page.getByRole('button', { name: '코드 받기', exact: true }).click()
+  expect((await codeResponsePromise).status()).toBe(204)
+  await useKnownLoginCode(client.email)
+  await page.getByLabel('로그인 코드', { exact: true }).fill(KNOWN_LOGIN_CODE)
+  await page.getByRole('button', { name: '로그인', exact: true }).click()
+
+  await expect(page).toHaveURL(mailPath)
+  await expect(page.getByRole('heading', { name: project.name, exact: true })).toBeVisible()
+  const detail = page.getByRole('article', { name: `쪽지 #${issue.number}`, exact: true })
+  await expect(detail).toBeVisible()
+  await expect(detail.getByRole('heading', { name: issue.title, exact: true })).toBeVisible()
+  await expect(detail.getByText(issue.body, { exact: true })).toBeVisible()
 })

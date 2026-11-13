@@ -726,12 +726,20 @@ describe('ReviewRoomPage 로그인과 오류', () => {
     expect(await screen.findByRole('img')).toBeDefined()
   })
 
-  it.each(['/', '/app'])('basename %s에서 비로그인이면 /login으로 교체한다', async (basename) => {
+  it.each([
+    ['/', ''],
+    ['/app', ''],
+    ['/', `?version=${firstRevision.id}`],
+    ['/app', `?version=${firstRevision.id}`],
+    ['/', '?issue=613b79dc-2715-4510-a024-4d380f9a985e'],
+    ['/app', '?issue=613b79dc-2715-4510-a024-4d380f9a985e'],
+  ])('basename %s에서 비로그인이면 경로와 쿼리 %s를 next에 담아 로그인으로 교체한다', async (basename, search) => {
     vi.mocked(getMe).mockResolvedValueOnce(null)
-    renderReview(`/projects/${project.id}`, basename)
+    const path = `/projects/${project.id}${search}`
+    renderReview(path, basename)
 
     expect(await screen.findByRole('heading', { name: '로그인' })).toBeDefined()
-    expect(screen.getByLabelText('현재 주소').textContent).toBe('/login')
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/login?next=${encodeURIComponent(path)}`)
     expect(screen.queryByRole('img')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '뒤로 가기' }))
     expect(await screen.findByText('이전 화면')).toBeDefined()
