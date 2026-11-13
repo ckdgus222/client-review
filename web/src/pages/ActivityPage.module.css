@@ -54,3 +54,9 @@ a.row:hover {
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
 }
+
+/* 개발자가 직접 연락해야 하는 사건이라 오류 색으로 보인다. */
+.mailFailed {
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+}

@@ -83,6 +83,8 @@ export type ActivityItem = {
   version: { id: string; number: number } | null
   memberName: string | null
   issue: { id: string; number: number } | null
+  // 다섯 번 실패한 알림 메일의 받는 주소. 서버가 개발자에게만 채우고 클라이언트에게는 늘 빈 목록이다.
+  mailFailedTo: string[]
 }
 
 // testUrl에 빈 글을 보내면 서버가 주소를 지운다.

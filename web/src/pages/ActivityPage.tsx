@@ -53,6 +53,10 @@ const ActivityRow = ({ projectId, item }: { projectId: string; item: ActivityIte
       <time className={styles.time} dateTime={item.createdAt}>
         {timeFormat.format(new Date(item.createdAt))}
       </time>
+      {/* 색만으로 알리지 않게 "메일 실패"를 글자로 쓴다. 클라이언트는 서버가 빈 목록을 보내서 보이지 않는다. */}
+      {item.mailFailedTo.length > 0 && (
+        <span className={styles.mailFailed}>메일 실패: {item.mailFailedTo.join(', ')}</span>
+      )}
     </>
   )
   // 누르면 그 쪽지나 그 버전을 연 검수실로 간다. 가리키는 것이 없는 줄은 갈 곳이 없어 글만 보인다.

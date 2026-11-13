@@ -1,9 +1,105 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { expect, test } from '@playwright/test'
 import { assertTestDatabaseUrl } from '../../api/test/test-database-url.ts'
 import browserConfig from '../playwright.config.ts'
+import { test, expect, db, resetDatabase, createUser, createProject } from './fixtures.ts'
+
+const prepareFailedMailActivity = async () => {
+  await resetDatabase()
+  const developer = await createUser('developer@example.com', '개발자')
+  const client = await createUser('a@b.com', '클라이언트')
+  const otherClient = await createUser('c@d.com', '다른 클라이언트')
+  const project = await createProject(developer.id, '알림 검수 프로젝트')
+  await db.projectMember.createMany({
+    data: [client, otherClient].map((user) => ({
+      projectId: project.id,
+      userId: user.id,
+      role: 'CLIENT',
+    })),
+  })
+  const version = await db.deliveryVersion.create({
+    data: {
+      projectId: project.id,
+      number: 0,
+      status: 'IN_REVIEW',
+      publishedAt: new Date(),
+    },
+  })
+  await db.project.update({
+    where: { id: project.id },
+    data: { currentVersionId: version.id },
+  })
+  const event = await db.activityEvent.create({
+    data: {
+      projectId: project.id,
+      actorId: developer.id,
+      type: 'VERSION_PUBLISHED',
+      versionId: version.id,
+    },
+  })
+  // 실제 재시도는 api e2e에서 확인한다. FAILED는 반복 발송기가 다시 보내지 않아 화면 검사 중에도 유지된다.
+  await db.notificationDelivery.createMany({
+    data: [otherClient, client].map((user) => ({
+      eventId: event.id,
+      toEmail: user.email,
+      status: 'FAILED',
+      attempts: 5,
+    })),
+  })
+  await db.activityEvent.create({
+    data: {
+      projectId: project.id,
+      actorId: developer.id,
+      type: 'INVITATION_CREATED',
+    },
+  })
+  return { developer, client, project }
+}
+
+test('메일이 다섯 번 실패한 사건은 개발자의 활동 일지에 메일 실패와 받는 주소가 보인다', async ({ page, loginAs }) => {
+  const { developer, project } = await prepareFailedMailActivity()
+  await loginAs(developer.id)
+  await page.goto(`/app/projects/${project.id}/activity`)
+
+  await expect(
+    page.getByRole('heading', {
+      name: `${project.name} 활동 일지`,
+      exact: true,
+    }),
+  ).toBeVisible()
+  const publishedRow = page.getByRole('listitem').filter({ hasText: '개발자님이 초안을 게시했어요' })
+  await expect(publishedRow).toHaveCount(1)
+  await expect(publishedRow.getByText('메일 실패: a@b.com, c@d.com', { exact: true })).toBeVisible()
+  const invitationRow = page.getByRole('listitem').filter({ hasText: '개발자님이 클라이언트를 초대했어요' })
+  await expect(invitationRow).toBeVisible()
+  await expect(invitationRow.getByText(/메일 실패/)).toHaveCount(0)
+})
+
+test('클라이언트의 활동 일지에는 메일 실패가 보이지 않는다', async ({ page, context, loginAs }) => {
+  const { developer, client, project } = await prepareFailedMailActivity()
+  const activityPath = `/app/projects/${project.id}/activity`
+  await loginAs(developer.id)
+  await page.goto(activityPath)
+  const publishedRow = page.getByRole('listitem').filter({ hasText: '개발자님이 초안을 게시했어요' })
+  await expect(publishedRow.getByText('메일 실패: a@b.com, c@d.com', { exact: true })).toBeVisible()
+
+  // 사건과 FAILED 줄을 그대로 둔 채 같은 주소를 클라이언트로 다시 연다.
+  await context.clearCookies()
+  await loginAs(client.id)
+  await page.goto(activityPath)
+
+  await expect(
+    page.getByRole('heading', {
+      name: `${project.name} 활동 일지`,
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(publishedRow).toBeVisible()
+  await expect(page.getByText(/메일 실패/)).toHaveCount(0)
+  const activityList = page.getByRole('list')
+  await expect(activityList.getByText(/a@b\.com|c@d\.com/)).toHaveCount(0)
+})
 
 test('MAIL_MODE가 smtp인데 SMTP 설정이 빠지면 api가 켜지지 않고 빠진 값을 알린다', () => {
   test.setTimeout(90_000)

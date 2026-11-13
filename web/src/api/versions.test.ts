@@ -125,6 +125,7 @@ const versions: VersionSummary[] = [
 const activity: ActivityItem[] = [
   {
     id: 'new-event',
+    mailFailedTo: [],
     issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-08T09:00:00.000Z',
@@ -134,6 +135,7 @@ const activity: ActivityItem[] = [
   },
   {
     id: 'old-event',
+    mailFailedTo: [],
     issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-07T09:00:00.000Z',
@@ -185,6 +187,7 @@ describe('listActivity 쪽지 사건', () => {
   it.each(['ISSUE_CREATED', 'ISSUE_STARTED'] as const)('%s의 쪽지 id와 번호를 그대로 돌려준다', async (type) => {
     const event: ActivityItem = {
       id: 'issue-event',
+      mailFailedTo: [],
       type,
       createdAt: '2026-11-11T09:00:00.000Z',
       actorName: '김개발',
@@ -644,6 +647,7 @@ describe('listActivity 승인 사건', () => {
   it.each([0, 2])('%i차의 VERSION_APPROVED 사건과 승인자 이름을 그대로 돌려준다', async (number) => {
     const event: ActivityItem = {
       id: 'approval-event',
+      mailFailedTo: [],
       type: 'VERSION_APPROVED',
       actorName: '김승인',
       createdAt: approved.approval!.approvedAt,

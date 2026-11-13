@@ -22,6 +22,7 @@ const project: ProjectDetail = {
 const items: ActivityItem[] = [
   {
     id: 'f6dadf8d-5cb9-4602-80db-8c868ebaf601',
+    mailFailedTo: [],
     issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-09T09:04:00.000Z',
@@ -31,6 +32,7 @@ const items: ActivityItem[] = [
   },
   {
     id: 'ae3ddac8-e194-4396-ab22-f28b81e040b0',
+    mailFailedTo: [],
     issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-08T23:59:00.000Z',
@@ -40,6 +42,7 @@ const items: ActivityItem[] = [
   },
   {
     id: '695d8b02-3c89-4a80-b86d-5a01e345c9a5',
+    mailFailedTo: [],
     issue: null,
     type: 'VERSION_PUBLISHED',
     createdAt: '2026-11-07T00:01:00.000Z',
@@ -191,6 +194,7 @@ describe('ActivityPage 기록 표시', () => {
     async ({ type, actorName, memberName, message }) => {
       const event: ActivityItem = {
         id: 'd375d33f-813b-4651-8316-727f094c14b2',
+        mailFailedTo: [],
         issue: null,
         type,
         createdAt: '2026-11-10T09:04:00.000Z',
@@ -281,6 +285,31 @@ describe('ActivityPage 기록 표시', () => {
     expect(screen.getByRole('img', { name: '메인 · PC' }).getAttribute('src')).toBe('/api/assets/photo-0')
     expect(screen.queryByText('2번 버전 설명')).toBeNull()
   })
+})
+
+describe('ActivityPage 메일 실패 표시', () => {
+  it('실패한 주소 목록을 해당 사건 줄 안에 쉼표로 나누어 표시한다', async () => {
+    responses.set(activityUrl, () => Response.json([{ ...items[0], mailFailedTo: ['a@b.com', 'c@d.com'] }, items[1]]))
+    renderActivity()
+
+    const rows = within(await screen.findByRole('list')).getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]).getByText('최개발님이 2차를 게시했어요')).toBeDefined()
+    expect(within(rows[0]).getByText('메일 실패: a@b.com, c@d.com', { exact: true })).toBeDefined()
+    expect(within(rows[1]).getByText('김개발님이 1차를 게시했어요')).toBeDefined()
+    expect(within(rows[1]).queryByText(/메일 실패/)).toBeNull()
+  })
+
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    '%s의 실패 주소 목록이 비어 있으면 메일 실패를 표시하지 않는다',
+    async (role) => {
+      responses.set(projectUrl, () => Response.json({ ...project, myRole: role }))
+      renderActivity()
+
+      expect(within(await screen.findByRole('list')).getAllByRole('listitem')).toHaveLength(items.length)
+      expect(screen.queryByText(/메일 실패/)).toBeNull()
+    },
+  )
 })
 
 describe.each([
