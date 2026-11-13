@@ -31,6 +31,9 @@ const photos = [
   { id: 'attachment-3', assetId: 'asset-3', width: 400, height: 300 },
 ]
 const issue: Issue = {
+  projectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  canReview: false,
+  attempts: [],
   id: '11111111-1111-4111-8111-111111111111',
   number: 14,
   status: 'OPEN',
