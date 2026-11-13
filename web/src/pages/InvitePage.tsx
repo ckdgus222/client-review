@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { logout, type Me } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
 import { acceptInvitation, getInvitation, type InvitationPreview, isInviteToken } from '../api/invitations.ts'
-import { MAX_CLIENTS } from '../api/projects.ts'
+import { MAX_CLIENTS, projectStatusError } from '../api/projects.ts'
 import { Button } from '../components/Button.tsx'
 import { ErrorText } from '../components/ErrorText.tsx'
 import { useMe } from '../hooks/useMe.ts'
@@ -93,7 +93,9 @@ const InviteView = ({ token, preview, user, meError }: InviteViewProps) => {
       if (caught instanceof ApiError && caught.code === 'EMAIL_MISMATCH') {
         return setJoinError('초대받은 이메일로 로그인해 주세요')
       }
-      setJoinError('연결을 확인하고 다시 시도해 주세요')
+      // 보관한 프로젝트에는 새로 들어올 수 없다(삭제 대기는 서버가 없는 초대와 같은 404로 답한다).
+      const statusError = caught instanceof ApiError ? projectStatusError(caught.code) : undefined
+      setJoinError(statusError ?? '연결을 확인하고 다시 시도해 주세요')
     } finally {
       setJoining(false)
     }

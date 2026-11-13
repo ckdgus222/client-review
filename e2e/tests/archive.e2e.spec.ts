@@ -4,6 +4,90 @@ test.beforeEach(async () => {
   await resetDatabase()
 })
 
+test('보관한 프로젝트에서 쪽지를 쓰려 하면 보관한 프로젝트라는 오류가 보인다', async ({
+  page,
+  baseURL,
+  loginAs,
+}) => {
+  const developer = await createUser('archive-developer@example.com', '개발자')
+  const project = await createProject(developer.id, '쪽지 보관 오류 프로젝트')
+  // 사진에 핀을 꽂지 않는 쪽지이므로 게시된 버전만 준비한다.
+  const version = await db.deliveryVersion.create({
+    data: { projectId: project.id, number: 0, status: 'IN_REVIEW', publishedAt: new Date() },
+  })
+  await db.project.update({ where: { id: project.id }, data: { currentVersionId: version.id } })
+  await loginAs(developer.id)
+  await page.goto(`/app/projects/${project.id}`)
+  await page.getByRole('button', { name: '쪽지 쓰기', exact: true }).click()
+  await page.getByLabel('제목 (필수)', { exact: true }).fill('여백을 넓혀 주세요')
+  await page.getByLabel('내용', { exact: true }).fill('제목과 본문 사이 여백을 늘려 주세요')
+  const sendButton = page.getByRole('button', { name: '쪽지 남기기', exact: true })
+  await expect(sendButton).toBeEnabled()
+
+  const headers = { Origin: new URL(baseURL!).origin }
+  const archiveResponse = await page.request.post(`/api/projects/${project.id}/archive`, { headers })
+  expect(archiveResponse.status()).toBe(204)
+  const rejectedRequest = page.waitForResponse((response) =>
+    response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/projects/${project.id}/issues`,
+  )
+  await sendButton.click()
+  expect((await rejectedRequest).status()).toBe(409)
+
+  await expect(page.getByRole('alert')).toHaveText('보관한 프로젝트예요. 보관을 풀어야 바꿀 수 있어요')
+  await expect(page.getByLabel('제목 (필수)', { exact: true })).toHaveValue('여백을 넓혀 주세요')
+  await expect(page.getByLabel('내용', { exact: true })).toHaveValue('제목과 본문 사이 여백을 늘려 주세요')
+  await expect(sendButton).toBeEnabled()
+  expect(await db.issue.count({ where: { projectId: project.id } })).toBe(0)
+
+  const unarchiveResponse = await page.request.post(`/api/projects/${project.id}/unarchive`, { headers })
+  expect(unarchiveResponse.status()).toBe(204)
+  const acceptedRequest = page.waitForResponse((response) =>
+    response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/projects/${project.id}/issues`,
+  )
+  await sendButton.click()
+  expect((await acceptedRequest).status()).toBe(201)
+  await expect(page.getByRole('heading', { name: '여백을 넓혀 주세요', exact: true })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  expect(await db.issue.count({ where: { projectId: project.id } })).toBe(1)
+})
+
+test('보관한 프로젝트에서 게시 전 버전을 만들려 하면 보관한 프로젝트라는 오류가 보인다', async ({
+  page,
+  baseURL,
+  loginAs,
+}) => {
+  const developer = await createUser('archive-developer@example.com', '개발자')
+  const project = await createProject(developer.id, '게시 전 버전 보관 오류 프로젝트')
+  await loginAs(developer.id)
+  await page.goto(`/app/projects/${project.id}/draft`)
+  const startButton = page.getByRole('button', { name: '초안 준비 시작', exact: true })
+  await expect(startButton).toBeEnabled()
+
+  const headers = { Origin: new URL(baseURL!).origin }
+  const archiveResponse = await page.request.post(`/api/projects/${project.id}/archive`, { headers })
+  expect(archiveResponse.status()).toBe(204)
+  const rejectedRequest = page.waitForResponse((response) =>
+    response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `/api/projects/${project.id}/versions`,
+  )
+  await startButton.click()
+  expect((await rejectedRequest).status()).toBe(409)
+
+  await expect(page.getByRole('alert')).toHaveText('보관한 프로젝트예요. 보관을 풀어야 바꿀 수 있어요')
+  await expect(startButton).toBeEnabled()
+  await expect(page.getByRole('textbox', { name: '설명', exact: true })).toHaveCount(0)
+  expect(await db.deliveryVersion.count({ where: { projectId: project.id } })).toBe(0)
+
+  const unarchiveResponse = await page.request.post(`/api/projects/${project.id}/unarchive`, { headers })
+  expect(unarchiveResponse.status()).toBe(204)
+  await startButton.click()
+  await expect(page.getByRole('textbox', { name: '설명', exact: true })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  expect(await db.deliveryVersion.count({ where: { projectId: project.id, status: 'DRAFT' } })).toBe(1)
+})
+
 test('클라이언트 목록에는 지운 프로젝트가 보이지 않고 보관한 프로젝트는 보관함에 보인다', async ({
   page,
   baseURL,

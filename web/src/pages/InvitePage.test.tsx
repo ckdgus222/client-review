@@ -270,6 +270,23 @@ describe('InvitePage 참여', () => {
     vi.mocked(getMe).mockResolvedValue(user)
   })
 
+  it.each([
+    ['PROJECT_ARCHIVED', '보관한 프로젝트예요. 보관을 풀어야 바꿀 수 있어요'],
+    ['PROJECT_DELETE_PENDING', '삭제 대기 중인 프로젝트예요. 되살려야 바꿀 수 있어요'],
+  ])('참여가 409 %s로 거절되면 상태 안내를 보여 주고 성공으로 처리하지 않는다', async (code, message) => {
+    vi.mocked(acceptInvitation).mockRejectedValueOnce(new ApiError(409, code))
+    renderInvite()
+    fireEvent.click(await screen.findByRole('button', { name: '참여하기' }))
+
+    expect((await screen.findByRole('alert')).textContent).toBe(message)
+    expect(acceptInvitation).toHaveBeenCalledExactlyOnceWith(token)
+    expect(screen.getByText(preview.projectName)).toBeTruthy()
+    expect(screen.getByLabelText('현재 주소').textContent).toBe(`/invite/${token}`)
+    expect(screen.queryByRole('heading', { name: '프로젝트에 참여했어요' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '검수실로 가기' })).toBeNull()
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: '다시 참여하기' }).disabled).toBe(false)
+  })
+
   it('같은 이메일로 참여하면 중복 클릭을 막고 응답의 프로젝트 검수실로 안내한다', async () => {
     const pending = deferred<{ projectId: string }>()
     vi.mocked(acceptInvitation).mockReturnValueOnce(pending.promise)

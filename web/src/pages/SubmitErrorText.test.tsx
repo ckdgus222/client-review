@@ -5,6 +5,21 @@ import { SubmitErrorText } from './SubmitErrorText.tsx'
 
 describe('SubmitErrorText', () => {
   it.each([
+    ['PROJECT_ARCHIVED', '보관한 프로젝트예요. 보관을 풀어야 바꿀 수 있어요'],
+    ['PROJECT_DELETE_PENDING', '삭제 대기 중인 프로젝트예요. 되살려야 바꿀 수 있어요'],
+  ])('%s 충돌은 프로젝트 상태 안내만 보여 준다', (code, message) => {
+    const onGoLatest = vi.fn()
+    render(<SubmitErrorText error={{ kind: 'conflict', code }} locked={false} onGoLatest={onGoLatest} />, {
+      wrapper: MemoryRouter,
+    })
+
+    expect(screen.getByRole('alert').textContent).toBe(message)
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(onGoLatest).not.toHaveBeenCalled()
+  })
+
+  it.each([
     ['연결 실패', { kind: 'unknown' }, false, '연결을 확인하고 다시 시도해 주세요'],
     [
       '잠긴 연결 실패',

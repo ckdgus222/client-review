@@ -2,7 +2,14 @@ import { type ChangeEvent, type DragEvent, type FormEvent, type ReactNode, useEf
 import { Link, Navigate, useNavigate, useParams } from 'react-router'
 import { ApiError } from '../api/client.ts'
 import { isUuid } from '../api/ids.ts'
-import { getProject, listScreens, type ProjectDetail, type Screen, screenLabel } from '../api/projects.ts'
+import {
+  getProject,
+  listScreens,
+  type ProjectDetail,
+  projectStatusError,
+  type Screen,
+  screenLabel,
+} from '../api/projects.ts'
 import {
   assetUrl,
   createDraft,
@@ -37,7 +44,7 @@ const toMessage = (error: unknown): ReactNode => {
   if (error.status === 413) return '사진 크기(픽셀)가 너무 크거나 프로젝트 사진 용량(1 GB)이 찼어요'
   if (error.status === 415) return 'PNG, JPG, WebP 사진만 올릴 수 있어요(움직이는 사진 제외)'
   if (error.status === 422) return '설명은 1,000자까지, 테스트 주소는 https://로 시작하는 주소로 써 주세요'
-  return '잠시 뒤 다시 시도해 주세요'
+  return projectStatusError(error.code) ?? '잠시 뒤 다시 시도해 주세요'
 }
 
 // 게시에서 숨긴 화면 409는 "올릴 수 없다"가 아니라 "빼고 게시하라"는 뜻이다.
