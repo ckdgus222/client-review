@@ -515,6 +515,223 @@ describe('고쳤어요 API (e2e)', () => {
     await get().expect(200).expect(success.body);
   });
 
+  it('새 버전을 게시하면 확인 요청 쪽지만 수정 중으로 돌아가고 그 줄은 결과 없이 남는다', async () => {
+    const ready = await submit();
+    const secondIssue = await createIssue(clientCookie, { versionId });
+    await submit(secondIssue.body.id, { screenId: undefined });
+    await createIssue(clientCookie, { versionId, title: '접수 쪽지' });
+    const inProgress = await createIssue(clientCookie, { versionId, title: '수정 중 쪽지' });
+    await post(`/api/issues/${inProgress.body.id}/start`).send({ versionId }).expect(200);
+    const verifiedIssue = await createIssue(clientCookie, { versionId, title: '확인 완료 쪽지' });
+    const verifiedReady = await submit(verifiedIssue.body.id);
+    await change(
+      'verify',
+      input('verify', verifiedReady.body.attempts[0].id),
+      clientCookie,
+      verifiedIssue.body.id,
+    ).expect(200);
+    const withdrawnIssue = await createIssue(clientCookie, { versionId, title: '철회 쪽지' });
+    await submit(withdrawnIssue.body.id);
+    await change('withdraw', input('withdraw'), clientCookie, withdrawnIssue.body.id).expect(200);
+    const otherProject = await prisma.project.create({
+      data: {
+        name: '게시하지 않는 프로젝트',
+        members: {
+          create: [
+            { userId: developerId, role: 'DEVELOPER' },
+            { userId: clientId, role: 'CLIENT' },
+          ],
+        },
+      },
+    });
+    const otherVersion = await prisma.deliveryVersion.create({
+      data: { projectId: otherProject.id, number: 2, status: 'IN_REVIEW', publishedAt: new Date() },
+    });
+    await prisma.project.update({ where: { id: otherProject.id }, data: { currentVersionId: otherVersion.id } });
+    const otherIssue = await prisma.issue.create({
+      data: {
+        projectId: otherProject.id,
+        originVersionId: otherVersion.id,
+        number: 1,
+        authorId: clientId,
+        requestId: randomUUID(),
+        title: '다른 프로젝트의 확인 요청',
+        body: '이 쪽지는 그대로예요',
+        status: 'READY_FOR_REVIEW',
+        attempts: { create: { versionId: otherVersion.id, summary: '다른 수정', submittedById: developerId } },
+      },
+    });
+    const draft = await prisma.deliveryVersion.create({ data: { projectId } });
+    const before = await readState();
+
+    await post(`/api/versions/${draft.id}/publish`)
+      .expect(409)
+      .expect({ statusCode: 409, code: 'NO_SCREENS', message: '사진을 올린 화면이 없어요' });
+    expect(await readState()).toEqual(before);
+    expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: draft.id } })).toEqual(draft);
+    expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
+      currentVersionId: versionId,
+    });
+    await prisma.versionScreen.create({ data: { versionId: draft.id, screenId, assetId } });
+
+    const published = await post(`/api/versions/${draft.id}/publish`).expect(200);
+
+    expect(published.body).toMatchObject({ id: draft.id, number: 3, status: 'IN_REVIEW' });
+    expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
+      currentVersionId: draft.id,
+    });
+    const after = await readState();
+    expect(after.issues).toEqual(
+      before.issues.map((issue) => ({
+        ...issue,
+        status: issue.projectId === projectId && issue.status === 'READY_FOR_REVIEW' ? 'IN_PROGRESS' : issue.status,
+      })),
+    );
+    expect(after.attempts).toEqual(before.attempts);
+    expect(after.attempts.find((attempt) => attempt.id === ready.body.attempts[0].id)).toMatchObject({
+      result: null,
+      reviewedById: null,
+      reviewedAt: null,
+    });
+    expect(after.comments).toEqual(before.comments);
+    expect(after.events).toHaveLength(before.events.length + 1);
+    expect(after.events).toEqual(expect.arrayContaining(before.events));
+    expect(after.events.filter((event) => event.type === 'VERSION_PUBLISHED')).toEqual([
+      expect.objectContaining({ projectId, actorId: developerId, versionId: draft.id, issueId: null }),
+    ]);
+    const detail = await get().expect(200);
+    expect(detail.body).toMatchObject({ status: 'IN_PROGRESS', attempts: ready.body.attempts });
+    await get(otherIssue.id)
+      .expect(200)
+      .expect((response) => expect(response.body.status).toBe('READY_FOR_REVIEW'));
+
+    // 옛 화면의 확인 요청은 쪽지 상태보다 먼저 버전 차이로 거절한다.
+    await change('verify', input('verify', ready.body.attempts[0].id))
+      .expect(409)
+      .expect({ statusCode: 409, code: 'VERSION_CHANGED', message: '새 버전이 올라왔어요' });
+    expect(await readState()).toEqual(after);
+    const resubmitted = await submit(issueId, { versionId: draft.id, summary: '3차에서도 고쳤어요' });
+    expect(resubmitted.body.status).toBe('READY_FOR_REVIEW');
+    expect(resubmitted.body.attempts).toHaveLength(2);
+    expect(resubmitted.body.attempts[0]).toEqual(ready.body.attempts[0]);
+    expect(resubmitted.body.attempts[1]).toMatchObject({
+      versionId: draft.id,
+      versionNumber: 3,
+      summary: '3차에서도 고쳤어요',
+      result: null,
+      reviewedByName: null,
+      reviewedAt: null,
+    });
+    const savedAttempts = await prisma.resolutionAttempt.findMany({
+      where: { issueId },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(savedAttempts).toHaveLength(2);
+    expect(savedAttempts[0]).toEqual(before.attempts.find((attempt) => attempt.id === ready.body.attempts[0].id));
+  });
+
+  it('확인 완료와 새 버전 게시가 동시에 오면 확인 완료되거나 409이고 409면 쪽지는 수정 중이다', async () => {
+    for (let round = 0; round < 6; round += 1) {
+      const issue = await createIssue(clientCookie, { versionId });
+      const ready = await submit(issue.body.id);
+      const attemptId = ready.body.attempts[0].id;
+      const draft = await post(`/api/projects/${projectId}/versions`).expect(201);
+      const before = await readState();
+      const publishRequest = post(`/api/versions/${draft.body.id}/publish`);
+      const verifyRequest = change('verify', input('verify', attemptId), clientCookie, issue.body.id);
+      // 보내는 순서를 번갈아 바꾸되, 어느 요청이 잠금을 먼저 얻는지는 가정하지 않는다.
+      const responses = await Promise.all(
+        round % 2 === 0 ? [publishRequest, verifyRequest] : [verifyRequest, publishRequest],
+      );
+      const [published, verified] = round % 2 === 0 ? responses : [responses[1], responses[0]];
+
+      expect(published.status).toBe(200);
+      expect(published.body).toMatchObject({ id: draft.body.id, number: 3 + round, status: 'IN_REVIEW' });
+      expect([200, 409]).toContain(verified.status);
+      const verificationWon = verified.status === 200;
+      if (!verificationWon) {
+        expect(verified.body).toEqual({ statusCode: 409, code: 'VERSION_CHANGED', message: '새 버전이 올라왔어요' });
+      }
+      const after = await readState();
+      expect(after.issues).toEqual(
+        before.issues.map((saved) => ({
+          ...saved,
+          status: saved.id === issue.body.id ? (verificationWon ? 'VERIFIED' : 'IN_PROGRESS') : saved.status,
+        })),
+      );
+      expect(after.attempts).toEqual(
+        before.attempts.map((attempt) => ({
+          ...attempt,
+          ...(attempt.id === attemptId && verificationWon
+            ? { result: 'VERIFIED', reviewedById: clientId, reviewedAt: expect.any(Date) }
+            : {}),
+        })),
+      );
+      expect(after.comments).toEqual(before.comments);
+      expect(after.events).toHaveLength(before.events.length + (verificationWon ? 2 : 1));
+      expect(after.events).toEqual(expect.arrayContaining(before.events));
+      expect(after.events.filter((event) => event.versionId === draft.body.id)).toEqual([
+        expect.objectContaining({ type: 'VERSION_PUBLISHED', projectId, actorId: developerId, issueId: null }),
+      ]);
+      expect(
+        after.events.filter((event) => event.issueId === issue.body.id && event.type === 'ISSUE_VERIFIED'),
+      ).toHaveLength(verificationWon ? 1 : 0);
+      expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
+        currentVersionId: draft.body.id,
+      });
+      const detail = await get(issue.body.id).expect(200);
+      expect(detail.body.status).toBe(verificationWon ? 'VERIFIED' : 'IN_PROGRESS');
+      expect(detail.body.attempts).toEqual([
+        {
+          ...ready.body.attempts[0],
+          result: verificationWon ? 'VERIFIED' : null,
+          reviewedByName: verificationWon ? '클라이언트' : null,
+          reviewedAt: verificationWon ? expect.any(String) : null,
+        },
+      ]);
+      if (verificationWon) expect(verified.body).toEqual(detail.body);
+      versionId = draft.body.id;
+    }
+  });
+
+  it('게시 일지 저장이 실패하면 확인 요청 쪽지와 고쳤어요 줄과 현재 버전이 모두 그대로다', async () => {
+    const ready = await submit();
+    expect(ready.body.status).toBe('READY_FOR_REVIEW');
+    const draft = await post(`/api/projects/${projectId}/versions`).expect(201);
+    const before = await readState();
+    const versionBefore = await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: draft.body.id } });
+    try {
+      await prisma.$executeRaw`
+        CREATE FUNCTION resolution_e2e_fail_publish_event() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'resolution e2e publish activity failure'; END;
+        $$
+      `;
+      await prisma.$executeRaw`
+        CREATE TRIGGER resolution_e2e_fail_publish_event BEFORE INSERT ON activity_events
+        FOR EACH ROW WHEN (NEW.type = 'VERSION_PUBLISHED')
+        EXECUTE FUNCTION resolution_e2e_fail_publish_event()
+      `;
+      await post(`/api/versions/${draft.body.id}/publish`).expect(500);
+      expect(await readState()).toEqual(before);
+      expect(await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: draft.body.id } })).toEqual(versionBefore);
+      expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
+        currentVersionId: versionId,
+      });
+      await get(issueId, cookie).expect(200).expect(ready.body);
+    } finally {
+      try {
+        await prisma.$executeRaw`DROP TRIGGER IF EXISTS resolution_e2e_fail_publish_event ON activity_events`;
+      } finally {
+        await prisma.$executeRaw`DROP FUNCTION IF EXISTS resolution_e2e_fail_publish_event()`;
+      }
+    }
+    await post(`/api/versions/${draft.body.id}/publish`).expect(200);
+    const detail = await get().expect(200);
+    expect(detail.body).toMatchObject({ status: 'IN_PROGRESS', attempts: ready.body.attempts });
+    expect(await prisma.resolutionAttempt.findMany({ orderBy: { id: 'asc' } })).toEqual(before.attempts);
+    expect(await prisma.activityEvent.count()).toBe(before.events.length + 1);
+  });
+
   it('보고 있던 버전이 현재 버전이 아니거나 승인됐으면 네 요청 모두 409이고 아무것도 바뀌지 않는다', async () => {
     const ready = await submit();
     const attemptId = ready.body.attempts[0].id;

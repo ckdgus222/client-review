@@ -613,6 +613,138 @@ describe('VersionsService', () => {
     );
   });
 
+  it('publish는 이 프로젝트의 확인 요청 쪽지만 모두 수정 중으로 바꾸고 고쳤어요 줄과 다른 쪽지는 보존한다', async () => {
+    const current = await prisma.deliveryVersion.create({
+      data: { projectId, number: 2, status: 'IN_REVIEW', publishedAt },
+    });
+    await prisma.project.update({ where: { id: projectId }, data: { currentVersionId: current.id } });
+    const { link } = await attachScreen(current.id, { name: '메인', viewport: 'PC' });
+    const statuses = ['READY_FOR_REVIEW', 'READY_FOR_REVIEW', 'OPEN', 'IN_PROGRESS', 'VERIFIED', 'WITHDRAWN'] as const;
+    for (const [index, status] of statuses.entries()) {
+      await prisma.issue.create({
+        data: {
+          projectId,
+          originVersionId: current.id,
+          authorId: clientId,
+          requestId: randomUUID(),
+          number: index + 1,
+          title: `게시 전 ${status} 쪽지 ${index + 1}`,
+          body: '쪽지 내용도 그대로 남아요',
+          status,
+          attempts: {
+            create: {
+              versionId: current.id,
+              versionScreenId: link.id,
+              summary: '고친 내용',
+              submittedById: developerId,
+              ...(status === 'VERIFIED' ? { result: 'VERIFIED', reviewedById: clientId, reviewedAt: publishedAt } : {}),
+              ...(status === 'OPEN' ? { result: 'REOPENED', reviewedById: clientId, reviewedAt: publishedAt } : {}),
+            },
+          },
+        },
+      });
+    }
+    const otherVersion = await prisma.deliveryVersion.create({
+      data: { projectId: otherProjectId, number: 2, status: 'IN_REVIEW', publishedAt },
+    });
+    await prisma.issue.create({
+      data: {
+        projectId: otherProjectId,
+        originVersionId: otherVersion.id,
+        authorId: developerId,
+        requestId: randomUUID(),
+        number: 1,
+        title: '다른 프로젝트의 확인 요청',
+        body: '다른 프로젝트를 게시해도 그대로예요',
+        status: 'READY_FOR_REVIEW',
+        attempts: {
+          create: { versionId: otherVersion.id, summary: '다른 수정', submittedById: outsiderId },
+        },
+      },
+    });
+    const draft = await service.createDraft(projectId, developerId);
+    const issuesBefore = await prisma.issue.findMany({ orderBy: { id: 'asc' } });
+    const attemptsBefore = await prisma.resolutionAttempt.findMany({ orderBy: { id: 'asc' } });
+
+    expect(await service.publish(draft.id, developerId)).toMatchObject({ number: 3, status: 'IN_REVIEW' });
+
+    expect(await prisma.issue.findMany({ orderBy: { id: 'asc' } })).toEqual(
+      issuesBefore.map((issue) => ({
+        ...issue,
+        status: issue.projectId === projectId && issue.status === 'READY_FOR_REVIEW' ? 'IN_PROGRESS' : issue.status,
+      })),
+    );
+    expect(await prisma.resolutionAttempt.findMany({ orderBy: { id: 'asc' } })).toEqual(attemptsBefore);
+    expect(await prisma.comment.count()).toBe(0);
+    expect(await prisma.activityEvent.findMany()).toEqual([
+      expect.objectContaining({
+        projectId,
+        actorId: developerId,
+        type: 'VERSION_PUBLISHED',
+        versionId: draft.id,
+        issueId: null,
+      }),
+    ]);
+  });
+
+  it.each([false, true])(
+    'publish의 일지 저장 실패(저장 후 실패=%s)는 확인 요청 쪽지와 고쳤어요 줄도 되돌린다',
+    async (failAfterWrite) => {
+      const current = await prisma.deliveryVersion.create({
+        data: { projectId, number: 2, status: 'IN_REVIEW', publishedAt },
+      });
+      await prisma.project.update({ where: { id: projectId }, data: { currentVersionId: current.id } });
+      await attachScreen(current.id, { name: '메인', viewport: 'PC' });
+      for (const number of [1, 2]) {
+        await prisma.issue.create({
+          data: {
+            projectId,
+            originVersionId: current.id,
+            authorId: clientId,
+            requestId: randomUUID(),
+            number,
+            title: `확인 요청 ${number}`,
+            body: '게시가 실패하면 확인 요청 그대로예요',
+            status: 'READY_FOR_REVIEW',
+            attempts: {
+              create: { versionId: current.id, summary: '고친 내용', submittedById: developerId },
+            },
+          },
+        });
+      }
+      const oldEvent = await prisma.activityEvent.create({
+        data: { projectId, actorId: developerId, type: 'VERSION_PUBLISHED', versionId: current.id },
+      });
+      const draft = await service.createDraft(projectId, developerId);
+      const issuesBefore = await prisma.issue.findMany({ orderBy: { id: 'asc' } });
+      const attemptsBefore = await prisma.resolutionAttempt.findMany({ orderBy: { id: 'asc' } });
+      const failure = new Error('게시 일지 저장 실패');
+      const record = activity.record.bind(activity);
+      vi.spyOn(activity, 'record').mockImplementationOnce(async (tx, event) => {
+        if (failAfterWrite) await record(tx, event);
+        throw failure;
+      });
+
+      await expect(service.publish(draft.id, developerId)).rejects.toBe(failure);
+
+      expect(await service.getDetail(draft.id, developerId)).toEqual(draft);
+      expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
+        currentVersionId: current.id,
+      });
+      expect(await prisma.issue.findMany({ orderBy: { id: 'asc' } })).toEqual(issuesBefore);
+      expect(await prisma.resolutionAttempt.findMany({ orderBy: { id: 'asc' } })).toEqual(attemptsBefore);
+      expect(await prisma.activityEvent.findMany()).toEqual([oldEvent]);
+      expect(await prisma.comment.count()).toBe(0);
+
+      expect(await service.publish(draft.id, developerId)).toMatchObject({ number: 3, status: 'IN_REVIEW' });
+      expect(await prisma.issue.findMany({ orderBy: { id: 'asc' } })).toEqual(
+        issuesBefore.map((issue) => ({ ...issue, status: 'IN_PROGRESS' })),
+      );
+      expect(await prisma.resolutionAttempt.findMany({ orderBy: { id: 'asc' } })).toEqual(attemptsBefore);
+      expect(await prisma.activityEvent.count()).toBe(2);
+    },
+  );
+
   it('publish는 현재 버전이나 개수가 아닌 이 프로젝트의 최대 번호에 1을 더한다', async () => {
     const current = await prisma.deliveryVersion.create({
       data: { projectId, number: 1, status: 'IN_REVIEW', publishedAt },
