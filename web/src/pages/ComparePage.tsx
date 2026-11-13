@@ -43,21 +43,27 @@ const Compare = ({ id }: { id: string }) => {
   // 쪽지는 열 때와 차례가 넘어갈 때만 받는다. 검수실과 달리 15초마다 새로 부르지 않는다.
   useEffect(() => {
     if (!isValidId) return
+    // 이 실행이 정리되면(다시 부름, 개발 모드의 StrictMode가 effect를 두 번 실행함) 그 응답은 버린다.
+    // 같은 차례에 불러오기가 둘이 될 수 있어서 차례 번호만으로는 가리지 못한다.
+    let cleanedUp = false
     const load = async () => {
       try {
         const loaded = await getIssue(id)
         // 그사이 차례가 넘어갔으면(다시 불렀거나 더 새 쪽지를 화면에 썼으면) 이 응답은 옛 내용이라 버린다.
-        if (latestTurn.current !== turn) return
+        if (cleanedUp || latestTurn.current !== turn) return
         setIssue(loaded)
         setFetchCount((count) => count + 1)
       } catch (caught) {
-        if (latestTurn.current !== turn) return
+        if (cleanedUp || latestTurn.current !== turn) return
         // 남의 프로젝트의 쪽지도 서버가 없는 것과 같은 404로 답해서, 있는지조차 알 수 없다.
         if (caught instanceof ApiError && caught.status === 404) return setNotFound(true)
         setLoadError(toMessage(caught))
       }
     }
     void load()
+    return () => {
+      cleanedUp = true
+    }
   }, [id, isValidId, turn])
 
   // 서버가 돌려준 바뀐 쪽지를 화면에 쓴다. pressedAt은 그 버튼을 누른 때의 차례다.

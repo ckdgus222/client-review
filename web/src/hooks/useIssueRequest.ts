@@ -30,24 +30,28 @@ export const useIssueRequest = ({ fetchCount, onChanged, onRefresh }: IssueReque
   const [sending, setSending] = useState(false)
   // 로그인 끝남, 새 버전, 거절처럼 문구만 보여 주면 되는 실패.
   const [error, setError] = useState<SubmitError>()
-  // 연결이 끊기거나 서버 오류(5xx)로 저장됐는지 모르는 상태. 쪽지를 새로 받아 오면 풀린다.
-  const [unconfirmed, setUnconfirmed] = useState(false)
+  // 연결이 끊기거나 서버 오류(5xx)로 저장됐는지 모르는 실패가 난 뒤 처음 그릴 때의 fetchCount. 그런 실패가 없으면 undefined다.
+  // 그 뒤에 쪽지를 새로 받아 오면(fetchCount가 이 값에서 오르면) 안내가 걷힌다.
+  const [unconfirmedAt, setUnconfirmedAt] = useState<number>()
+  // 방금 그런 실패가 났다는 표시. 실패를 처리하는 함수는 버튼을 누른 때의 fetchCount만 알아서, 실패한 때의 값은 여기서 적지 못한다.
+  const [failedUnknown, setFailedUnknown] = useState(false)
   // 그사이 쪽지 상태나 고쳤어요가 바뀌어서 서버가 받지 않았다. 다음에 보낼 때까지 알린다.
   const [stale, setStale] = useState(false)
-  const [seenFetchCount, setSeenFetchCount] = useState(fetchCount)
 
-  // 받은 횟수가 올랐으면 "확인하지 못했어요" 안내를 거둔다. 받은 값이 바뀐 것을 그리는 중에 알아채 상태를 맞추는,
-  // React 문서가 effect 대신 권하는 방식이다(쪽지 정리 칸 IssueTriage와 같다).
-  if (seenFetchCount !== fetchCount) {
-    setSeenFetchCount(fetchCount)
-    setUnconfirmed(false)
+  // 실패 뒤 처음 그릴 때 그때의 fetchCount를 적는다(그리는 중에 상태를 맞추는, React 문서가 effect 대신 권하는 방식).
+  // 실패보다 먼저 끝난 불러오기가 실패와 같은 화면 갱신에 묶여도, 그 몫이 이미 더해진 값이 적힌다. 그래서 그 불러오기가
+  // 방금 뜬 안내를 지우지 않고, 실패 뒤에 받아 온 쪽지만 안내를 거둔다.
+  if (failedUnknown) {
+    setFailedUnknown(false)
+    setUnconfirmedAt(fetchCount)
   }
+  const unconfirmed = unconfirmedAt === fetchCount
 
   // 저장됐으면 참을 돌려준다. 부르는 쪽은 그때만 쓰던 글을 비운다.
   const send = async (request: () => Promise<IssueDetail>) => {
     setSending(true)
     setError(undefined)
-    setUnconfirmed(false)
+    setUnconfirmedAt(undefined)
     setStale(false)
     try {
       onChanged(await request())
@@ -56,7 +60,7 @@ export const useIssueRequest = ({ fetchCount, onChanged, onRefresh }: IssueReque
       const submitError = toSubmitError(caught)
       if (needsRefresh(submitError)) onRefresh()
       if (submitError.kind === 'unknown') {
-        setUnconfirmed(true)
+        setFailedUnknown(true)
         return false
       }
       if (isStale(submitError)) {

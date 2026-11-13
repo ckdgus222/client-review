@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { Link, MemoryRouter, Route, Routes } from 'react-router'
 import { getMe, type Me } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
@@ -104,7 +105,7 @@ const deferred = <T,>() => {
   return { promise, resolve, reject }
 }
 
-const renderCompare = (id = issue.id) =>
+const renderCompare = (id = issue.id, strictMode = false) =>
   render(
     <MemoryRouter initialEntries={[`/issues/${id}/compare`]}>
       <Link to={`/issues/${otherIssue.id}/compare`}>다른 쪽지 비교</Link>
@@ -113,6 +114,7 @@ const renderCompare = (id = issue.id) =>
         <Route path="/login" element={<h1>로그인 화면</h1>} />
       </Routes>
     </MemoryRouter>,
+    { wrapper: strictMode ? StrictMode : undefined },
   )
 
 const sendReview = (action: string) => {
@@ -135,6 +137,72 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('ComparePage 불러오기', () => {
+  it.each(['성공', '404'] as const)(
+    'StrictMode의 두 번째 조회가 먼저 끝나면 첫 조회의 늦은 %s 응답을 버린다',
+    async (result) => {
+      const firstLoad = deferred<Issue>()
+      const secondLoad = deferred<Issue>()
+      const newerAttempt = { ...latestAttempt, summary: '두 번째 조회에서 받은 새 설명' }
+      const newerIssue: Issue = {
+        ...issue,
+        title: '두 번째 조회에서 받은 제목',
+        attempts: [olderAttempt, newerAttempt],
+      }
+      vi.mocked(getIssue).mockReturnValueOnce(firstLoad.promise).mockReturnValueOnce(secondLoad.promise)
+      renderCompare(issue.id, true)
+      expect(getIssue).toHaveBeenCalledTimes(2)
+
+      await act(async () => secondLoad.resolve(newerIssue))
+      expect(screen.getByRole('heading', { name: '#14 두 번째 조회에서 받은 제목' })).toBeDefined()
+      expect(screen.getByText(newerAttempt.summary, { exact: false })).toBeDefined()
+      await act(async () => {
+        if (result === '404') return firstLoad.reject(new ApiError(404))
+        firstLoad.resolve(issue)
+      })
+
+      expect(screen.getByRole('heading', { name: '#14 두 번째 조회에서 받은 제목' })).toBeDefined()
+      expect(screen.getByText(newerAttempt.summary, { exact: false })).toBeDefined()
+      expect(screen.queryByText(latestAttempt.summary, { exact: false })).toBeNull()
+      expect(screen.queryByRole('heading', { name: '없는 쪽지예요' })).toBeNull()
+      expect(vi.mocked(getIssue).mock.calls).toEqual([[issue.id], [issue.id]])
+    },
+  )
+
+  it('StrictMode에서도 확인 완료는 한 번만 보내고 저장 응답과 후속 조회를 화면에 쓴다', async () => {
+    const firstLoad = deferred<Issue>()
+    const secondLoad = deferred<Issue>()
+    const verification = deferred<Issue>()
+    const refreshed = deferred<Issue>()
+    const verified: Issue = { ...issue, status: 'VERIFIED', title: '확인 완료 응답의 제목' }
+    vi.mocked(getIssue)
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockReturnValueOnce(secondLoad.promise)
+      .mockReturnValueOnce(refreshed.promise)
+    vi.mocked(verifyIssue).mockReturnValueOnce(verification.promise)
+    renderCompare(issue.id, true)
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    await act(async () => secondLoad.resolve(issue))
+    fireEvent.click(screen.getByRole('button', { name: '확인 완료' }))
+
+    expect(verifyIssue).toHaveBeenCalledExactlyOnceWith(issue.id, {
+      versionId: latestAttempt.versionId,
+      attemptId: latestAttempt.id,
+    })
+    await act(async () => verification.resolve(verified))
+    expect(screen.getByText('확인 완료').getAttribute('data-status')).toBe('VERIFIED')
+    expect(screen.getByRole('heading', { name: '#14 확인 완료 응답의 제목' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
+    expect(getIssue).toHaveBeenCalledTimes(3)
+
+    await act(async () => firstLoad.resolve(issue))
+    expect(screen.getByRole('heading', { name: '#14 확인 완료 응답의 제목' })).toBeDefined()
+    await act(async () => refreshed.resolve({ ...verified, title: '확인 완료 뒤 조회한 제목' }))
+    expect(screen.getByRole('heading', { name: '#14 확인 완료 뒤 조회한 제목' })).toBeDefined()
+    expect(screen.getByText('확인 완료').getAttribute('data-status')).toBe('VERIFIED')
+    expect(verifyIssue).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(getIssue).mock.calls).toEqual([[issue.id], [issue.id], [issue.id]])
+  })
+
   it('주소의 id로 한 번 불러오고 응답을 기다리는 동안 안내를 보인다', async () => {
     const pending = deferred<Issue>()
     vi.mocked(getIssue).mockReturnValueOnce(pending.promise)
@@ -425,6 +493,60 @@ describe.each([
 })
 
 describe('ComparePage 새로 불러오기와 이동', () => {
+  it.each(['실패', '성공'] as const)(
+    '앞선 조회 성공과 확인 완료 연결 실패가 같은 화면 갱신에 묶이면 안내가 남고 후속 조회 %s에 따라 걷힌다',
+    async (result) => {
+      const earlierLoad = deferred<Issue>()
+      const verification = deferred<Issue>()
+      const followingLoad = deferred<Issue>()
+      vi.mocked(getIssue)
+        .mockResolvedValueOnce(issue)
+        .mockReturnValueOnce(earlierLoad.promise)
+        .mockReturnValueOnce(followingLoad.promise)
+      vi.mocked(verifyIssue)
+        .mockRejectedValueOnce(new ApiError(409, 'ATTEMPT_CHANGED'))
+        .mockReturnValueOnce(verification.promise)
+      renderCompare()
+
+      fireEvent.click(await screen.findByRole('button', { name: '확인 완료' }))
+      await screen.findByText(staleMessage)
+      expect(getIssue).toHaveBeenCalledTimes(2)
+      fireEvent.click(screen.getByRole('button', { name: '확인 완료' }))
+      expect(verifyIssue).toHaveBeenCalledTimes(2)
+
+      // 먼저 시작한 조회를 성공 처리한 뒤 저장 실패를 처리하되, 둘 다 같은 화면 갱신에 묶는다.
+      await act(async () => {
+        earlierLoad.resolve({ ...issue, title: '실패 직전에 받은 제목' })
+        await earlierLoad.promise
+        verification.reject(new TypeError('Failed to fetch'))
+      })
+
+      expect(screen.getByRole('heading', { name: '#14 실패 직전에 받은 제목' })).toBeDefined()
+      expect(screen.getByText(unconfirmedMessage)).toBeDefined()
+      expect(screen.queryByText(staleMessage)).toBeNull()
+      expect(getIssue).toHaveBeenCalledTimes(3)
+
+      await act(async () => {
+        if (result === '실패') return followingLoad.reject(new TypeError('Failed to fetch'))
+        followingLoad.resolve({ ...issue, status: 'VERIFIED', title: '실패 뒤에 받은 제목' })
+      })
+
+      if (result === '실패') {
+        expect(screen.getByText(unconfirmedMessage)).toBeDefined()
+        expect(screen.getByRole('heading', { name: '#14 실패 직전에 받은 제목' })).toBeDefined()
+        expect(screen.getByRole('button', { name: '확인 완료' })).toBeDefined()
+      }
+      if (result === '성공') {
+        expect(screen.queryByText(unconfirmedMessage)).toBeNull()
+        expect(screen.getByRole('heading', { name: '#14 실패 뒤에 받은 제목' })).toBeDefined()
+        expect(screen.getByText('확인 완료').getAttribute('data-status')).toBe('VERIFIED')
+        expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
+      }
+      expect(verifyIssue).toHaveBeenCalledTimes(2)
+      expect(vi.mocked(getIssue).mock.calls).toEqual([[issue.id], [issue.id], [issue.id]])
+    },
+  )
+
   it.each(['성공', '404'] as const)(
     '저장 응답과 옛 조회의 %s 응답이 같은 틱에 와도 확인 완료가 남고 후속 조회 실패에도 유지된다',
     async (result) => {

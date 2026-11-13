@@ -220,6 +220,43 @@ describe('useIssueRequest', () => {
     expect(onChanged).not.toHaveBeenCalled()
   })
 
+  it.each(['조회 먼저', '실패 먼저'] as const)(
+    '%s 처리하고 같은 화면 갱신에 묶이면 저장 여부 안내는 다음 조회가 성공할 때까지 남는다',
+    async (order) => {
+      const pending = deferred<IssueDetail>()
+      const onChanged = vi.fn()
+      const onRefresh = vi.fn()
+      const { result, rerender } = renderHook(
+        ({ fetchCount }) => useIssueRequest({ fetchCount, onChanged, onRefresh }),
+        { initialProps: { fetchCount: 4 } },
+      )
+      let completion!: Promise<boolean>
+      act(() => {
+        completion = result.current.send(() => pending.promise)
+      })
+
+      // act를 나누지 않아 조회 횟수와 실패가 한 번에 화면에 반영되게 한다.
+      await act(async () => {
+        if (order === '조회 먼저') rerender({ fetchCount: 5 })
+        pending.reject(new TypeError('Failed to fetch'))
+        expect(await completion).toBe(false)
+        if (order === '실패 먼저') rerender({ fetchCount: 5 })
+      })
+
+      expect(result.current.unconfirmed).toBe(true)
+      expect(result.current.sending).toBe(false)
+      expect(onRefresh).toHaveBeenCalledExactlyOnceWith()
+      expect(onChanged).not.toHaveBeenCalled()
+
+      // 뒤따른 조회가 실패하면 받은 횟수는 늘지 않는다.
+      rerender({ fetchCount: 5 })
+      expect(result.current.unconfirmed).toBe(true)
+      rerender({ fetchCount: 6 })
+      expect(result.current.unconfirmed).toBe(false)
+      expect(onRefresh).toHaveBeenCalledTimes(1)
+    },
+  )
+
   it.each([
     ['ISSUE_STATE_CHANGED', new ApiError(409, 'ISSUE_STATE_CHANGED'), undefined, true],
     ['ATTEMPT_CHANGED', new ApiError(409, 'ATTEMPT_CHANGED'), undefined, true],

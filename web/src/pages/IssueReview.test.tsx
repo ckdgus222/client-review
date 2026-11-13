@@ -143,6 +143,36 @@ beforeEach(() => {
 })
 
 describe('IssueReview', () => {
+  it.each(['조회 먼저', '실패 먼저'] as const)(
+    '확인 완료에서 %s 처리하고 같은 화면 갱신에 묶여도 저장 여부 안내는 다음 조회까지 남는다',
+    async (order) => {
+      let reject!: (error: unknown) => void
+      vi.mocked(verifyIssue).mockReturnValueOnce(
+        new Promise<Issue>((_resolve, fail) => {
+          reject = fail
+        }),
+      )
+      const { props, rerender } = renderReview()
+      await click('확인 완료')
+
+      await act(async () => {
+        if (order === '조회 먼저') rerender(<IssueReview {...props} fetchCount={4} />)
+        reject(new TypeError('Failed to fetch'))
+        await Promise.resolve()
+        if (order === '실패 먼저') rerender(<IssueReview {...props} fetchCount={4} />)
+      })
+
+      expect(screen.getByRole('alert').textContent).toBe(unconfirmedMessage)
+      expect(props.onRefresh).toHaveBeenCalledExactlyOnceWith()
+      expect(props.onChanged).not.toHaveBeenCalled()
+      expect(verifyIssue).toHaveBeenCalledExactlyOnceWith(issue.id, { versionId, attemptId: latestAttempt.id })
+      rerender(<IssueReview {...props} fetchCount={4} />)
+      expect(screen.getByRole('alert').textContent).toBe(unconfirmedMessage)
+      rerender(<IssueReview {...props} fetchCount={5} />)
+      expect(screen.queryByText(unconfirmedMessage)).toBeNull()
+    },
+  )
+
   it.each([
     ['READY_FOR_REVIEW', ['재요청', '철회', '확인 완료']],
     ['OPEN', ['철회']],
