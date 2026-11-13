@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
+import { NotificationsService } from './notifications/notifications.service.js';
 import { setupApp } from './setup-app.js';
 
 const app = await NestFactory.create(AppModule);
@@ -9,3 +10,5 @@ app.enableShutdownHooks();
 setupApp(app);
 // nginx 설정과 Vite 프록시가 4100을 바라본다. 브라우저 e2e는 개발 서버와 부딪치지 않게 PORT로 다른 포트를 준다.
 await app.listen(Number(process.env.PORT ?? 4100));
+// 알림 메일 우편함을 10초마다 꺼내 보낸다. 앱이 꺼질 때(onModuleDestroy) 멈춘다. api e2e는 앱을 직접 만들어서 돌지 않는다.
+app.get(NotificationsService).start();

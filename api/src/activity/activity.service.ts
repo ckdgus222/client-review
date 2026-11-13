@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { ActivityType, Prisma } from '../generated/prisma/client.js';
+import { enqueueNotifications } from '../notifications/notifications.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 
@@ -31,10 +32,11 @@ export class ActivityService {
     private readonly projects: ProjectsService,
   ) {}
 
-  // 사건을 일으킨 일(게시 등)의 트랜잭션 tx 안에서 쓴다. 그 일이 되돌려지면 사건 줄도 남지 않는다.
+  // 사건을 일으킨 일(게시 등)의 트랜잭션 tx 안에서 쓴다. 그 일이 되돌려지면 사건 줄도, 알림 메일 우편함 줄도 남지 않는다.
   // 일지를 쓰는 곳을 여기 하나로 모은다. 사건 종류가 늘어도 쓰는 방식은 같다.
   async record(tx: Prisma.TransactionClient, event: ActivityEventInput) {
-    await tx.activityEvent.create({ data: event });
+    const { id } = await tx.activityEvent.create({ data: event, select: { id: true } });
+    await enqueueNotifications(tx, { ...event, id });
   }
 
   async listForMember(projectId: string, userId: string): Promise<ActivityView[]> {
