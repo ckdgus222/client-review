@@ -1,6 +1,6 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPostForm } from './client.ts'
 import { screenLabel, type Viewport } from './projects.ts'
-import { versionLabel } from './versions.ts'
+import { type VersionStatus, versionLabel } from './versions.ts'
 
 // 접수 → 수정 중 → 확인 요청 → 확인 완료. 철회는 끝나기 전 어디서든 되고, 끝난 쪽지를 다시 열면 접수로 돌아간다.
 export type IssueStatus = 'OPEN' | 'IN_PROGRESS' | 'READY_FOR_REVIEW' | 'VERIFIED' | 'WITHDRAWN'
@@ -87,6 +87,8 @@ export type IssueDetail = IssueSummary & {
   isMine: boolean
   // 내가 이 쪽지를 확인 완료·재요청·철회·다시 열기 할 수 있는 사람인가(쓴 클라이언트이거나 승인자). 쪽지 상태와는 상관없다.
   canReview: boolean
+  // 이 쪽지의 프로젝트의 현재 버전과 그 상태. 쪽지는 게시한 버전이 있어야 쓸 수 있어서 실제로는 늘 있다.
+  currentVersion: { id: string; status: VersionStatus } | null
   attachments: IssueAttachment[]
   comments: IssueComment[]
   // 오래된 순.

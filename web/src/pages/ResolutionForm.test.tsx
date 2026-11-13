@@ -17,6 +17,7 @@ const screens: ComponentProps<typeof ResolutionForm>['screens'] = [
   { screenId: 'screen-pc', name: '상품', viewport: 'PC' },
 ]
 const issue: Issue = {
+  currentVersion: { id: versionId, status: 'IN_REVIEW' },
   id: '11111111-1111-4111-8111-111111111111',
   projectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   number: 14,

@@ -39,6 +39,7 @@ const photos = [
   { id: 'attachment-3', assetId: 'asset-3', width: 400, height: 300 },
 ]
 const issue: Issue = {
+  currentVersion: { id: versionId, status: 'IN_REVIEW' },
   projectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   canReview: false,
   attempts: [],

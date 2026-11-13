@@ -52,6 +52,7 @@ const project: ProjectDetail = {
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
   currentVersion: null,
+  isApprover: false,
   approver: null,
 }
 
@@ -74,6 +75,7 @@ const nextProject: ProjectDetail = {
   name: '다음 프로젝트',
   myRole: 'DEVELOPER',
   currentVersion: null,
+  isApprover: false,
   approver: null,
 }
 

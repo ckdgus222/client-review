@@ -1,4 +1,5 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPutForm } from './client.ts'
+import type { IssueStatus } from './issues.ts'
 import type { Viewport } from './projects.ts'
 
 export type VersionStatus = 'DRAFT' | 'IN_REVIEW' | 'APPROVED'
@@ -18,11 +19,36 @@ export type VersionDetail = VersionSummary & {
   projectId: string
   summary: string
   testUrl: string | null
+  // 승인된 버전이면 누가 언제 승인했는지. 승인 전에는 null이다.
+  approval: { approverName: string; approvedAt: string } | null
   screens: VersionScreen[]
 }
 
+export type ApprovalCheckIssue = { id: string; number: number; title: string; status: IssueStatus }
+
+// 승인자가 승인하기 전에 보는 것(승인 검토).
+export type ApprovalCheck = {
+  // 서버가 이 목록을 읽은 때의 시각이다(마이크로초까지). 화면은 읽거나 고치지 않고 승인 요청에 그대로 돌려보낸다.
+  // Date로 바꾸면 밀리초까지만 남아서, 같은 밀리초에 달린 댓글을 서버가 가려내지 못한다.
+  serverTime: string
+  // 범위 안의 끝나지 않은 쪽지. 하나라도 있으면 승인할 수 없다.
+  unresolved: ApprovalCheckIssue[]
+  // 범위 밖(추가 요청)의 끝나지 않은 쪽지. 승인을 막지 않는다.
+  outOfScope: ApprovalCheckIssue[]
+  // 이번 버전에 달린 댓글, 오래된 순.
+  comments: {
+    id: string
+    issueId: string
+    issueNumber: number
+    issueTitle: string
+    authorName: string
+    body: string
+    createdAt: string
+  }[]
+}
+
 // 일지는 게시된 버전만 가리켜서 번호가 늘 있다.
-// memberName은 초대 수락·접근 철회·승인자 변경의 대상 사람이다. 대상이 없는 사건(게시, 초대)은 null이다.
+// memberName은 초대 수락·접근 철회·승인자 변경의 대상 사람이다. 대상이 없는 사건(게시, 승인, 초대)은 null이다.
 // issue는 쪽지 사건(작성, 수정 시작, 고쳤어요, 확인 완료, 다시 열기, 철회)의 대상 쪽지다. 다른 사건은 null이다.
 export type ActivityItem = {
   id: string
@@ -38,6 +64,7 @@ export type ActivityItem = {
     | 'ISSUE_VERIFIED'
     | 'ISSUE_REOPENED'
     | 'ISSUE_WITHDRAWN'
+    | 'VERSION_APPROVED'
   createdAt: string
   actorName: string
   version: { id: string; number: number } | null
@@ -88,6 +115,29 @@ export const removeDraftScreen = async (versionId: string, screenId: string): Pr
 export const publishVersion = async (versionId: string): Promise<VersionDetail> => {
   const response = await apiPost(`/versions/${encodeURIComponent(versionId)}/publish`)
   return response.json()
+}
+
+export const getApprovalCheck = async (versionId: string): Promise<ApprovalCheck> => {
+  const response = await apiGet(`/versions/${encodeURIComponent(versionId)}/approval-check`)
+  return response.json()
+}
+
+// 승인 요청이 응답을 기다리는 한도. 승인 검토는 위에 뜨는 창이라, 응답이 끝내 오지 않으면 창도 못 닫고 뒤 화면도 못 누른다.
+export const APPROVE_WAIT_MS = 30_000
+
+// seenAt은 승인 검토가 준 serverTime 그대로다. 한도가 지나면 요청을 끊어서 실패로 끝낸다.
+// 끊긴 요청도 서버에서는 저장됐을 수 있어서, 부르는 쪽은 "승인됐는지 모른다"로 다룬다.
+export const approveVersion = async (versionId: string, seenAt: string): Promise<VersionDetail> => {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), APPROVE_WAIT_MS)
+  try {
+    const path = `/versions/${encodeURIComponent(versionId)}/approve`
+    const response = await apiPost(path, { seenAt }, controller.signal)
+    // 본문을 다 읽을 때까지가 한 요청이다. 여기서 기다리지 않고 돌려주면 본문을 읽기 전에 시계가 꺼진다.
+    return await response.json()
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export const listActivity = async (projectId: string): Promise<ActivityItem[]> => {

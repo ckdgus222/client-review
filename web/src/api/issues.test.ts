@@ -83,6 +83,7 @@ const summary: IssueSummary = {
   },
 }
 const detail: IssueDetail = {
+  currentVersion: { id: versionId, status: 'IN_REVIEW' },
   ...summary,
   projectId,
   canReview: false,
@@ -109,6 +110,7 @@ const attempt: IssueAttempt = {
   reviewedByName: null,
   reviewedAt: null,
 }
+
 const encodedIds = [
   { id: '../auth/me', encoded: '..%2Fauth%2Fme' },
   { id: 'a/b', encoded: 'a%2Fb' },
@@ -147,6 +149,22 @@ describe('listIssues', () => {
     await expect(listIssues(projectId)).resolves.toEqual([])
 
     expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/projects/${projectId}/issues`)
+  })
+})
+
+describe('getIssue 현재 버전', () => {
+  it.each([
+    { id: versionId, status: 'IN_REVIEW' as const },
+    { id: versionId, status: 'APPROVED' as const },
+    { id: 'next-version', status: 'IN_REVIEW' as const },
+    null,
+  ])('currentVersion $status를 처음 쪽지가 생긴 버전과 구분해서 그대로 돌려준다', async (currentVersion) => {
+    const responseBody: IssueDetail = { ...detail, currentVersion }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(responseBody))
+
+    await expect(getIssue(issueId)).resolves.toEqual(responseBody)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/issues/${issueId}`)
   })
 })
 

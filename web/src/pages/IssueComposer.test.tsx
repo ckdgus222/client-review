@@ -19,6 +19,7 @@ const pin = {
   label: '상품 상세 · PC',
 }
 const saved: IssueDetail = {
+  currentVersion: { id: versionId, status: 'IN_REVIEW' },
   projectId,
   canReview: false,
   attempts: [],

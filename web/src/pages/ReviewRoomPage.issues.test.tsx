@@ -57,9 +57,11 @@ const project: ProjectDetail = {
   name: '쪽지 검수 프로젝트',
   myRole: 'DEVELOPER',
   currentVersion: { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', number: 1 },
+  isApprover: false,
   approver: null,
 }
 const current: VersionDetail = {
+  approval: null,
   id: project.currentVersion!.id,
   projectId: project.id,
   number: 1,
@@ -89,6 +91,7 @@ const initial: VersionDetail = {
   id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
   number: 0,
   status: 'APPROVED',
+  approval: { approverName: '김수정', approvedAt: '2026-11-12T09:00:00.000Z' },
   screens: current.screens.map((item) => ({ ...item, asset: { ...item.asset, id: `old-${item.asset.id}` } })),
 }
 const latest: VersionDetail = {
@@ -98,6 +101,7 @@ const latest: VersionDetail = {
   screens: current.screens.map((item) => ({ ...item, asset: { ...item.asset, id: `new-${item.asset.id}` } })),
 }
 const productIssue: IssueDetail = {
+  currentVersion: { id: current.id, status: 'IN_REVIEW' },
   projectId: project.id,
   canReview: false,
   attempts: [],
@@ -997,7 +1001,12 @@ describe('ReviewRoomPage 쪽지 통합', () => {
       past: false,
     },
   ])('$name', async ({ past }) => {
-    if (!past) vi.mocked(getVersion).mockResolvedValue({ ...current, status: 'APPROVED' })
+    if (!past)
+      vi.mocked(getVersion).mockResolvedValue({
+        ...current,
+        status: 'APPROVED',
+        approval: { approverName: '김수정', approvedAt: '2026-11-12T09:00:00.000Z' },
+      })
     await renderRoom(`?issue=${productIssue.id}${past ? `&version=${initial.id}` : ''}`)
     expect(screen.getByText('읽기 전용이에요. 쪽지와 댓글은 바꿀 수 없어요.')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '쪽지 쓰기' })).toBeNull()
@@ -4803,7 +4812,12 @@ describe('ReviewRoomPage 고쳤어요와 확인 연결', () => {
       status: myRole === 'DEVELOPER' ? 'IN_PROGRESS' : 'READY_FOR_REVIEW',
       canReview: myRole === 'CLIENT',
     })
-    if (version === '승인된 현재 버전') vi.mocked(getVersion).mockResolvedValue({ ...current, status: 'APPROVED' })
+    if (version === '승인된 현재 버전')
+      vi.mocked(getVersion).mockResolvedValue({
+        ...current,
+        status: 'APPROVED',
+        approval: { approverName: '김수정', approvedAt: '2026-11-12T09:00:00.000Z' },
+      })
     await renderRoom(`?issue=${productIssue.id}&version=${version === '지난 버전' ? initial.id : current.id}`)
 
     expect(screen.getByRole('region', { name: '고쳤어요 이력' })).toBeTruthy()

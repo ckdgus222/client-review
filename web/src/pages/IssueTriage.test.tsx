@@ -13,6 +13,7 @@ vi.mock('../api/issues.ts', async (importOriginal) => ({
 const versionId = '22222222-2222-4222-8222-222222222222'
 const latestVersionId = '33333333-3333-4333-8333-333333333333'
 const issue: Issue = {
+  currentVersion: { id: versionId, status: 'IN_REVIEW' },
   projectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   canReview: false,
   attempts: [],

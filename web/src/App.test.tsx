@@ -51,6 +51,7 @@ describe('App', () => {
     const prefix = basename === '/' ? '' : basename
     vi.mocked(getMe).mockResolvedValueOnce(user)
     vi.mocked(getIssue).mockResolvedValueOnce({
+      currentVersion: { id: '22222222-2222-4222-8222-222222222222', status: 'IN_REVIEW' },
       id,
       projectId,
       number: 14,
@@ -96,7 +97,7 @@ describe('App', () => {
     }
     const prefix = basename === '/' ? '' : basename
     vi.mocked(getMe).mockResolvedValueOnce(user)
-    vi.mocked(getProject).mockResolvedValueOnce({ ...project, currentVersion: null, approver: null })
+    vi.mocked(getProject).mockResolvedValueOnce({ ...project, currentVersion: null, isApprover: false, approver: null })
     render(
       <MemoryRouter basename={basename} initialEntries={[`${prefix}/projects/${project.id}/settings`]}>
         <App />
@@ -128,6 +129,7 @@ describe('App', () => {
     vi.mocked(getMe).mockResolvedValueOnce(user)
     vi.mocked(listProjects).mockResolvedValue([{ ...project, createdAt: '2026-11-05T00:00:00.000Z' }])
     const version = {
+      approval: null,
       id: 'de167c5a-1eae-44cb-969a-818bb9875044',
       projectId: project.id,
       number: 0,
@@ -148,6 +150,7 @@ describe('App', () => {
     vi.mocked(getProject).mockResolvedValue({
       ...project,
       currentVersion: { id: version.id, number: 0 },
+      isApprover: false,
       approver: null,
     })
     vi.mocked(listVersions).mockResolvedValue([version])

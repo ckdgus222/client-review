@@ -16,6 +16,7 @@ const project: ProjectDetail = {
   name: '오브젝트 스토어',
   myRole: 'DEVELOPER',
   currentVersion: { id: 'd565474f-17a5-4a8e-9b61-bde406fefdf3', number: 2 },
+  isApprover: false,
   approver: null,
 }
 const items: ActivityItem[] = [
@@ -249,6 +250,7 @@ describe('ActivityPage 기록 표시', () => {
       publishedAt: item.createdAt,
       summary: `${item.version!.number}번 버전 설명`,
       testUrl: null,
+      approval: null,
       screens: [
         {
           screenId: 'fdba89f1-38f6-4910-a5c7-6774a8e2f9ef',

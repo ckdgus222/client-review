@@ -55,6 +55,7 @@ const olderAttempt: Issue['attempts'][number] = {
   reviewedAt: '2026-11-11T02:00:00.000Z',
 }
 const issue: Issue = {
+  currentVersion: { id: latestAttempt.versionId, status: 'IN_REVIEW' },
   id: '11111111-1111-4111-8111-111111111111',
   projectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   number: 14,

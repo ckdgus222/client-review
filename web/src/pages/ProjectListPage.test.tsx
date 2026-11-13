@@ -105,7 +105,7 @@ beforeEach(() => {
   vi.mocked(logout).mockReset().mockResolvedValue(undefined)
   vi.mocked(getProject)
     .mockReset()
-    .mockResolvedValue({ ...projects[1], currentVersion: null, approver: null })
+    .mockResolvedValue({ ...projects[1], currentVersion: null, isApprover: false, approver: null })
   vi.mocked(listScreens).mockReset().mockResolvedValue([])
 })
 
@@ -446,7 +446,12 @@ describe('ProjectListPage 만들기 응답과 화면 이동', () => {
     const pendingCreate = deferred<MyProject>()
     const createdProject: MyProject = { ...projects[0], name: '새 의뢰', myRole: 'DEVELOPER' }
     vi.mocked(createProject).mockReturnValueOnce(pendingCreate.promise)
-    vi.mocked(getProject).mockResolvedValue({ ...createdProject, currentVersion: null, approver: null })
+    vi.mocked(getProject).mockResolvedValue({
+      ...createdProject,
+      currentVersion: null,
+      isApprover: false,
+      approver: null,
+    })
     renderApp()
     fireEvent.change(await screen.findByLabelText('프로젝트 이름'), { target: { value: '새 의뢰' } })
     fireEvent.click(screen.getByRole('button', { name: '만들기' }))
