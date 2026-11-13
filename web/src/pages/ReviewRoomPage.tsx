@@ -193,9 +193,6 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const [hasDraft, setHasDraft] = useState(false)
   // 승인 검토 창을 연 버전. 검토 결과와 승인 요청이 이 버전에 묶인다. 닫혀 있으면 undefined다.
   const [approvalFor, setApprovalFor] = useState<string>()
-  // 승인 요청이 "승인자가 아니에요"(403)를 받았다. 그사이 승인자가 바뀐 것이라 "버전 승인" 버튼을 없앤다.
-  // 프로젝트를 다시 읽지 않고 화면이 기억한다(다시 읽으면 보던 버전이 바뀔 수 있다). 화면을 새로 열면 서버의 답을 따른다.
-  const [lostApproverRole, setLostApproverRole] = useState(false)
   // 승인 검토에서 골랐는데 이 화면의 쪽지 목록에 아직 없는 쪽지. 목록을 새로 불러오는 동안과 불러오지 못했을 때를 가린다.
   const [awaitedIssue, setAwaitedIssue] = useState<{ id: string; failed: boolean }>()
   // 지금 보이는 사진의 화면. 최신 버전으로 갈 때(goLatest) 응답을 받은 뒤에 읽어서, 새 버전에서도 같은 화면을 보여 준다.
@@ -392,7 +389,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
       if (listRequest.current === request) applyList(list)
     } catch {
       // 목록은 15초마다 다시 부르니 보이던 목록을 그대로 둔다. 쪽지를 기다리던 중이면 못 불러왔다고만 알린다.
-      setAwaitedIssue((awaited) => awaited && { ...awaited, failed: true })
+      // 더 새 요청에 밀려난 요청의 실패는 알리지 않는다(성공도 쓰지 않는다). 기다리는 답은 그 새 요청이 가져온다.
+      if (listRequest.current === request) setAwaitedIssue((awaited) => awaited && { ...awaited, failed: true })
     } finally {
       if (listInFlight.current.number === request) listInFlight.current = NOT_IN_FLIGHT
     }
@@ -552,6 +550,11 @@ const ReviewRoom = ({ id }: { id: string }) => {
     setShowIssuePlace(true)
     setParam('issue', issueId)
   }
+
+  // 승인 요청이 "승인자가 아니에요"(403)를 받았다. 그사이 승인자가 바뀐 것이라 "버전 승인" 버튼을 없앤다.
+  // 프로젝트를 다시 읽지 않고 화면이 아는 값만 고친다(다시 읽으면 보던 버전이 바뀔 수 있다).
+  // 화면을 새로 열거나 "최신 버전 보기"로 프로젝트를 다시 읽으면 서버의 답을 따른다.
+  const forgetApproverRole = () => setProject((known) => known && { ...known, isApprover: false })
 
   // 승인 검토 창의 쪽지 번호를 눌렀다. 창을 닫고 그 쪽지를 연다.
   // 다른 사람이 방금 쓴 쪽지는 승인 검토에 먼저 보이고 이 화면의 목록에는 아직 없을 수 있다(목록은 15초마다 온다).
@@ -813,9 +816,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
             />
           )}
           {/* 승인자에게만, 검수 중인 현재 버전에서만 보인다(서버도 같은 규칙으로 막는다). */}
-          {project.isApprover && !lostApproverRole && canWrite && (
-            <Button onClick={() => setApprovalFor(versionId)}>버전 승인</Button>
-          )}
+          {project.isApprover && canWrite && <Button onClick={() => setApprovalFor(versionId)}>버전 승인</Button>}
         </div>
         <nav className={styles.links}>
           <Link to="/">프로젝트 목록</Link>
@@ -850,7 +851,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
           onOpenIssue={composing ? undefined : openIssueFromApproval}
           onApproved={applyVersion}
           onReloadVersion={() => void refreshVersion(detail.id)}
-          onNotApprover={() => setLostApproverRole(true)}
+          onNotApprover={forgetApproverRole}
           onGoLatest={goLatest}
           onClose={() => setApprovalFor(undefined)}
         />
