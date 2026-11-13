@@ -2,7 +2,7 @@ import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import { ActivityType, type Prisma, ProjectRole } from '../generated/prisma/client.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { buildNotificationMessage } from './notification-message.js';
+import { buildNotificationMessage, RECORD_TYPES } from './notification-message.js';
 
 // 우편함에 넣을 때 필요한 사건 칸. ActivityService.record가 사건 줄을 쓴 직후 넘긴다.
 export type EnqueuedEvent = {
@@ -60,11 +60,7 @@ const recipients = async (tx: Prisma.TransactionClient, event: EnqueuedEvent): P
   if (event.type === ActivityType.RESOLUTION_SUBMITTED && event.issueId) {
     return reviewerEmail(tx, event.projectId, event.issueId);
   }
-  const toDeveloper: ActivityType[] = [
-    ActivityType.VERSION_APPROVED,
-    ActivityType.MEMBER_REVOKED,
-    ActivityType.INVITATION_ACCEPTED,
-  ];
+  const toDeveloper: ActivityType[] = [ActivityType.VERSION_APPROVED, ...RECORD_TYPES];
   if (!toDeveloper.includes(event.type)) return [];
   const developer = await tx.projectMember.findFirst({
     where: { projectId: event.projectId, role: ProjectRole.DEVELOPER },

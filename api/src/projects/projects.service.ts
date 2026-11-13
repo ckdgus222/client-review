@@ -146,16 +146,24 @@ export class ProjectsService {
     return project.status;
   }
 
-  // 개발자만 하는 쓰기 명령은 잠근 뒤 권한을 본다. 잠그기 전에 보면 그사이 바뀐 상태로 판단할 수 있다.
+  // 개발자만 하는 명령은 잠근 뒤 권한을 본다. 잠그기 전에 보면 그사이 바뀐 상태로 판단할 수 있다.
+  // 상태 검사는 하지 않는다. 삭제 대기에서만 하는 되살리기가 이것을 그대로 쓴다.
+  async lockAsDeveloper(tx: Prisma.TransactionClient, projectId: string, userId: string) {
+    const status = await this.lockProject(tx, projectId);
+    const role = await this.requireMemberRole(projectId, userId, tx);
+    if (role !== ProjectRole.DEVELOPER) throw new ForbiddenException('개발자만 할 수 있어요');
+    return status;
+  }
+
+  // 개발자만 하는 쓰기 명령. 상태를 돌려줘서, 보관 풀기처럼 상태에 따라 갈리는 명령이 다시 읽지 않는다.
   async lockForDeveloper(
     tx: Prisma.TransactionClient,
     projectId: string,
     userId: string,
     options: { allowArchived?: boolean } = {},
   ) {
-    const status = await this.lockProject(tx, projectId);
-    const role = await this.requireMemberRole(projectId, userId, tx);
-    if (role !== ProjectRole.DEVELOPER) throw new ForbiddenException('개발자만 할 수 있어요');
+    const status = await this.lockAsDeveloper(tx, projectId, userId);
     assertWritable(status, options);
+    return status;
   }
 }

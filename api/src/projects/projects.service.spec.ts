@@ -42,7 +42,7 @@ describe('ProjectsService', () => {
     const project = await service.create(userId, '변경 전');
 
     await prisma.$transaction(async (tx) => {
-      await expect(service.lockForDeveloper(tx, project.id, userId)).resolves.toBeUndefined();
+      await expect(service.lockForDeveloper(tx, project.id, userId)).resolves.toBe('ACTIVE');
       await tx.project.update({ where: { id: project.id }, data: { name: '변경 후' } });
     });
 

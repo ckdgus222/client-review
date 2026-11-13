@@ -7,6 +7,7 @@ import { IssuesModule } from './issues/issues.module.js';
 import { MembersModule } from './members/members.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
+import { ProjectStatusModule } from './projects/project-status.module.js';
 import { ProjectsModule } from './projects/projects.module.js';
 import { ScreensModule } from './screens/screens.module.js';
 import { VersionsModule } from './versions/versions.module.js';
@@ -17,6 +18,7 @@ import { VersionsModule } from './versions/versions.module.js';
     HealthModule,
     AuthModule,
     ProjectsModule,
+    ProjectStatusModule,
     ScreensModule,
     VersionsModule,
     AssetsModule,

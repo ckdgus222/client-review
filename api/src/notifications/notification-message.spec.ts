@@ -61,36 +61,40 @@ describe('buildNotificationMessage', () => {
     expect(message.text).not.toContain('?version=');
   });
 
-  it.each([ActivityType.MEMBER_REVOKED, ActivityType.INVITATION_ACCEPTED])(
-    '%s 기록 메일은 사건 시각을 UTC ISO로 바꾸고 복원에 필요한 네 줄만 담는다',
-    (type) => {
-      const message = buildNotificationMessage({ ...event, type }, appUrl);
+  it.each([
+    ActivityType.MEMBER_REVOKED,
+    ActivityType.INVITATION_ACCEPTED,
+    ActivityType.PROJECT_DELETE_REQUESTED,
+    ActivityType.PROJECT_RESTORED,
+  ])('%s 기록 메일은 사건 시각을 UTC ISO로 바꾸고 복원에 필요한 네 줄만 담는다', (type) => {
+    const message = buildNotificationMessage({ ...event, type }, appUrl);
 
-      expect(message).toEqual({
-        subject: `[Client Review 기록] ${type}`,
-        text: [
-          `사건: ${type}`,
-          '시각: 2026-11-14T03:34:56.789Z',
-          `프로젝트 id: ${event.projectId}`,
-          `대상 멤버 id: ${event.memberId}`,
-        ].join('\n'),
-      });
-    },
-  );
-
-  it.each([ActivityType.MEMBER_REVOKED, ActivityType.INVITATION_ACCEPTED])(
-    '%s 기록 메일의 대상 멤버가 없으면 마지막 줄에 -를 적는다',
-    (type) => {
-      const message = buildNotificationMessage({ ...event, type, memberId: null }, appUrl);
-
-      expect(message.text.split('\n')).toEqual([
+    expect(message).toEqual({
+      subject: `[Client Review 기록] ${type}`,
+      text: [
         `사건: ${type}`,
         '시각: 2026-11-14T03:34:56.789Z',
         `프로젝트 id: ${event.projectId}`,
-        '대상 멤버 id: -',
-      ]);
-    },
-  );
+        `대상 멤버 id: ${event.memberId}`,
+      ].join('\n'),
+    });
+  });
+
+  it.each([
+    ActivityType.MEMBER_REVOKED,
+    ActivityType.INVITATION_ACCEPTED,
+    ActivityType.PROJECT_DELETE_REQUESTED,
+    ActivityType.PROJECT_RESTORED,
+  ])('%s 기록 메일의 대상 멤버가 없으면 마지막 줄에 -를 적는다', (type) => {
+    const message = buildNotificationMessage({ ...event, type, memberId: null }, appUrl);
+
+    expect(message.text.split('\n')).toEqual([
+      `사건: ${type}`,
+      '시각: 2026-11-14T03:34:56.789Z',
+      `프로젝트 id: ${event.projectId}`,
+      '대상 멤버 id: -',
+    ]);
+  });
 
   it.each(
     [ActivityType.VERSION_PUBLISHED, ActivityType.RESOLUTION_SUBMITTED, ActivityType.VERSION_APPROVED].flatMap((type) =>
@@ -124,6 +128,8 @@ describe('buildNotificationMessage', () => {
     ActivityType.VERSION_APPROVED,
     ActivityType.MEMBER_REVOKED,
     ActivityType.INVITATION_ACCEPTED,
+    ActivityType.PROJECT_DELETE_REQUESTED,
+    ActivityType.PROJECT_RESTORED,
   ])('%s 메일에 쪽지 본문·댓글·이메일·로그인 코드·초대 토큰을 넣지 않는다', (type) => {
     // 실제 비밀값이 아닌 누출 확인용 표식이다. 조회 결과에 칸이 더 있어도 메일에 복사하면 안 된다.
     const privateFields = {
@@ -158,6 +164,8 @@ describe('buildNotificationMessage', () => {
     ActivityType.ISSUE_VERIFIED,
     ActivityType.ISSUE_REOPENED,
     ActivityType.ISSUE_WITHDRAWN,
+    ActivityType.PROJECT_ARCHIVED,
+    ActivityType.PROJECT_UNARCHIVED,
   ])('메일 대상이 아닌 %s 사건은 버전과 쪽지가 있어도 오류를 던진다', (type) => {
     expect(() => buildNotificationMessage({ ...event, type, version, issue }, appUrl)).toThrow();
   });

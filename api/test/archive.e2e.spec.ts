@@ -117,7 +117,7 @@ describe('보관과 삭제 (e2e)', () => {
     files: (await readdir(directory, { recursive: true })).sort(),
   });
 
-  // 프로젝트를 만드는 API는 기존 프로젝트에 쓰지 않는다. 그 API를 뺀 23개 경로다.
+  // 프로젝트를 만드는 API는 기존 프로젝트에 쓰지 않는다. 그 API를 뺀 27개 경로다.
   // 재요청과 다시 열기는 같은 경로이며, 승인 창 조회는 읽기라 별도로 확인한다.
   const writeRequests = (): WriteRequest[] => [
     { name: '버전 만들기', method: 'post', path: `/api/projects/${projectId}/versions`, actor: 'developer' },
@@ -249,6 +249,23 @@ describe('보관과 삭제 (e2e)', () => {
       actor: 'developer',
       allowArchived: true,
     },
+    { name: '보관', method: 'post', path: `/api/projects/${projectId}/archive`, actor: 'developer' },
+    {
+      name: '보관 풀기',
+      method: 'post',
+      path: `/api/projects/${projectId}/unarchive`,
+      actor: 'developer',
+      allowArchived: true,
+    },
+    {
+      name: '삭제',
+      method: 'post',
+      path: `/api/projects/${projectId}/delete`,
+      actor: 'developer',
+      body: { name: '보관 검수 프로젝트' },
+      allowArchived: true,
+    },
+    { name: '되살리기', method: 'post', path: `/api/projects/${projectId}/restore`, actor: 'developer' },
   ];
 
   const sendWrite = (
@@ -411,12 +428,16 @@ describe('보관과 삭제 (e2e)', () => {
   it('보관 중에는 그 API의 권한이 있는 사람의 새 쓰기 요청이 모든 쓰기 API에서 PROJECT_ARCHIVED로 막힌다', async () => {
     await setStatus('ARCHIVED');
     const operations = writeRequests();
-    expect(operations).toHaveLength(23);
+    expect(operations).toHaveLength(27);
     const before = await readState();
     for (const operation of operations.filter((entry) => !entry.allowArchived)) {
       const response = await sendWrite(operation);
       expect(response.status, operation.name).toBe(409);
-      expect(response.body, operation.name).toEqual(archivedBody);
+      expect(response.body, operation.name).toEqual(
+        operation.name === '되살리기'
+          ? { statusCode: 409, code: 'PROJECT_NOT_DELETED', message: '삭제 대기 중인 프로젝트가 아니에요' }
+          : archivedBody,
+      );
     }
     // 승인 창은 읽기라서 보관 중에도 열린다.
     await get(`/api/versions/${versionId}/approval-check`, clientCookie).expect(200);
@@ -425,14 +446,22 @@ describe('보관과 삭제 (e2e)', () => {
     expect(await prisma.projectMember.findUniqueOrThrow({ where: { id: clientMemberId } })).toMatchObject({
       revokedAt: expect.any(Date),
     });
+    await sendWrite(operations.find((entry) => entry.name === '보관 풀기')!).expect(204);
+    expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({ status: 'ACTIVE' });
+    await post(`/api/projects/${projectId}/archive`).expect(204);
+    await sendWrite(operations.find((entry) => entry.name === '삭제')!).expect(204);
+    expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
+      status: 'DELETE_PENDING',
+      statusBeforeDelete: 'ARCHIVED',
+    });
   });
 
   it('삭제 대기 중에는 개발자가 할 수 있는 모든 쓰기 API가 PROJECT_DELETE_PENDING으로 막히고 클라이언트는 404다', async () => {
     await setStatus('DELETE_PENDING');
     const operations = writeRequests();
-    expect(operations).toHaveLength(23);
+    expect(operations).toHaveLength(27);
     const before = await readState();
-    for (const operation of operations) {
+    for (const operation of operations.filter((entry) => entry.name !== '되살리기')) {
       const response = await sendWrite(operation);
       expect(response.status, operation.name).toBe(operation.actor === 'developer' ? 409 : 404);
       if (operation.actor === 'developer') expect(response.body, operation.name).toEqual(deletePendingBody);
@@ -443,6 +472,12 @@ describe('보관과 삭제 (e2e)', () => {
     }
     await get(`/api/versions/${versionId}/approval-check`, clientCookie).expect(404);
     expect(await readState()).toEqual(before);
+    await sendWrite(operations.find((entry) => entry.name === '되살리기')!).expect(204);
+    expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
+      status: 'ACTIVE',
+      statusBeforeDelete: null,
+      deleteRequestedAt: null,
+    });
   });
 
   it('멤버가 아니거나 철회된 사람이 보관·삭제 대기 프로젝트에 쓰면 409가 아니라 404다', async () => {
@@ -714,6 +749,350 @@ describe('보관과 삭제 (e2e)', () => {
       ]),
     );
     await get(`/api/projects/${projectId}`, clientCookie).expect(404);
+  });
+
+  it('이미 보관한 프로젝트를 보관하면 409, 보관이 아닌 프로젝트를 풀면 409다', async () => {
+    const active = await readState();
+    const notArchived = await post(`/api/projects/${projectId}/unarchive`).expect(409);
+    expect(notArchived.body.code).toBe('PROJECT_NOT_ARCHIVED');
+    expect(await readState()).toEqual(active);
+
+    await post(`/api/projects/${projectId}/archive`).expect(204).expect('');
+    const archived = await readState();
+    expect(archived.projects[0]).toMatchObject({
+      status: 'ARCHIVED',
+      statusBeforeDelete: null,
+      deleteRequestedAt: null,
+    });
+    await post(`/api/projects/${projectId}/archive`).expect(409).expect(archivedBody);
+    expect(await readState()).toEqual(archived);
+    await post(`/api/projects/${projectId}/unarchive`).expect(204).expect('');
+    expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
+      status: 'ACTIVE',
+      statusBeforeDelete: null,
+      deleteRequestedAt: null,
+    });
+    // 보관을 푼 뒤에는 실제 쓰기 요청도 다시 받아야 한다.
+    await post(`/api/issues/${issueId}/comments`, clientCookie).send(commentInput()).expect(201);
+  });
+
+  it('삭제 대기가 아닌 프로젝트를 되살리면 409다', async () => {
+    const active = await readState();
+    const response = await post(`/api/projects/${projectId}/restore`).expect(409);
+    expect(response.body.code).toBe('PROJECT_NOT_DELETED');
+    expect(await readState()).toEqual(active);
+
+    await post(`/api/projects/${projectId}/archive`).expect(204);
+    const archived = await readState();
+    await post(`/api/projects/${projectId}/restore`).expect(409).expect(response.body);
+    expect(await readState()).toEqual(archived);
+  });
+
+  it('보관·보관 풀기·삭제·되살리기는 개발자만 하고 클라이언트는 403, 남은 404다', async () => {
+    for (const state of ['ACTIVE', 'ARCHIVED'] as const) {
+      if (state === 'ARCHIVED') await post(`/api/projects/${projectId}/archive`).expect(204);
+      const before = await readState();
+      for (const action of ['archive', 'unarchive', 'delete', 'restore']) {
+        const responses = await Promise.all([
+          post(`/api/projects/${projectId}/${action}`, clientCookie).send({ name: '보관 검수 프로젝트' }),
+          post(`/api/projects/${projectId}/${action}`, outsiderCookie).send({ name: '보관 검수 프로젝트' }),
+          post(`/api/projects/${projectId}/${action}`, revokedCookie).send({ name: '보관 검수 프로젝트' }),
+        ]);
+        expect(
+          responses.map(({ status }) => status),
+          `${state} ${action}`,
+        ).toEqual([403, 404, 404]);
+        expect(
+          responses.map(({ body }) => body.code),
+          action,
+        ).toEqual([undefined, undefined, undefined]);
+      }
+      expect(await readState()).toEqual(before);
+    }
+  });
+
+  it('삭제 대기 프로젝트의 클라이언트가 되살리면 403이 아니라 404다', async () => {
+    await post(`/api/projects/${projectId}/delete`).send({ name: '보관 검수 프로젝트' }).expect(204);
+    const before = await readState();
+    const missing = await post(`/api/projects/${randomUUID()}/restore`, clientCookie).expect(404);
+    await post(`/api/projects/${projectId}/restore`, clientCookie).expect(404).expect(missing.body);
+    expect(await readState()).toEqual(before);
+  });
+
+  it('이름이 다르면 삭제하지 않고 422다', async () => {
+    await prisma.project.update({ where: { id: projectId }, data: { name: 'Review 프로젝트' } });
+    for (const state of ['ACTIVE', 'ARCHIVED'] as const) {
+      if (state === 'ARCHIVED') await post(`/api/projects/${projectId}/archive`).expect(204);
+      const before = await readState();
+      for (const name of ['다른 프로젝트', 'review 프로젝트', 'Review  프로젝트', '', '   ']) {
+        const response = await post(`/api/projects/${projectId}/delete`).send({ name }).expect(422);
+        expect(response.body.code, name).toBe('PROJECT_NAME_MISMATCH');
+      }
+      expect(await readState()).toEqual(before);
+    }
+  });
+
+  it.each([{}, { name: null }, { name: 123 }, { name: [] }, { name: {} }])(
+    '삭제 이름의 형식이 잘못된 %j 요청은 422이고 상태·사건·메일을 바꾸지 않는다',
+    async (body) => {
+      const before = await readState();
+      await post(`/api/projects/${projectId}/delete`).send(body).expect(422);
+      expect(await readState()).toEqual(before);
+    },
+  );
+
+  it('되살리면 삭제 전 상태로 돌아간다', async () => {
+    for (const state of ['ACTIVE', 'ARCHIVED'] as const) {
+      if (state === 'ARCHIVED') await post(`/api/projects/${projectId}/archive`).expect(204);
+      const before = await readState();
+      const [{ now: beforeDelete }] = await prisma.$queryRaw<{ now: Date }[]>`SELECT clock_timestamp() AS now`;
+      // DTO는 앞뒤 공백만 지운다. 이름이 맞으면 진행·보관 어느 상태에서든 지울 수 있다.
+      await post(`/api/projects/${projectId}/delete`).send({ name: ' \t보관 검수 프로젝트\n ' }).expect(204).expect('');
+      const [{ now: afterDelete }] = await prisma.$queryRaw<{ now: Date }[]>`SELECT clock_timestamp() AS now`;
+      const deleted = await prisma.project.findUniqueOrThrow({ where: { id: projectId } });
+      expect(deleted).toMatchObject({
+        status: 'DELETE_PENDING',
+        statusBeforeDelete: state,
+        deleteRequestedAt: expect.any(Date),
+      });
+      expect(deleted.deleteRequestedAt!.getTime()).toBeGreaterThanOrEqual(beforeDelete.getTime());
+      expect(deleted.deleteRequestedAt!.getTime()).toBeLessThanOrEqual(afterDelete.getTime());
+      for (const path of readPaths()) await get(path, clientCookie).expect(404);
+      await get('/api/projects', clientCookie).expect(200).expect([]);
+
+      await post(`/api/projects/${projectId}/restore`).expect(204).expect('');
+      const restored = await readState();
+      // 상태 복구가 사진·쪽지·멤버 등 원래 자료를 바꾸거나 지우지 않아야 한다.
+      expect(restored).toEqual({ ...before, events: restored.events, deliveries: restored.deliveries });
+      const detail = await get(`/api/projects/${projectId}`, clientCookie).expect(200);
+      expect(detail.body).toMatchObject({ status: state, purgeAfter: null });
+      const list = await get('/api/projects', clientCookie).expect(200);
+      expect(list.body).toEqual([expect.objectContaining({ id: projectId, status: state, purgeAfter: null })]);
+      await get(`/api/assets/${assetId}`, clientCookie).expect(200);
+    }
+  });
+
+  it('7일이 지난 삭제 대기 프로젝트는 되살릴 수 없다', async () => {
+    await post(`/api/projects/${projectId}/delete`).send({ name: '보관 검수 프로젝트' }).expect(204);
+    // 앱 시계 대신 DB 시계를 쓴다. 경계를 넘은 경우와 정확히 7일 전으로 적은 경우 모두 거절한다.
+    for (const overdueSeconds of [1, 0]) {
+      await prisma.$executeRaw`
+        UPDATE projects SET delete_requested_at = clock_timestamp() - interval '7 days'
+          - make_interval(secs => ${overdueSeconds}::double precision)
+        WHERE id = ${projectId}::uuid
+      `;
+      const before = await readState();
+      await post(`/api/projects/${projectId}/restore`).expect(409).expect({
+        statusCode: 409,
+        code: 'RESTORE_PERIOD_OVER',
+        message: '되살릴 수 있는 7일이 지났어요',
+      });
+      expect(await readState()).toEqual(before);
+    }
+    // 요청 처리 시간 때문에 경계를 넘지 않도록 1분 안쪽을 고른다.
+    await prisma.$executeRaw`
+      UPDATE projects SET delete_requested_at = clock_timestamp() - interval '7 days' + interval '1 minute'
+      WHERE id = ${projectId}::uuid
+    `;
+    await post(`/api/projects/${projectId}/restore`).expect(204);
+    expect(await prisma.project.findUniqueOrThrow({ where: { id: projectId } })).toMatchObject({
+      status: 'ACTIVE',
+      statusBeforeDelete: null,
+      deleteRequestedAt: null,
+    });
+  });
+
+  it('삭제와 되살리기는 개발자에게 기록 메일을 넣고 보관은 메일이 없다', async () => {
+    const before = await readState();
+    await post(`/api/projects/${projectId}/archive`).expect(204);
+    await post(`/api/projects/${projectId}/unarchive`).expect(204);
+    expect(await prisma.notificationDelivery.findMany({ orderBy: { id: 'asc' } })).toEqual(before.deliveries);
+    await post(`/api/projects/${projectId}/delete`).send({ name: '보관 검수 프로젝트' }).expect(204);
+    await post(`/api/projects/${projectId}/restore`).expect(204);
+
+    const events = await prisma.activityEvent.findMany({
+      where: { projectId, id: { notIn: before.events.map(({ id }) => id) } },
+      orderBy: { createdAt: 'asc' },
+      include: { deliveries: true },
+    });
+    expect(events.map(({ type }) => type)).toEqual([
+      'PROJECT_ARCHIVED',
+      'PROJECT_UNARCHIVED',
+      'PROJECT_DELETE_REQUESTED',
+      'PROJECT_RESTORED',
+    ]);
+    for (const event of events) {
+      expect(event).toMatchObject({ actorId: developerId, projectId, memberId: null, versionId: null, issueId: null });
+      const recorded = event.type === 'PROJECT_DELETE_REQUESTED' || event.type === 'PROJECT_RESTORED';
+      expect(event.deliveries).toEqual(
+        recorded
+          ? [
+              expect.objectContaining({
+                eventId: event.id,
+                toEmail: 'developer@example.com',
+                status: 'PENDING',
+                attempts: 0,
+                sentAt: null,
+              }),
+            ]
+          : [],
+      );
+    }
+    expect(await prisma.notificationDelivery.count()).toBe(before.deliveries.length + 2);
+    const activity = await get(`/api/projects/${projectId}/activity`).expect(200);
+    for (const event of events) {
+      expect(activity.body).toContainEqual(
+        expect.objectContaining({
+          id: event.id,
+          type: event.type,
+          actorName: '개발자',
+          version: null,
+          issue: null,
+          memberName: null,
+        }),
+      );
+    }
+  });
+
+  it('삭제 저장이 실패하면 상태도 우편함 줄도 바뀌지 않는다', async () => {
+    for (const state of ['ACTIVE', 'ARCHIVED'] as const) {
+      if (state === 'ARCHIVED') await post(`/api/projects/${projectId}/archive`).expect(204);
+      const before = await readState();
+      try {
+        await prisma.$executeRaw`
+          CREATE FUNCTION archive_e2e_fail_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN
+            RAISE EXCEPTION 'archive e2e insert failure';
+          END;
+          $$
+        `;
+        await prisma.$executeRaw`
+          CREATE TRIGGER archive_e2e_fail_insert BEFORE INSERT ON notification_deliveries
+          FOR EACH ROW EXECUTE FUNCTION archive_e2e_fail_insert()
+        `;
+        await post(`/api/projects/${projectId}/delete`).send({ name: '보관 검수 프로젝트' }).expect(500);
+        expect(await readState()).toEqual(before);
+      } finally {
+        await prisma.$executeRaw`DROP TRIGGER IF EXISTS archive_e2e_fail_insert ON notification_deliveries`;
+        await prisma.$executeRaw`DROP FUNCTION IF EXISTS archive_e2e_fail_insert()`;
+      }
+      await post(`/api/projects/${projectId}/delete`).send({ name: '보관 검수 프로젝트' }).expect(204);
+      await post(`/api/projects/${projectId}/restore`).expect(204);
+    }
+  });
+
+  it('되살리기 저장이 실패하면 삭제 대기 상태·사건·우편함 줄이 그대로다', async () => {
+    await post(`/api/projects/${projectId}/delete`).send({ name: '보관 검수 프로젝트' }).expect(204);
+    const before = await readState();
+    try {
+      await prisma.$executeRaw`
+        CREATE FUNCTION archive_e2e_fail_restore() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          RAISE EXCEPTION 'archive e2e restore failure';
+        END;
+        $$
+      `;
+      await prisma.$executeRaw`
+        CREATE TRIGGER archive_e2e_fail_restore BEFORE INSERT ON notification_deliveries
+        FOR EACH ROW EXECUTE FUNCTION archive_e2e_fail_restore()
+      `;
+      await post(`/api/projects/${projectId}/restore`).expect(500);
+      expect(await readState()).toEqual(before);
+    } finally {
+      try {
+        await prisma.$executeRaw`DROP TRIGGER IF EXISTS archive_e2e_fail_restore ON notification_deliveries`;
+      } finally {
+        await prisma.$executeRaw`DROP FUNCTION IF EXISTS archive_e2e_fail_restore()`;
+      }
+    }
+    await post(`/api/projects/${projectId}/restore`).expect(204);
+  });
+
+  it.each([
+    {
+      action: 'archive',
+      state: 'ACTIVE',
+      next: 'ARCHIVED',
+      code: 'PROJECT_ARCHIVED',
+      type: 'PROJECT_ARCHIVED',
+      mails: 0,
+    },
+    {
+      action: 'unarchive',
+      state: 'ARCHIVED',
+      next: 'ACTIVE',
+      code: 'PROJECT_NOT_ARCHIVED',
+      type: 'PROJECT_UNARCHIVED',
+      mails: 0,
+    },
+    {
+      action: 'delete',
+      state: 'ACTIVE',
+      next: 'DELETE_PENDING',
+      code: 'PROJECT_DELETE_PENDING',
+      type: 'PROJECT_DELETE_REQUESTED',
+      mails: 1,
+    },
+    {
+      action: 'restore',
+      state: 'DELETE_PENDING',
+      next: 'ACTIVE',
+      code: 'PROJECT_NOT_DELETED',
+      type: 'PROJECT_RESTORED',
+      mails: 1,
+    },
+  ] as const)(
+    '$action 요청이 동시에 둘 와도 한 번만 바뀌고 사건·메일도 한 번만 남는다',
+    async ({ action, state, next, code, type, mails }) => {
+      if (state === 'ARCHIVED') await post(`/api/projects/${projectId}/archive`).expect(204);
+      if (state === 'DELETE_PENDING')
+        await post(`/api/projects/${projectId}/delete`).send({ name: '보관 검수 프로젝트' }).expect(204);
+      const before = await readState();
+      const responses = await Promise.all([
+        post(`/api/projects/${projectId}/${action}`).send({ name: '보관 검수 프로젝트' }),
+        post(`/api/projects/${projectId}/${action}`).send({ name: '보관 검수 프로젝트' }),
+      ]);
+      expect(responses.map(({ status }) => status).sort()).toEqual([204, 409]);
+      expect(responses.find(({ status }) => status === 409)!.body.code).toBe(code);
+      const after = await readState();
+      expect(after.projects[0].status).toBe(next);
+      expect(after.events.filter((event) => !before.events.some(({ id }) => id === event.id))).toEqual([
+        expect.objectContaining({ type, projectId, actorId: developerId }),
+      ]);
+      expect(after.deliveries).toHaveLength(before.deliveries.length + mails);
+    },
+  );
+
+  it('네 상태 API는 없는·잘못된 프로젝트 id를 404로 처리한다', async () => {
+    const before = await readState();
+    for (const action of ['archive', 'unarchive', 'delete', 'restore']) {
+      const missing = await post(`/api/projects/${randomUUID()}/${action}`)
+        .send({ name: '보관 검수 프로젝트' })
+        .expect(404);
+      await post(`/api/projects/not-a-uuid/${action}`)
+        .send({ name: '보관 검수 프로젝트' })
+        .expect(404)
+        .expect(missing.body);
+    }
+    expect(await readState()).toEqual(before);
+  });
+
+  it('네 상태 API는 로그인하지 않았거나 다른 사이트에서 보낸 요청을 거절한다', async () => {
+    const before = await readState();
+    for (const action of ['archive', 'unarchive', 'delete', 'restore']) {
+      await request(server)
+        .post(`/api/projects/${projectId}/${action}`)
+        .set('Origin', origin)
+        .send({ name: '보관 검수 프로젝트' })
+        .expect(401);
+      await request(server)
+        .post(`/api/projects/${projectId}/${action}`)
+        .set('Origin', 'https://other.example.com')
+        .set('Cookie', cookie)
+        .send({ name: '보관 검수 프로젝트' })
+        .expect(403);
+    }
+    expect(await readState()).toEqual(before);
   });
 
   it('개발자는 삭제 대기 프로젝트를 읽기만 하고 활동 일지에서 기록 메일 실패를 본다', async () => {
