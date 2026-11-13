@@ -146,7 +146,16 @@ describe('ProjectsService', () => {
       createdAt: expect.any(Date),
     });
     expect(await prisma.project.findMany()).toEqual([
-      { id: result.id, name: result.name, currentVersionId: null, approverMemberId: null, createdAt: result.createdAt },
+      {
+        id: result.id,
+        name: result.name,
+        currentVersionId: null,
+        approverMemberId: null,
+        createdAt: result.createdAt,
+        status: 'ACTIVE',
+        statusBeforeDelete: null,
+        deleteRequestedAt: null,
+      },
     ]);
     expect(await prisma.projectMember.findMany()).toEqual([
       {

@@ -183,7 +183,16 @@ describe('프로젝트 API (e2e)', () => {
       createdAt: expect.any(String),
     });
     expect(await prisma.project.findMany()).toEqual([
-      { id: response.body.id, name, currentVersionId: null, approverMemberId: null, createdAt: expect.any(Date) },
+      {
+        id: response.body.id,
+        name,
+        currentVersionId: null,
+        approverMemberId: null,
+        createdAt: expect.any(Date),
+        status: 'ACTIVE',
+        statusBeforeDelete: null,
+        deleteRequestedAt: null,
+      },
     ]);
   });
 
@@ -238,6 +247,9 @@ describe('프로젝트 API (e2e)', () => {
           currentVersionId: null,
           approverMemberId: null,
           createdAt: new Date(response.body.createdAt),
+          status: 'ACTIVE',
+          statusBeforeDelete: null,
+          deleteRequestedAt: null,
         },
       ]);
       expect(await prisma.projectMember.findMany()).toEqual([
