@@ -64,7 +64,8 @@ export class MembersService {
 
     await this.prisma.$transaction(async (tx) => {
       // 남의 프로젝트 참여자면 "없는 프로젝트" 대신 "없는 참여자"로 답해서, 그 id가 있는지 드러나지 않게 한다.
-      await this.projects.lockForDeveloper(tx, projectId, userId).catch((error: unknown) => {
+      // 보관한 프로젝트에서도 사람은 뺄 수 있다. 누가 볼 수 있는지는 끝난 뒤에도 바꿀 수 있어야 한다(docs/archive.md 정할 것 4).
+      await this.projects.lockForDeveloper(tx, projectId, userId, { allowArchived: true }).catch((error: unknown) => {
         throw error instanceof NotFoundException ? memberNotFound() : error;
       });
       const member = await tx.projectMember.findUniqueOrThrow({

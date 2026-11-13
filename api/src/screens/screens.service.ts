@@ -1,5 +1,5 @@
-import { ConflictException, ForbiddenException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, ProjectRole, type Viewport } from '../generated/prisma/client.js';
+import { ConflictException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, type Viewport } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 
@@ -37,7 +37,8 @@ export class ScreensService {
   // name은 입력 검사(DTO)에서 앞뒤 공백을 지운 값이다.
   async create(projectId: string, userId: string, name: string, viewport: Viewport): Promise<ScreenView> {
     return this.prisma.$transaction(async (tx) => {
-      await this.lockProjectForDeveloper(tx, projectId, userId);
+      // 같은 프로젝트의 화면 쓰기는 프로젝트 줄 잠금 때문에 하나씩 차례로 처리된다(숨기기와 보이기가 동시에 와도).
+      await this.projects.lockForDeveloper(tx, projectId, userId);
       // 같은 이름·기기는 숨긴 화면까지 유니크 제약이 거절한다. 그래서 먼저 찾아보는 코드를 두지 않는다.
       return tx.screen.create({ data: { projectId, name, viewport }, select: SCREEN_FIELDS }).catch((error) => {
         throw isUniqueViolation(error) ? screenExistsError() : error;
@@ -53,7 +54,7 @@ export class ScreensService {
 
     return this.prisma.$transaction(async (tx) => {
       // 남의 화면도 없는 화면과 같은 404로 답한다. 문구가 다르면 그 화면 id가 어딘가 있다는 것이 드러난다.
-      await this.lockProjectForDeveloper(tx, found.projectId, userId).catch((error) => {
+      await this.projects.lockForDeveloper(tx, found.projectId, userId).catch((error) => {
         throw error instanceof NotFoundException ? screenNotFound() : error;
       });
       const screen = await tx.screen.findUniqueOrThrow({ where: { id: screenId }, select: SCREEN_FIELDS });
@@ -68,11 +69,4 @@ export class ScreensService {
     });
   }
 
-  // 화면을 바꾸는 요청은 프로젝트 줄을 잠근 뒤 권한을 본다. 같은 프로젝트의 화면 쓰기는
-  // 이 잠금 때문에 하나씩 차례로 처리된다(숨기기와 보이기가 동시에 와도).
-  private async lockProjectForDeveloper(tx: Prisma.TransactionClient, projectId: string, userId: string) {
-    await tx.$queryRaw`SELECT id FROM projects WHERE id = ${projectId}::uuid FOR UPDATE`;
-    const role = await this.projects.requireMemberRole(projectId, userId, tx);
-    if (role !== ProjectRole.DEVELOPER) throw new ForbiddenException('개발자만 할 수 있어요');
-  }
 }

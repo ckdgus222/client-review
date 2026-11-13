@@ -1,10 +1,10 @@
 import { ForbiddenException, GoneException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { ActivityService } from '../activity/activity.service.js';
 import { createSessionToken, hashSessionToken } from '../auth/token.js';
-import { ActivityType, type Prisma, ProjectRole } from '../generated/prisma/client.js';
+import { ActivityType, type Prisma, ProjectRole, ProjectStatus } from '../generated/prisma/client.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { ProjectsService } from '../projects/projects.service.js';
+import { assertWritable, ProjectsService } from '../projects/projects.service.js';
 import { conflict } from '../versions/versions.service.js';
 
 // 프로젝트마다 활성 클라이언트는 5명까지다(전체 기획 5장).
@@ -96,16 +96,19 @@ export class InvitationsService {
         expired: boolean;
         project_name: string;
         inviter_name: string;
+        project_deleted: boolean;
       }[]
     >`
       SELECT i.email, i.accepted_at IS NOT NULL AS accepted, i.revoked_at IS NOT NULL AS revoked,
-             i.expires_at <= now() AS expired, p.name AS project_name, u.name AS inviter_name
+             i.expires_at <= now() AS expired, p.name AS project_name, u.name AS inviter_name,
+             p.status = 'DELETE_PENDING' AS project_deleted
       FROM invitations i
       JOIN projects p ON p.id = i.project_id
       JOIN users u ON u.id = i.invited_by_id
       WHERE i.token_hash = ${hashSessionToken(token)}
     `;
-    if (!found || found.revoked) throw invitationNotFound();
+    // 지운(삭제 대기) 프로젝트의 초대는 없는 초대와 같다. 그 프로젝트는 클라이언트에게 404다.
+    if (!found || found.revoked || found.project_deleted) throw invitationNotFound();
 
     // 수락한 사람이 메일 속 링크를 다시 눌러도 헷갈리지 않게, 수락된 초대는 만료와 상관없이 상태로 알려 준다.
     if (!found.accepted && found.expired) throw invitationExpired();
@@ -127,7 +130,7 @@ export class InvitationsService {
     const { projectId } = found;
 
     return this.prisma.$transaction(async (tx) => {
-      await this.projects.lockProject(tx, projectId);
+      const projectStatus = await this.projects.lockProject(tx, projectId);
 
       // 잠근 뒤의 상태로 판단한다. 같은 링크로 동시에 두 번 수락하면 두 번째는 여기서 수락된 초대를 본다.
       // 만료는 clock_timestamp()로 본다. now()는 트랜잭션을 시작한 시각이라, 잠금을 기다리는 동안 만료된 초대를 놓친다.
@@ -138,7 +141,9 @@ export class InvitationsService {
                expires_at <= clock_timestamp() AS expired
         FROM invitations WHERE id = ${found.id}::uuid
       `;
-      if (invitation.accepted || invitation.revoked) throw invitationNotFound();
+      if (invitation.accepted || invitation.revoked || projectStatus === ProjectStatus.DELETE_PENDING) {
+        throw invitationNotFound();
+      }
       if (invitation.expired) throw invitationExpired();
       if (invitation.email !== user.email) {
         throw new ForbiddenException({
@@ -153,6 +158,8 @@ export class InvitationsService {
         select: { id: true, revokedAt: true },
       });
       if (existing && !existing.revokedAt) throw conflict('ALREADY_MEMBER', '이미 참여한 프로젝트예요');
+      // 보관한 프로젝트에는 새로 들어올 수 없다. 보관을 풀고 다시 수락한다.
+      assertWritable(projectStatus);
       await assertClientSlot(tx, projectId);
 
       // 마지막 방어: 쓰지 않은 초대일 때만 수락으로 바꾼다.

@@ -143,6 +143,8 @@ describe('ProjectsService', () => {
       id: expect.any(String),
       name: '쇼핑몰 리뉴얼',
       myRole: 'DEVELOPER',
+      status: 'ACTIVE',
+      purgeAfter: null,
       createdAt: expect.any(Date),
     });
     expect(await prisma.project.findMany()).toEqual([
@@ -218,12 +220,16 @@ describe('ProjectsService', () => {
         id: clientProject.id,
         name: clientProject.name,
         myRole: 'CLIENT',
+        status: 'ACTIVE',
+        purgeAfter: null,
         createdAt: clientProject.createdAt,
       },
       {
         id: developerProject.id,
         name: developerProject.name,
         myRole: 'DEVELOPER',
+        status: 'ACTIVE',
+        purgeAfter: null,
         createdAt: developerProject.createdAt,
       },
     ]);
@@ -329,7 +335,14 @@ describe('ProjectsService', () => {
       });
       await prisma.project.update({ where: { id: project.id }, data: { approverMemberId: member.id } });
       const memberUserId = role === 'DEVELOPER' ? userId : otherUserId;
-      const detail = { id: project.id, name: project.name, myRole: role, currentVersion: null };
+      const detail = {
+        id: project.id,
+        name: project.name,
+        myRole: role,
+        currentVersion: null,
+        status: 'ACTIVE',
+        purgeAfter: null,
+      };
 
       await expect(service.getForMember(project.id, memberUserId)).resolves.toEqual({
         ...detail,
@@ -358,6 +371,8 @@ describe('ProjectsService', () => {
         id: project.id,
         name: '함께 보는 프로젝트',
         myRole: role,
+        status: 'ACTIVE',
+        purgeAfter: null,
         currentVersion: null,
         approver: null,
         isApprover: false,
@@ -397,6 +412,8 @@ describe('ProjectsService', () => {
         id: project.id,
         name: project.name,
         myRole: role,
+        status: 'ACTIVE',
+        purgeAfter: null,
         currentVersion: { id: currentVersion.id, number: 1 },
         approver: null,
         isApprover: false,

@@ -515,6 +515,8 @@ describe('초대 API (e2e)', () => {
       id: projectId,
       name: '초대 검수 프로젝트',
       myRole: 'CLIENT',
+      status: 'ACTIVE',
+      purgeAfter: null,
       currentVersion: null,
       approver: null,
       isApprover: false,

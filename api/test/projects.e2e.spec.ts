@@ -113,12 +113,16 @@ describe('프로젝트 API (e2e)', () => {
           id: clientProject.id,
           name: clientProject.name,
           myRole: 'CLIENT',
+          status: 'ACTIVE',
+          purgeAfter: null,
           createdAt: clientProject.createdAt.toISOString(),
         },
         {
           id: developerProject.id,
           name: developerProject.name,
           myRole: 'DEVELOPER',
+          status: 'ACTIVE',
+          purgeAfter: null,
           createdAt: developerProject.createdAt.toISOString(),
         },
       ]);
@@ -136,6 +140,8 @@ describe('프로젝트 API (e2e)', () => {
       id: expect.any(String),
       name: '쇼핑몰  리뉴얼',
       myRole: 'DEVELOPER',
+      status: 'ACTIVE',
+      purgeAfter: null,
       createdAt: expect.any(String),
     });
     const [project] = await prisma.project.findMany();
@@ -144,6 +150,8 @@ describe('프로젝트 API (e2e)', () => {
       id: project.id,
       name: project.name,
       myRole: 'DEVELOPER',
+      status: 'ACTIVE',
+      purgeAfter: null,
       createdAt: project.createdAt.toISOString(),
     });
     expect(await prisma.projectMember.findMany()).toEqual([
@@ -166,6 +174,8 @@ describe('프로젝트 API (e2e)', () => {
         id: project.id,
         name: project.name,
         myRole: 'DEVELOPER',
+        status: 'ACTIVE',
+        purgeAfter: null,
         currentVersion: null,
         approver: null,
         isApprover: false,
@@ -180,6 +190,8 @@ describe('프로젝트 API (e2e)', () => {
       id: expect.any(String),
       name,
       myRole: 'DEVELOPER',
+      status: 'ACTIVE',
+      purgeAfter: null,
       createdAt: expect.any(String),
     });
     expect(await prisma.project.findMany()).toEqual([
@@ -238,6 +250,8 @@ describe('프로젝트 API (e2e)', () => {
         id: expect.any(String),
         name: '개발자 프로젝트',
         myRole: 'DEVELOPER',
+        status: 'ACTIVE',
+        purgeAfter: null,
         createdAt: expect.any(String),
       });
       expect(await prisma.project.findMany()).toEqual([
@@ -291,6 +305,8 @@ describe('프로젝트 API (e2e)', () => {
       id: expect.any(String),
       name: '새 개발자의 프로젝트',
       myRole: 'DEVELOPER',
+      status: 'ACTIVE',
+      purgeAfter: null,
       createdAt: expect.any(String),
     });
     expect(await prisma.project.count()).toBe(2);
@@ -320,7 +336,16 @@ describe('프로젝트 API (e2e)', () => {
       .get('/api/projects')
       .set('Cookie', cookie)
       .expect(200)
-      .expect([{ id: project.id, name: project.name, myRole: 'CLIENT', createdAt: project.createdAt.toISOString() }]);
+      .expect([
+        {
+          id: project.id,
+          name: project.name,
+          myRole: 'CLIENT',
+          createdAt: project.createdAt.toISOString(),
+          status: 'ACTIVE',
+          purgeAfter: null,
+        },
+      ]);
     await request(server)
       .get(`/api/projects/${project.id}`)
       .set('Cookie', cookie)
@@ -329,6 +354,8 @@ describe('프로젝트 API (e2e)', () => {
         id: project.id,
         name: project.name,
         myRole: 'CLIENT',
+        status: 'ACTIVE',
+        purgeAfter: null,
         currentVersion: null,
         approver: null,
         isApprover: false,
@@ -384,6 +411,8 @@ describe('프로젝트 API (e2e)', () => {
           id: project.id,
           name: project.name,
           myRole: role,
+          status: 'ACTIVE',
+          purgeAfter: null,
           currentVersion: null,
           approver: null,
           isApprover: false,
@@ -408,6 +437,8 @@ describe('프로젝트 API (e2e)', () => {
           id: project.id,
           name: project.name,
           myRole: role,
+          status: 'ACTIVE',
+          purgeAfter: null,
           currentVersion: null,
           approver: { memberId: member.id, name: '다른 사용자' },
           isApprover: role === 'CLIENT',
@@ -423,6 +454,8 @@ describe('프로젝트 API (e2e)', () => {
         id: project.id,
         name: project.name,
         myRole: 'CLIENT',
+        status: 'ACTIVE',
+        purgeAfter: null,
         currentVersion: null,
         approver: null,
         isApprover: false,

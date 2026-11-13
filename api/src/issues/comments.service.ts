@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { assertWritable } from '../projects/projects.service.js';
 import { conflict, isUniqueViolation } from '../versions/versions.service.js';
 import { COMMENT_FIELDS, type IssueDetail, IssuesService, toCommentView } from './issues.service.js';
 
@@ -18,7 +19,7 @@ export class CommentsService {
   // 활성 멤버면 누구나, 남이 쓴 쪽지에도 쓴다. 댓글은 쪽지 안에서 보이므로 활동 일지에는 남기지 않는다.
   async create(issueId: string, userId: string, input: NewComment): Promise<CommentView> {
     return this.prisma.$transaction(async (tx) => {
-      const { projectId } = await this.issues.lockIssue(tx, issueId, userId);
+      const { projectId, projectStatus } = await this.issues.lockIssue(tx, issueId, userId);
 
       // 다시 보낸 요청이면 처음 만든 댓글을 그대로 돌려준다. 쪽지 쓰기와 같은 이유로 버전 검사보다 먼저 본다.
       const existing = await tx.comment.findFirst({
@@ -26,6 +27,8 @@ export class CommentsService {
         select: COMMENT_FIELDS,
       });
       if (existing) return toCommentView(existing);
+      // 보관·삭제 대기는 새로 쓸 때만 막는다. 저장된 댓글을 다시 보낸 요청은 위에서 그 댓글을 받는다.
+      assertWritable(projectStatus);
 
       const versionId = await this.issues.requireVersionInReview(tx, projectId, input.versionId);
       // createdAt은 적지 않는다. DB 기본값이 넣는 순간의 실제 시각(잠금을 얻은 뒤)을 적는다.

@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ActivityService } from '../activity/activity.service.js';
 import {
   ActivityType,
@@ -9,7 +9,7 @@ import {
   type Viewport,
 } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { ProjectsService } from '../projects/projects.service.js';
+import { assertWritable, conflict, ProjectsService } from '../projects/projects.service.js';
 
 export type VersionSummary = { id: string; number: number | null; status: VersionStatus; publishedAt: Date | null };
 
@@ -38,9 +38,8 @@ export type DraftChanges = { summary?: string; testUrl?: string | null };
 // 없는 버전, 남의 버전, 클라이언트가 보려는 게시 전 버전, 틀린 모양 id(컨트롤러)가 모두 이 본문으로 답한다.
 export const versionNotFound = () => new NotFoundException('없는 버전이에요');
 
-// 오류 본문은 화면 409와 같이 Nest 기본 모양에 code를 더한다. web은 code를 보고 문구를 고른다.
-export const conflict = (code: string, message: string) =>
-  new ConflictException({ statusCode: HttpStatus.CONFLICT, message, code });
+// 쪽지·초대·승인이 여기서 가져오던 409 도우미. 몸체는 projects.service에 있다.
+export { conflict };
 
 export const isUniqueViolation = (error: unknown) =>
   error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
@@ -67,9 +66,7 @@ export class VersionsService {
   async createDraft(projectId: string, userId: string): Promise<VersionDetail> {
     return this.prisma.$transaction(async (tx) => {
       // 복사하는 동안 게시(현재 버전 바꾸기)나 화면 숨기기가 끼어들지 않게 프로젝트 줄을 잠근다.
-      await tx.$queryRaw`SELECT id FROM projects WHERE id = ${projectId}::uuid FOR UPDATE`;
-      const role = await this.projects.requireMemberRole(projectId, userId, tx);
-      if (role !== ProjectRole.DEVELOPER) throw new ForbiddenException('개발자만 할 수 있어요');
+      await this.projects.lockForDeveloper(tx, projectId, userId);
 
       // 사진은 새로 만들지 않고 같은 Asset을 가리킨다. 숨긴 화면은 새 게시 전 버전에 넣지 않는다.
       const { currentVersion } = await tx.project.findUniqueOrThrow({
@@ -155,9 +152,10 @@ export class VersionsService {
   // 잠그기 전에 게시됐어도 여기서 409로 멈춘다.
   async lockDraft(tx: Prisma.TransactionClient, versionId: string, userId: string) {
     const { projectId } = await this.findVersion(versionId, tx);
-    await tx.$queryRaw`SELECT id FROM projects WHERE id = ${projectId}::uuid FOR UPDATE`;
+    const projectStatus = await this.projects.lockProject(tx, projectId);
     const version = await this.requireDeveloperOf(versionId, userId, tx);
     if (version.status !== VersionStatus.DRAFT) throw conflict('VERSION_NOT_DRAFT', '게시한 버전은 고칠 수 없어요');
+    assertWritable(projectStatus);
     return projectId;
   }
 

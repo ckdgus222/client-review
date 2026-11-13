@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, UnprocessableEntityException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { ActivityService } from '../activity/activity.service.js';
 import {
   ActivityType,
@@ -6,9 +6,11 @@ import {
   IssueStatus,
   type Prisma,
   ProjectRole,
+  ProjectStatus,
   VersionStatus,
 } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { assertWritable, ProjectsService } from '../projects/projects.service.js';
 import { conflict, type VersionDetail, versionNotFound, VersionsService } from './versions.service.js';
 
 type CheckIssue = { id: string; number: number; title: string; status: IssueStatus };
@@ -36,7 +38,13 @@ export type ApprovalCheck = {
 // 아직 끝나지 않은 쪽지의 상태(접수, 수정 중, 확인 요청).
 const UNRESOLVED_STATUSES = [IssueStatus.OPEN, IssueStatus.IN_PROGRESS, IssueStatus.READY_FOR_REVIEW];
 
-type LockedVersion = { id: string; projectId: string; status: VersionStatus; isCurrent: boolean };
+type LockedVersion = {
+  id: string;
+  projectId: string;
+  status: VersionStatus;
+  isCurrent: boolean;
+  projectStatus: ProjectStatus;
+};
 
 // 승인은 현재 버전이 검수 중일 때만 한다. 지난 버전이면 "새 버전이 올라왔어요", 이미 승인된 현재 버전이면 "검수 중이 아니에요"다.
 // 응답을 못 받아 다시 보낸 승인도 여기서 멈춘다(이미 승인됐다). 그래서 요청 번호를 따로 받지 않는다.
@@ -52,6 +60,7 @@ export class ApprovalService {
     private readonly prisma: PrismaService,
     private readonly versions: VersionsService,
     private readonly activity: ActivityService,
+    private readonly projects: ProjectsService,
   ) {}
 
   async check(versionId: string, userId: string): Promise<ApprovalCheck> {
@@ -102,11 +111,12 @@ export class ApprovalService {
   }
 
   // seenAt은 승인 검토가 준 serverTime 그대로다(입력 검사 DTO가 모양과 실제 날짜·시각을 본다).
-  // 순서: 프로젝트 줄 잠금 → 멤버(404) → 승인자(403) → seenAt(422) → 버전(409) → 미해결(409) → 새 댓글(409) → 저장.
+  // 순서: 프로젝트 줄 잠금 → 멤버(404) → 승인자(403) → 보관·삭제 대기(409) → seenAt(422) → 버전(409) → 미해결(409) → 새 댓글(409) → 저장.
   // 승인 줄·버전 상태·일지가 한 트랜잭션이라, 하나라도 실패하면 버전은 검수 중 그대로다.
   async approve(versionId: string, userId: string, seenAt: string): Promise<VersionDetail> {
     return this.prisma.$transaction(async (tx) => {
       const version = await this.lockAsApprover(tx, versionId, userId, 'UPDATE');
+      assertWritable(version.projectStatus);
       // 승인 검토를 건너뛰고 먼 미래의 시각을 보내면 아래 새 댓글 검사가 아무것도 못 잡는다. 서버가 준 적 없는 시각이라 틀린 입력이다.
       // 시각 비교는 DB가 한다. 자바스크립트의 Date는 밀리초까지만 알아서 마이크로초를 잃는다.
       const [{ isFuture }] = await tx.$queryRaw<{ isFuture: boolean }[]>`
@@ -163,27 +173,25 @@ export class ApprovalService {
     const found = await tx.deliveryVersion.findUnique({ where: { id: versionId }, select: { projectId: true } });
     if (!found) throw versionNotFound();
     const { projectId } = found;
-    if (lock === 'UPDATE') await tx.$queryRaw`SELECT id FROM projects WHERE id = ${projectId}::uuid FOR UPDATE`;
-    else await tx.$queryRaw`SELECT id FROM projects WHERE id = ${projectId}::uuid FOR SHARE`;
+    const projectStatus = await this.projects.lockProject(tx, projectId, lock);
 
-    const member = await tx.projectMember.findUnique({
-      where: { projectId_userId: { projectId, userId } },
-      select: {
-        id: true,
-        role: true,
-        revokedAt: true,
-        project: { select: { approverMemberId: true, currentVersionId: true } },
-      },
+    // 멤버가 아님·철회됨·삭제 대기의 클라이언트는 없는 버전과 같은 404다(문구가 다르면 그 버전 id가 있다는 것이 드러난다).
+    const role = await this.projects.requireMemberRole(projectId, userId, tx).catch((error) => {
+      throw error instanceof NotFoundException ? versionNotFound() : error;
     });
-    if (!member || member.revokedAt) throw versionNotFound();
+    const project = await tx.project.findUniqueOrThrow({
+      where: { id: projectId },
+      select: { currentVersionId: true, approver: { select: { userId: true } } },
+    });
     // 잠근 뒤의 상태를 다시 읽는다. 기다리는 사이 게시되거나 승인됐을 수 있다. id는 DB가 준 값(소문자)을 쓴다.
     // 버전은 지워지지 않아서, 위에서 찾은 줄은 잠근 뒤에도 있다.
     const version = await tx.deliveryVersion.findUniqueOrThrow({
       where: { id: versionId },
       select: { id: true, status: true },
     });
-    if (member.role !== ProjectRole.DEVELOPER && version.status === VersionStatus.DRAFT) throw versionNotFound();
-    if (member.project.approverMemberId !== member.id) throw new ForbiddenException('승인자만 할 수 있어요');
-    return { ...version, projectId, isCurrent: member.project.currentVersionId === version.id };
+    if (role !== ProjectRole.DEVELOPER && version.status === VersionStatus.DRAFT) throw versionNotFound();
+    // 멤버 줄은 (프로젝트, 사용자)마다 하나라서, 승인자 줄의 사용자가 나면 내가 승인자다.
+    if (project.approver?.userId !== userId) throw new ForbiddenException('승인자만 할 수 있어요');
+    return { ...version, projectId, isCurrent: project.currentVersionId === version.id, projectStatus };
   }
 }
