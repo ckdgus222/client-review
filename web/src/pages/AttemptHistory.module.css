@@ -1,0 +1,45 @@
+.attempts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.attempts li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+}
+
+.meta strong {
+  color: var(--color-text);
+}
+
+/* 개발자가 줄을 나눠 쓴 설명을 그대로 보여 준다. */
+.summary {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.result {
+  font-weight: 600;
+}
+
+/* 손가락으로 누르기 쉽게 링크의 높이를 44px로 둔다. */
+.attempts a {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  min-height: 44px;
+}
