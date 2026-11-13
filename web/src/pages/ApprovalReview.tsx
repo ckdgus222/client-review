@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useEffectEvent, useState } from 'react'
+import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from 'react'
 import {
   type ApprovalCheck,
   type ApprovalCheckIssue,
@@ -174,6 +174,15 @@ export const ApprovalReview = ({
   const [confirming, setConfirming] = useState(false)
   const [sending, setSending] = useState(false)
   const [approveError, setApproveError] = useState<SubmitError>()
+  // 이 창이 사라졌는가(닫음, 보고 있는 버전이 바뀜). 사라진 뒤에 끝난 승인 요청의 실패를 버리는 데 쓴다(approve 참고).
+  // 개발 모드(StrictMode)는 effect를 정리했다가 다시 돌려서, 돌 때마다 거짓으로 되돌린다.
+  const closed = useRef(false)
+  useEffect(() => {
+    closed.current = false
+    return () => {
+      closed.current = true
+    }
+  }, [])
 
   // 화면이 아는 것과 서버가 다를 때 검수실에 알린다: 승인자가 바뀌었거나(403) 이미 승인된 버전이다.
   const reportFailure = (error: SubmitError) => {
@@ -215,6 +224,9 @@ export const ApprovalReview = ({
     try {
       onApproved(await approveVersion(version.id, seenAt))
     } catch (caught) {
+      // 창이 사라진 뒤에 온 실패는 버린다. 그사이 검수실이 프로젝트를 다시 읽었을 수 있어서, 옛 요청의 "승인자가 아니에요"가
+      // 새로 받은 권한을 지우면 안 된다. 성공은 버리지 않는다(실제로 승인된 것이라 검수실이 그 버전에 쓴다).
+      if (closed.current) return
       const error = toSubmitError(caught)
       setApproveError(error)
       setConfirming(false)

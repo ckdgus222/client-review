@@ -5117,6 +5117,78 @@ describe('ReviewRoomPage 승인 연결', () => {
     expect(approveVersion).not.toHaveBeenCalled()
   })
 
+  it('승인 중 뒤로 가기로 창을 닫고 현재 버전에서 승인자 권한을 다시 읽은 뒤 옛 403이 와도 승인 버튼이 남는다', async () => {
+    const pendingApproval = deferred<VersionDetail>()
+    vi.mocked(approveVersion).mockReturnValueOnce(pendingApproval.promise)
+    vi.mocked(createComment).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    await renderRoom(`?version=${initial.id}&issue=${productIssue.id}`)
+    await chooseVersion(current.id)
+    await openApproval()
+    await approve()
+
+    expect(approveVersion).toHaveBeenCalledExactlyOnceWith(current.id, check.serverTime)
+    expect(modal().getByRole<HTMLButtonElement>('button', { name: '승인 확정' }).disabled).toBe(true)
+    await click('브라우저 뒤로 가기')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(initial.id)
+
+    await click('브라우저 앞으로 가기')
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(current.id)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fillComment()
+    await click('댓글 남기기')
+    expect(screen.getByText('새 버전이 올라왔어요. 쓰던 글은 그대로 남아 있어요.')).toBeTruthy()
+    expect(getProject).toHaveBeenCalledTimes(1)
+    vi.mocked(getProject).mockResolvedValueOnce({ ...project, myRole: 'CLIENT', isApprover: true })
+    await click('최신 버전 보기')
+
+    expect(getProject).toHaveBeenCalledTimes(2)
+    expect(getProject).toHaveBeenLastCalledWith(project.id)
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(current.id)
+    expect(screen.getByRole('button', { name: '버전 승인' })).toBeTruthy()
+
+    await act(async () => pendingApproval.reject(new ApiError(403)))
+
+    expect(screen.getByRole('button', { name: '버전 승인' })).toBeTruthy()
+    expect(screen.getByText('검수 중')).toBeTruthy()
+    expect(screen.queryByText('승인자만 할 수 있어요')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(getProject).toHaveBeenCalledTimes(2)
+  })
+
+  it('승인 중 뒤로 가기로 창을 닫고 그 버전으로 돌아온 뒤 성공 응답이 오면 승인됨과 승인 띠를 보여 준다', async () => {
+    const pendingApproval = deferred<VersionDetail>()
+    vi.mocked(approveVersion).mockReturnValueOnce(pendingApproval.promise)
+    await renderRoom(`?version=${initial.id}`)
+    await chooseVersion(current.id)
+    await openApproval()
+    await approve()
+
+    expect(approveVersion).toHaveBeenCalledExactlyOnceWith(current.id, check.serverTime)
+    await click('브라우저 뒤로 가기')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(initial.id)
+
+    await click('브라우저 앞으로 가기')
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(current.id)
+    expect(screen.getByText('검수 중')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: '승인 안내' })).toBeNull()
+
+    await act(async () => pendingApproval.resolve(approved))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(current.id)
+    expect(screen.getByText('승인됨')).toBeTruthy()
+    expect(screen.queryByText('검수 중')).toBeNull()
+    expect(banner().getByText(/1차가 승인됐어요/)).toBeTruthy()
+    expect(
+      banner().getByText(`승인자 김승인 · ${timeFormat.format(new Date(approved.approval!.approvedAt))}`),
+    ).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '버전 승인' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '쪽지 쓰기' })).toBeNull()
+    expect(getProject).toHaveBeenCalledTimes(1)
+  })
+
   it.each(['검토 조회', '승인 요청'] as const)(
     '%s에서 403이면 닫은 뒤 이 화면의 승인 버튼도 없어진다',
     async (phase) => {

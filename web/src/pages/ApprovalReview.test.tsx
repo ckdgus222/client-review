@@ -747,6 +747,83 @@ describe('ApprovalReview', () => {
     expect(screen.getByText(readonlyMessage)).toBeDefined()
   })
 
+  it.each([
+    ['403', new ApiError(403)],
+    ['VERSION_NOT_IN_REVIEW', new ApiError(409, 'VERSION_NOT_IN_REVIEW')],
+    ['연결 실패', new TypeError('Failed to fetch')],
+  ] as const)(
+    '창이 사라진 뒤 승인 요청이 %s로 실패해도 권한 변경이나 버전 다시 읽기를 요청하지 않는다',
+    async (_name, error) => {
+      const request = pending<VersionDetail>()
+      vi.mocked(approveVersion).mockReturnValueOnce(request.promise)
+      const { props, unmount } = renderReview()
+      await submitApproval()
+
+      expect(approveVersion).toHaveBeenCalledExactlyOnceWith(version.id, emptyCheck.serverTime)
+      expect(props.onApproved).not.toHaveBeenCalled()
+      unmount()
+      expect(screen.queryByRole('dialog')).toBeNull()
+
+      await act(async () => request.reject(error))
+
+      expect(props.onNotApprover).not.toHaveBeenCalled()
+      expect(props.onReloadVersion).not.toHaveBeenCalled()
+      expect(props.onApproved).not.toHaveBeenCalled()
+      expect(getApprovalCheck).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('창이 사라진 뒤 승인 요청이 성공하면 승인된 버전 상세를 부모에게 알린다', async () => {
+    const request = pending<VersionDetail>()
+    vi.mocked(approveVersion).mockReturnValueOnce(request.promise)
+    const { props, unmount } = renderReview()
+    await submitApproval()
+
+    expect(approveVersion).toHaveBeenCalledExactlyOnceWith(version.id, emptyCheck.serverTime)
+    expect(props.onApproved).not.toHaveBeenCalled()
+    unmount()
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await act(async () => request.resolve(approved))
+
+    expect(props.onApproved).toHaveBeenCalledExactlyOnceWith(approved)
+    expect(props.onNotApprover).not.toHaveBeenCalled()
+    expect(props.onReloadVersion).not.toHaveBeenCalled()
+  })
+
+  it('StrictMode에서 창이 열려 있는 동안 승인 요청이 403이면 권한 변경을 알린다', async () => {
+    const request = pending<VersionDetail>()
+    vi.mocked(approveVersion).mockReturnValueOnce(request.promise)
+    const props = {
+      version,
+      onApproved: vi.fn(),
+      onReloadVersion: vi.fn(),
+      onNotApprover: vi.fn(),
+      onGoLatest: vi.fn(),
+      onClose: vi.fn(),
+    }
+    render(
+      <StrictMode>
+        <MemoryRouter>
+          <ApprovalReview {...props} />
+        </MemoryRouter>
+      </StrictMode>,
+    )
+    await submitApproval()
+
+    expect(approveVersion).toHaveBeenCalledExactlyOnceWith(version.id, emptyCheck.serverTime)
+    expect(props.onNotApprover).not.toHaveBeenCalled()
+    await act(async () => request.reject(new ApiError(403)))
+
+    expect(screen.getByRole('dialog', { name: '2차 승인 검토' })).toBeDefined()
+    expect(screen.getByRole('alert').textContent).toBe('승인자만 할 수 있어요')
+    expect(props.onNotApprover).toHaveBeenCalledTimes(1)
+    expect(props.onReloadVersion).not.toHaveBeenCalled()
+    expect(props.onApproved).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '승인하기' })).toBeNull()
+    expect(screen.queryByText(confirmation)).toBeNull()
+  })
+
   it.each(['성공', '403', '이미 승인됨'] as const)(
     '창을 닫은 뒤 늦게 온 검토 %s 응답은 버리고 새 창에 영향을 주지 않는다',
     async (result) => {
