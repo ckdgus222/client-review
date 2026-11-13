@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router'
 import { ApiError } from '../api/client.ts'
 import { isUuid } from '../api/ids.ts'
@@ -30,38 +30,42 @@ const Compare = ({ id }: { id: string }) => {
   const [loadError, setLoadError] = useState<ReactNode>()
   // 쪽지를 서버에서 새로 받아 화면에 쓴 횟수(useIssueRequest 참고).
   const [fetchCount, setFetchCount] = useState(0)
-  // 올리면 쪽지를 다시 불러온다. 요청이 409로 거절됐거나 저장됐는지 모를 때 올린다.
-  const [reloads, setReloads] = useState(0)
+  // 쪽지를 다시 부르거나 서버가 돌려준 쪽지를 화면에 쓸 때마다 넘기는 차례 번호다. 가장 나중 차례의 응답만 화면에 쓴다
+  // (검수실의 쪽지 상세와 같은 규칙). 값을 두 곳에 둔다. 늦게 끝난 요청은 "지금 차례"를 ref로 읽고, 버튼을 누른 때의
+  // 차례는 그때 그린 화면의 state가 기억한다(ref는 늘 지금 값이라 누른 때를 알려 주지 못한다).
+  const latestTurn = useRef(0)
+  const [turn, setTurn] = useState(0)
+  const startTurn = () => {
+    latestTurn.current += 1
+    setTurn(latestTurn.current)
+  }
 
-  // 쪽지는 열 때와 다시 불러오라고 할 때만 받는다. 검수실과 달리 15초마다 새로 부르지 않는다.
+  // 쪽지는 열 때와 차례가 넘어갈 때만 받는다. 검수실과 달리 15초마다 새로 부르지 않는다.
   useEffect(() => {
     if (!isValidId) return
-    // 다른 쪽지로 옮겨 가거나 다시 부르면, 먼저 부른 요청의 늦은 응답은 버린다.
-    let ignore = false
     const load = async () => {
       try {
         const loaded = await getIssue(id)
-        if (ignore) return
+        // 그사이 차례가 넘어갔으면(다시 불렀거나 더 새 쪽지를 화면에 썼으면) 이 응답은 옛 내용이라 버린다.
+        if (latestTurn.current !== turn) return
         setIssue(loaded)
         setFetchCount((count) => count + 1)
       } catch (caught) {
-        if (ignore) return
+        if (latestTurn.current !== turn) return
         // 남의 프로젝트의 쪽지도 서버가 없는 것과 같은 404로 답해서, 있는지조차 알 수 없다.
         if (caught instanceof ApiError && caught.status === 404) return setNotFound(true)
         setLoadError(toMessage(caught))
       }
     }
     void load()
-    return () => {
-      ignore = true
-    }
-  }, [id, isValidId, reloads])
+  }, [id, isValidId, turn])
 
-  const reload = () => setReloads((count) => count + 1)
-  // 서버가 돌려준 바뀐 쪽지를 화면에 쓴다. 그보다 먼저 시작한 불러오기는 바뀌기 전 내용이라, 다시 불러와서 그 응답을 버린다.
-  const applyChange = (changed: Issue) => {
-    setIssue(changed)
-    reload()
+  // 서버가 돌려준 바뀐 쪽지를 화면에 쓴다. pressedAt은 그 버튼을 누른 때의 차례다.
+  const applyChange = (changed: Issue, pressedAt: number) => {
+    // 누른 뒤에 쪽지를 다시 부른 적이 있으면 그쪽이 더 새 내용일 수 있다. 그때는 이 응답을 쓰지 않는다.
+    if (latestTurn.current === pressedAt) setIssue(changed)
+    // 어느 쪽이든 차례를 넘긴다. 누르기 전에 시작한 불러오기의 응답이 늦게 와도 버려지고, 쪽지를 한 번 더 받아 온다.
+    startTurn()
   }
 
   if (user === null) return <Navigate to="/login" replace />
@@ -116,8 +120,9 @@ const Compare = ({ id }: { id: string }) => {
         canWrite
         reviewOnly
         fetchCount={fetchCount}
-        onChanged={applyChange}
-        onRefresh={reload}
+        // 누른 때의 차례를 넘긴다(applyChange).
+        onChanged={(changed) => applyChange(changed, turn)}
+        onRefresh={startTurn}
         onGoLatest={doNothing}
         versionChangedNotice={
           <>

@@ -425,6 +425,161 @@ describe.each([
 })
 
 describe('ComparePage 새로 불러오기와 이동', () => {
+  it.each(['성공', '404'] as const)(
+    '저장 응답과 옛 조회의 %s 응답이 같은 틱에 와도 확인 완료가 남고 후속 조회 실패에도 유지된다',
+    async (result) => {
+      const staleLoad = deferred<Issue>()
+      const verification = deferred<Issue>()
+      const freshLoad = deferred<Issue>()
+      const verified: Issue = {
+        ...issue,
+        status: 'VERIFIED',
+        attempts: [
+          olderAttempt,
+          { ...latestAttempt, result: 'VERIFIED', reviewedByName: user.name, reviewedAt: '2026-11-13T01:00:00Z' },
+        ],
+      }
+      vi.mocked(getIssue)
+        .mockResolvedValueOnce(issue)
+        .mockReturnValueOnce(staleLoad.promise)
+        .mockReturnValueOnce(freshLoad.promise)
+      vi.mocked(verifyIssue)
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+        .mockReturnValueOnce(verification.promise)
+      renderCompare()
+
+      fireEvent.click(await screen.findByRole('button', { name: '확인 완료' }))
+      await screen.findByText(unconfirmedMessage)
+      expect(getIssue).toHaveBeenCalledTimes(2)
+      fireEvent.click(screen.getByRole('button', { name: '확인 완료' }))
+      expect(verifyIssue).toHaveBeenCalledTimes(2)
+
+      // 두 응답 사이에 act를 끝내지 않는다. 저장을 적용한 뒤 다시 그리기 전에 옛 조회가 도착한다.
+      await act(async () => {
+        verification.resolve(verified)
+        if (result === '404') return staleLoad.reject(new ApiError(404))
+        staleLoad.resolve(issue)
+      })
+      expect(screen.getByText('확인 완료').getAttribute('data-status')).toBe('VERIFIED')
+      expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
+      expect(screen.queryByRole('button', { name: '재요청' })).toBeNull()
+      expect(screen.queryByRole('heading', { name: '없는 쪽지예요' })).toBeNull()
+      expect(getIssue).toHaveBeenCalledTimes(3)
+
+      await act(async () => freshLoad.reject(new TypeError('Failed to fetch')))
+      expect(screen.getByText('확인 완료').getAttribute('data-status')).toBe('VERIFIED')
+      expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
+      expect(screen.queryByRole('button', { name: '재요청' })).toBeNull()
+      expect(vi.mocked(getIssue).mock.calls).toEqual([[issue.id], [issue.id], [issue.id]])
+    },
+  )
+
+  it('버튼 잠금 전 요청이 겹쳐 새 조회가 먼저 끝나면 늦은 저장 응답을 버리고 한 번 더 불러온다', async () => {
+    const failedVerification = deferred<Issue>()
+    const lateVerification = deferred<Issue>()
+    const newerLoad = deferred<Issue>()
+    const finalLoad = deferred<Issue>()
+    const newerAttempt = {
+      ...latestAttempt,
+      id: '88888888-8888-4888-8888-888888888888',
+      summary: '새 고쳤어요가 한 줄 더 생겼어요',
+    }
+    const newerIssue: Issue = { ...issue, attempts: [...issue.attempts, newerAttempt] }
+    const finalIssue: Issue = { ...newerIssue, title: '마지막 조회에서 받은 제목' }
+    vi.mocked(getIssue)
+      .mockResolvedValueOnce(issue)
+      .mockReturnValueOnce(newerLoad.promise)
+      .mockReturnValueOnce(finalLoad.promise)
+    vi.mocked(verifyIssue).mockReturnValueOnce(failedVerification.promise).mockReturnValueOnce(lateVerification.promise)
+    renderCompare()
+    const verifyButton = await screen.findByRole('button', { name: '확인 완료' })
+
+    // 보통은 보내는 중 버튼이 잠겨 다른 실패로 새 조회를 시작할 수 없다.
+    // 가장 가까운 경계로, 잠금을 그리기 전 같은 act에서 두 클릭을 보내 요청을 겹친다.
+    await act(async () => {
+      fireEvent.click(verifyButton)
+      fireEvent.click(verifyButton)
+    })
+    expect(verifyIssue).toHaveBeenCalledTimes(2)
+    await act(async () => failedVerification.reject(new TypeError('Failed to fetch')))
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    await act(async () => newerLoad.resolve(newerIssue))
+    expect(screen.getByText(newerAttempt.summary, { exact: false })).toBeDefined()
+
+    await act(async () => lateVerification.resolve({ ...issue, status: 'VERIFIED' }))
+    // 다음 조회는 아직 대기 중이다. 늦은 저장 응답이 잠깐이라도 새 내용을 지우면 실패한다.
+    expect(screen.getByText(newerAttempt.summary, { exact: false })).toBeDefined()
+    expect(screen.getByText('확인 요청').getAttribute('data-status')).toBe('READY_FOR_REVIEW')
+    expect(screen.getByRole('button', { name: '확인 완료' })).toBeDefined()
+    expect(getIssue).toHaveBeenCalledTimes(3)
+
+    await act(async () => finalLoad.resolve(finalIssue))
+    expect(screen.getByRole('heading', { name: '#14 마지막 조회에서 받은 제목' })).toBeDefined()
+    expect(screen.getByText(newerAttempt.summary, { exact: false })).toBeDefined()
+    expect(vi.mocked(getIssue).mock.calls).toEqual([[issue.id], [issue.id], [issue.id]])
+  })
+
+  it('연달아 시작한 두 조회 중 나중 조회의 새 고쳤어요가 먼저 오면 늦은 첫 조회로 되돌아가지 않는다', async () => {
+    const firstLoad = deferred<Issue>()
+    const secondLoad = deferred<Issue>()
+    const newerAttempt = {
+      ...latestAttempt,
+      id: '88888888-8888-4888-8888-888888888888',
+      summary: '두 번째 조회의 새 고쳤어요',
+    }
+    vi.mocked(getIssue)
+      .mockResolvedValueOnce(issue)
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockReturnValueOnce(secondLoad.promise)
+    vi.mocked(verifyIssue).mockRejectedValue(new ApiError(409, 'ATTEMPT_CHANGED'))
+    renderCompare()
+
+    fireEvent.click(await screen.findByRole('button', { name: '확인 완료' }))
+    await waitFor(() => expect(getIssue).toHaveBeenCalledTimes(2))
+    fireEvent.click(screen.getByRole('button', { name: '확인 완료' }))
+    await waitFor(() => expect(getIssue).toHaveBeenCalledTimes(3))
+    await act(async () => secondLoad.resolve({ ...issue, attempts: [...issue.attempts, newerAttempt] }))
+    expect(screen.getByText(newerAttempt.summary, { exact: false })).toBeDefined()
+
+    await act(async () => firstLoad.resolve(issue))
+    expect(screen.getByText(newerAttempt.summary, { exact: false })).toBeDefined()
+    expect(screen.queryByText(latestAttempt.summary, { exact: false })).toBeNull()
+    expect(screen.getByText('확인 요청').getAttribute('data-status')).toBe('READY_FOR_REVIEW')
+    expect(verifyIssue).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(getIssue).mock.calls).toEqual([[issue.id], [issue.id], [issue.id]])
+  })
+
+  it.each([
+    { action: '확인 완료', api: verifyIssue, status: 'VERIFIED', label: '확인 완료' },
+    { action: '재요청', api: reopenIssue, status: 'OPEN', label: '접수' },
+  ] as const)(
+    '$action 저장 성공 뒤 정확히 한 번 더 조회하고 그 응답을 화면에 쓴다',
+    async ({ action, api, status, label }) => {
+      const saved = deferred<Issue>()
+      const refreshed = deferred<Issue>()
+      const changed: Issue = { ...issue, status }
+      vi.mocked(api).mockReturnValueOnce(saved.promise)
+      vi.mocked(getIssue).mockResolvedValueOnce(issue).mockReturnValueOnce(refreshed.promise)
+      renderCompare()
+      await screen.findByRole('button', { name: action })
+      sendReview(action)
+      expect(api).toHaveBeenCalledTimes(1)
+      expect(getIssue).toHaveBeenCalledTimes(1)
+
+      await act(async () => saved.resolve(changed))
+      expect(screen.getByText(label).getAttribute('data-status')).toBe(status)
+      expect(screen.getByRole('heading', { name: '#14 주문 버튼을 옮겨 주세요' })).toBeDefined()
+      expect(getIssue).toHaveBeenCalledTimes(2)
+
+      await act(async () => refreshed.resolve({ ...changed, title: '저장 뒤 조회한 제목' }))
+      expect(screen.getByRole('heading', { name: '#14 저장 뒤 조회한 제목' })).toBeDefined()
+      expect(screen.getByText(label).getAttribute('data-status')).toBe(status)
+      expect(screen.queryByRole('button', { name: '확인 완료' })).toBeNull()
+      expect(screen.queryByRole('button', { name: '재요청' })).toBeNull()
+      expect(vi.mocked(getIssue).mock.calls).toEqual([[issue.id], [issue.id]])
+    },
+  )
+
   it('확인 완료 응답보다 먼저 시작한 불러오기의 늦은 응답이 와도 확인 완료가 유지된다', async () => {
     const staleLoad = deferred<Issue>()
     const verification = deferred<Issue>()
