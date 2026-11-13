@@ -609,7 +609,7 @@ describe('ReviewRoomPage 시안 배치', () => {
   })
 
   it.each([currentVersion, initialVersion])(
-    '현재 버전 번호 $number는 검수 중이고 지난 버전 안내가 없다',
+    '현재 버전 번호 $number는 실제 상태를 보이고 지난 버전 안내가 없다',
     async (version) => {
       vi.mocked(getProject).mockResolvedValueOnce({
         ...project,
@@ -617,7 +617,7 @@ describe('ReviewRoomPage 시안 배치', () => {
       })
       renderReview()
 
-      expect(await screen.findByText('검수 중')).toBeDefined()
+      expect(await screen.findByText(version.status === 'APPROVED' ? '승인됨' : '검수 중')).toBeDefined()
       expect(screen.queryByText('읽기 전용')).toBeNull()
       expect(screen.queryByText(/지난 버전이에요/)).toBeNull()
       expect(screen.queryByRole('link', { name: '최신 버전 보기' })).toBeNull()
@@ -634,14 +634,14 @@ describe('ReviewRoomPage 시안 배치', () => {
       })
       renderReview(`/projects/${project.id}?version=${firstRevision.id}`)
 
-      expect(await screen.findByText('읽기 전용')).toBeDefined()
+      expect(await screen.findByText(status === 'APPROVED' ? '승인됨' : '읽기 전용')).toBeDefined()
       expect(screen.queryByText('검수 중')).toBeNull()
       expect(screen.getByText('지난 버전이에요. 읽기만 할 수 있어요.')).toBeDefined()
-      const latest = screen.getByRole('link', { name: '최신 버전 보기' })
-      expect(latest.getAttribute('href')).toBe(`/projects/${project.id}`)
+      const latest = screen.getByRole('button', { name: '최신 버전 보기' })
 
       fireEvent.click(latest)
       expect(await screen.findByText('검수 중')).toBeDefined()
+      expect(getProject).toHaveBeenCalledTimes(2)
       expect(screen.getByLabelText('현재 주소').textContent).toBe(`/projects/${project.id}`)
       expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(currentVersion.id)
       expect(screen.queryByText('읽기 전용')).toBeNull()

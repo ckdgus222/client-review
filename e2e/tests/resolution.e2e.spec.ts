@@ -705,7 +705,10 @@ test('승인된 버전에서는 개발자에게 고쳤어요 보내기가 없고
   const issue = await seedIssue(room)
   const attempt = await seedAttempt(room, issue.id)
   const open = await seedIssue(room, '아직 수정할 요청')
-  await db.deliveryVersion.update({ where: { id: room.version.id }, data: { status: 'APPROVED' } })
+  await db.$transaction([
+    db.deliveryVersion.update({ where: { id: room.version.id }, data: { status: 'APPROVED' } }),
+    db.approval.create({ data: { versionId: room.version.id, approverId: room.approver.id, summary: { issues: [] } } }),
+  ])
   await loginAs(room.developer.id)
   await openIssue(page, room, open)
   await expect(statusFor(page, open.number)).toHaveText('접수')

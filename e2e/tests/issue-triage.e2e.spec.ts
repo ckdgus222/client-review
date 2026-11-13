@@ -540,7 +540,10 @@ test('지난 버전과 승인된 버전에서는 분류·범위·마감일 값�
   await expect(detailValue(detailFor(page), '분류')).toHaveText('디자인')
   await expect(detailValue(detailFor(page), '범위')).toHaveText('추가 요청')
   await expect(detailValue(detailFor(page), '마감일')).toHaveText('11월 20일')
-  await db.deliveryVersion.update({ where: { id: latest.id }, data: { status: 'APPROVED' } })
+  await db.$transaction([
+    db.deliveryVersion.update({ where: { id: latest.id }, data: { status: 'APPROVED' } }),
+    db.approval.create({ data: { versionId: latest.id, approverId: room.approver.id, summary: { issues: [] } } }),
+  ])
   await page.goto(`/app/projects/${room.project.id}?issue=${issue.id}`)
   await expect(page.getByRole('combobox', { name: '버전', exact: true })).toHaveValue(latest.id)
   await expect(detailFor(page).getByText('읽기 전용이에요. 쪽지와 댓글은 바꿀 수 없어요.', { exact: true })).toBeVisible()
