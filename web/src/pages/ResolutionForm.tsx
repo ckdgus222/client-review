@@ -3,6 +3,7 @@ import { type IssueDetail as Issue, submitResolution } from '../api/issues.ts'
 import { screenLabel, type Viewport } from '../api/projects.ts'
 import { Button } from '../components/Button.tsx'
 import { ErrorText } from '../components/ErrorText.tsx'
+import { useDraftReport } from '../hooks/useDraftReport.ts'
 import { useIssueRequest } from '../hooks/useIssueRequest.ts'
 import { IssueRequestNotice } from './IssueRequestNotice.tsx'
 import styles from './ResolutionForm.module.css'
@@ -26,6 +27,8 @@ type ResolutionFormProps = {
   // 서버가 돌려준 바뀐 쪽지(확인 요청 상태와 새 고쳤어요 줄이 들어 있다).
   onChanged: (issue: Issue) => void
   onRefresh: () => void
+  // 쓰던 설명이 있는지 알린다(쓰는 중, 보내는 중). 검수실이 새 쪽지 쓰기로 넘어가기 전에 묻는 데 쓴다.
+  onDraftChange: (hasDraft: boolean) => void
   onGoLatest: () => void
 }
 
@@ -41,6 +44,7 @@ export const ResolutionForm = ({
   fetchCount,
   onChanged,
   onRefresh,
+  onDraftChange,
   onGoLatest,
 }: ResolutionFormProps) => {
   const screenFieldId = useId()
@@ -50,6 +54,9 @@ export const ResolutionForm = ({
   const [screenChoice, setScreenChoice] = useState<string>()
   const [fieldError, setFieldError] = useState<{ field: 'screen' | 'summary'; message: string }>()
   const { sending, error, unconfirmed, stale, send } = useIssueRequest({ fetchCount, onChanged, onRefresh })
+  // 보내는 중에도 설명이 칸에 남아 있어서 글이 있는지만 보면 된다. 저장되면 칸이 비워진다.
+  // 입력을 감춘 동안에도(지난 버전을 보는 중) 쓰던 설명은 남아 있어서 그대로 알린다.
+  useDraftReport(summary.trim() !== '', onDraftChange)
 
   if (!isDeveloper) return null
 

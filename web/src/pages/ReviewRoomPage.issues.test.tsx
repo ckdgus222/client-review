@@ -3569,7 +3569,7 @@ describe('ReviewRoomPage 댓글 초안을 남기고 새 쪽지 쓰기', () => {
     vi.mocked(window.confirm).mockReturnValueOnce(false)
 
     await compose()
-    expect(window.confirm).toHaveBeenCalledExactlyOnceWith('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')
+    expect(window.confirm).toHaveBeenCalledExactlyOnceWith('쓰던 글이 사라져요. 새 쪽지를 쓸까요?')
     expect(screen.queryByRole('textbox', { name: '제목 (필수)' })).toBeNull()
     expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
     expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
@@ -3580,7 +3580,7 @@ describe('ReviewRoomPage 댓글 초안을 남기고 새 쪽지 쓰기', () => {
 
     await compose()
     expect(window.confirm).toHaveBeenCalledTimes(2)
-    expect(window.confirm).toHaveBeenLastCalledWith('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')
+    expect(window.confirm).toHaveBeenLastCalledWith('쓰던 글이 사라져요. 새 쪽지를 쓸까요?')
     expect(screen.getByRole('textbox', { name: '제목 (필수)' })).toBeTruthy()
     expect(screen.queryByRole('article', { name: '쪽지 #1' })).toBeNull()
     expect(queryParams().has('issue')).toBe(false)
@@ -3622,7 +3622,7 @@ describe('ReviewRoomPage 댓글 초안을 남기고 새 쪽지 쓰기', () => {
     vi.mocked(window.confirm).mockReturnValueOnce(false)
 
     await compose()
-    expect(window.confirm).toHaveBeenCalledExactlyOnceWith('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')
+    expect(window.confirm).toHaveBeenCalledExactlyOnceWith('쓰던 글이 사라져요. 새 쪽지를 쓸까요?')
     expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
     expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).value).toBe(savedComment.body)
     expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '댓글' }).readOnly).toBe(true)
@@ -4977,26 +4977,29 @@ describe('ReviewRoomPage 승인 연결', () => {
     { label: '승인된 현재 버전', version: approved, versionCallsPerTick: 0 },
     { label: '승인된 지난 버전', version: initial, versionCallsPerTick: 0 },
     { label: '검수 중인 현재 버전', version: current, versionCallsPerTick: 1 },
-  ])('$label: 15초마다 쪽지 목록은 갱신하고 버전 상세는 검수 중일 때만 갱신한다', async ({ version, versionCallsPerTick }) => {
-    vi.useFakeTimers()
-    vi.mocked(getVersion).mockResolvedValue(version)
-    await renderRoom(`?version=${version.id}`)
-    expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(version.id)
-    expect(getVersion).toHaveBeenCalledExactlyOnceWith(version.id)
-    expect(listIssues).toHaveBeenCalledExactlyOnceWith(project.id)
+  ])(
+    '$label: 15초마다 쪽지 목록은 갱신하고 버전 상세는 검수 중일 때만 갱신한다',
+    async ({ version, versionCallsPerTick }) => {
+      vi.useFakeTimers()
+      vi.mocked(getVersion).mockResolvedValue(version)
+      await renderRoom(`?version=${version.id}`)
+      expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(version.id)
+      expect(getVersion).toHaveBeenCalledExactlyOnceWith(version.id)
+      expect(listIssues).toHaveBeenCalledExactlyOnceWith(project.id)
 
-    for (let tick = 1; tick <= 3; tick += 1) {
-      await advance(14_999)
-      expect(getVersion).toHaveBeenCalledTimes(1 + (tick - 1) * versionCallsPerTick)
-      expect(listIssues).toHaveBeenCalledTimes(tick)
+      for (let tick = 1; tick <= 3; tick += 1) {
+        await advance(14_999)
+        expect(getVersion).toHaveBeenCalledTimes(1 + (tick - 1) * versionCallsPerTick)
+        expect(listIssues).toHaveBeenCalledTimes(tick)
 
-      await advance(1)
-      expect(getVersion).toHaveBeenCalledTimes(1 + tick * versionCallsPerTick)
-      expect(getVersion).toHaveBeenLastCalledWith(version.id)
-      expect(listIssues).toHaveBeenCalledTimes(1 + tick)
-      expect(listIssues).toHaveBeenLastCalledWith(project.id)
-    }
-  })
+        await advance(1)
+        expect(getVersion).toHaveBeenCalledTimes(1 + tick * versionCallsPerTick)
+        expect(getVersion).toHaveBeenLastCalledWith(version.id)
+        expect(listIssues).toHaveBeenCalledTimes(1 + tick)
+        expect(listIssues).toHaveBeenLastCalledWith(project.id)
+      }
+    },
+  )
 
   it('지난 승인된 버전의 띠는 그 버전의 승인 정보를 보이고 최신 버전 버튼은 지난 버전 안내에만 있다', async () => {
     await renderRoom(`?version=${initial.id}`)
@@ -5323,5 +5326,94 @@ describe('ReviewRoomPage 승인 연결', () => {
     expect(screen.getByRole<HTMLSelectElement>('combobox', { name: '버전' }).value).toBe(latest.id)
     expectDraft()
     expect(screen.queryByRole('region', { name: '승인 안내' })).toBeNull()
+  })
+})
+
+describe('ReviewRoomPage 설명과 사유를 남기고 새 쪽지 쓰기', () => {
+  it.each([
+    { label: '고친 내용', action: '사진 누르기' },
+    { label: '고친 내용', action: '쪽지 쓰기 버튼' },
+    { label: '재요청 사유', action: '사진 누르기' },
+    { label: '재요청 사유', action: '쪽지 쓰기 버튼' },
+  ])(
+    '$label이 있으면 $action에서 묻고 취소하면 글과 쪽지가 남으며 확인하면 새 쪽지를 쓴다',
+    async ({ label, action }) => {
+      if (label === '재요청 사유') {
+        vi.mocked(getProject).mockResolvedValue({ ...project, myRole: 'CLIENT' })
+        vi.mocked(getIssue).mockResolvedValue({
+          ...productIssue,
+          status: 'READY_FOR_REVIEW',
+          canReview: true,
+          attempts: [
+            {
+              id: 'draft-attempt',
+              versionId: current.id,
+              versionNumber: 1,
+              screen: null,
+              summary: '버튼을 옮겼어요',
+              submittedByName: '개발자',
+              createdAt: '2026-11-12T01:00:00.000Z',
+              result: null,
+              reviewedByName: null,
+              reviewedAt: null,
+            },
+          ],
+        })
+      }
+      await renderRoom(`?version=${current.id}&issue=${productIssue.id}`)
+      if (label === '재요청 사유') await click('재요청')
+      fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value: '아직 저장하지 않은 글' } })
+      const address = screen.getByLabelText('현재 주소').textContent
+      vi.mocked(window.confirm).mockReturnValueOnce(false)
+
+      if (action === '사진 누르기') await placePin()
+      if (action === '쪽지 쓰기 버튼') await click('쪽지 쓰기')
+      expect(window.confirm).toHaveBeenCalledExactlyOnceWith('쓰던 글이 사라져요. 새 쪽지를 쓸까요?')
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: label }).value).toBe('아직 저장하지 않은 글')
+      expect(screen.getByRole('article', { name: '쪽지 #1' })).toBeTruthy()
+      expect(screen.getByLabelText('현재 주소').textContent).toBe(address)
+      expect(screen.queryByRole('textbox', { name: '제목 (필수)' })).toBeNull()
+      expect(screen.queryByRole('img', { name: '새 쪽지 위치' })).toBeNull()
+
+      if (action === '사진 누르기') await placePin()
+      if (action === '쪽지 쓰기 버튼') await click('쪽지 쓰기')
+      expect(window.confirm).toHaveBeenCalledTimes(2)
+      expect(window.confirm).toHaveBeenLastCalledWith('쓰던 글이 사라져요. 새 쪽지를 쓸까요?')
+      expect(screen.getByRole('textbox', { name: '제목 (필수)' })).toBeTruthy()
+      expect(screen.queryByRole('article', { name: '쪽지 #1' })).toBeNull()
+      expect(queryParams().has('issue')).toBe(false)
+      expect(queryParams().get('version')).toBe(current.id)
+      expect(screen.queryByRole('img', { name: '새 쪽지 위치' }) !== null).toBe(action === '사진 누르기')
+      expect(submitResolution).not.toHaveBeenCalled()
+      expect(reopenIssue).not.toHaveBeenCalled()
+      expect(createIssue).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['고친 내용', '철회 사유'])('%s에 공백만 있으면 묻지 않고 새 쪽지를 쓴다', async (label) => {
+    if (label === '철회 사유') {
+      vi.mocked(getProject).mockResolvedValue({ ...project, myRole: 'CLIENT' })
+      vi.mocked(getIssue).mockResolvedValue({ ...productIssue, canReview: true })
+    }
+    await renderRoom(`?issue=${productIssue.id}`)
+    if (label === '철회 사유') await click('철회')
+    fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value: ' \n\t ' } })
+    await placePin()
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: '제목 (필수)' })).toBeTruthy()
+  })
+
+  it.each(['고친 내용', '철회 사유'])('%s을 쓰던 쪽지를 닫으면 이후 새 쪽지를 쓸 때 묻지 않는다', async (label) => {
+    if (label === '철회 사유') {
+      vi.mocked(getProject).mockResolvedValue({ ...project, myRole: 'CLIENT' })
+      vi.mocked(getIssue).mockResolvedValue({ ...productIssue, canReview: true })
+    }
+    await renderRoom(`?issue=${productIssue.id}`)
+    if (label === '철회 사유') await click('철회')
+    fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value: '닫을 쪽지의 글' } })
+    await click('쪽지 닫기')
+    await placePin()
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: '제목 (필수)' })).toBeTruthy()
   })
 })

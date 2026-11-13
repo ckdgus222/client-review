@@ -1044,3 +1044,92 @@ test('비교 화면을 연 뒤 승인자가 바뀌면 확인 완료가 거절되
   expect(await db.resolutionAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).toEqual(attempt)
   expect(await db.activityEvent.count({ where: { projectId: room.project.id, type: 'ISSUE_VERIFIED' } })).toBe(0)
 })
+
+test('고쳤어요 설명을 쓰다가 사진을 누르면 확인 창이 뜨고 취소하면 설명이 그대로다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  await loginAs(room.developer.id)
+  await openIssue(page, room, issue)
+  const summary = '아직 보내지 않은 고쳤어요 설명'
+  await formFor(page).getByLabel('고친 내용', { exact: true }).fill(summary)
+  const address = page.url()
+  const messages: string[] = []
+  const dialogTypes: string[] = []
+  let accept = false
+  page.on('dialog', async (dialog) => {
+    messages.push(dialog.message())
+    dialogTypes.push(dialog.type())
+    if (accept) {
+      await dialog.accept()
+      return
+    }
+    await dialog.dismiss()
+  })
+
+  const photo = page.getByRole('img', { name: '메인 · PC', exact: true })
+  await photo.click({ position: { x: 30, y: 30 } })
+  expect(messages).toEqual(['쓰던 글이 사라져요. 새 쪽지를 쓸까요?'])
+  expect(dialogTypes).toEqual(['confirm'])
+  await expect(formFor(page).getByLabel('고친 내용', { exact: true })).toHaveValue(summary)
+  await expect(detailFor(page)).toBeVisible()
+  await expect(page).toHaveURL(address)
+  await expect(page.getByRole('textbox', { name: '제목 (필수)', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('img', { name: '새 쪽지 위치', exact: true })).toHaveCount(0)
+
+  accept = true
+  await photo.click({ position: { x: 30, y: 30 } })
+  expect(messages).toEqual(Array(2).fill('쓰던 글이 사라져요. 새 쪽지를 쓸까요?'))
+  expect(dialogTypes).toEqual(['confirm', 'confirm'])
+  await expect(page.getByRole('textbox', { name: '제목 (필수)', exact: true })).toBeVisible()
+  await expect(detailFor(page)).toHaveCount(0)
+  await expect(page.getByRole('img', { name: '새 쪽지 위치', exact: true })).toBeVisible()
+  expect(new URL(page.url()).searchParams.has('issue')).toBe(false)
+  expect(await db.resolutionAttempt.count({ where: { issueId: issue.id } })).toBe(0)
+  expect((await db.issue.findUniqueOrThrow({ where: { id: issue.id } })).status).toBe('OPEN')
+})
+
+test('재요청 사유를 쓰다가 사진을 누르면 확인 창이 뜨고 취소하면 사유가 그대로다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  const attempt = await seedAttempt(room, issue.id)
+  await loginAs(room.client.id)
+  await openIssue(page, room, issue)
+  await reviewFor(page).getByRole('button', { name: '재요청', exact: true }).click()
+  const reason = '아직 보내지 않은 재요청 사유'
+  await reviewFor(page).getByLabel('재요청 사유', { exact: true }).fill(reason)
+  const address = page.url()
+  const messages: string[] = []
+  const dialogTypes: string[] = []
+  let accept = false
+  page.on('dialog', async (dialog) => {
+    messages.push(dialog.message())
+    dialogTypes.push(dialog.type())
+    if (accept) {
+      await dialog.accept()
+      return
+    }
+    await dialog.dismiss()
+  })
+
+  const photo = page.getByRole('img', { name: '메인 · PC', exact: true })
+  await photo.click({ position: { x: 30, y: 30 } })
+  expect(messages).toEqual(['쓰던 글이 사라져요. 새 쪽지를 쓸까요?'])
+  expect(dialogTypes).toEqual(['confirm'])
+  await expect(reviewFor(page).getByLabel('재요청 사유', { exact: true })).toHaveValue(reason)
+  await expect(detailFor(page)).toBeVisible()
+  await expect(page).toHaveURL(address)
+  await expect(page.getByRole('textbox', { name: '제목 (필수)', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('img', { name: '새 쪽지 위치', exact: true })).toHaveCount(0)
+
+  accept = true
+  await photo.click({ position: { x: 30, y: 30 } })
+  expect(messages).toEqual(Array(2).fill('쓰던 글이 사라져요. 새 쪽지를 쓸까요?'))
+  expect(dialogTypes).toEqual(['confirm', 'confirm'])
+  await expect(page.getByRole('textbox', { name: '제목 (필수)', exact: true })).toBeVisible()
+  await expect(detailFor(page)).toHaveCount(0)
+  await expect(page.getByRole('img', { name: '새 쪽지 위치', exact: true })).toBeVisible()
+  expect(new URL(page.url()).searchParams.has('issue')).toBe(false)
+  expect((await db.issue.findUniqueOrThrow({ where: { id: issue.id } })).status).toBe('READY_FOR_REVIEW')
+  expect((await db.resolutionAttempt.findUniqueOrThrow({ where: { id: attempt.id } })).result).toBeNull()
+  expect(await db.comment.count({ where: { issueId: issue.id } })).toBe(0)
+})

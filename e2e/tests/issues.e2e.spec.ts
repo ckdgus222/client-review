@@ -951,7 +951,7 @@ test('댓글을 쓰다가 사진을 누르면 확인 창이 뜨고 취소하면 
   await Promise.all([
     page.waitForEvent('dialog').then(async (dialog) => {
       expect(dialog.type()).toBe('confirm')
-      expect(dialog.message()).toBe('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')
+      expect(dialog.message()).toBe('쓰던 글이 사라져요. 새 쪽지를 쓸까요?')
       await dialog.dismiss()
     }),
     clickPhoto(page, 0.65, 0.65),
@@ -966,7 +966,7 @@ test('댓글을 쓰다가 사진을 누르면 확인 창이 뜨고 취소하면 
   await Promise.all([
     page.waitForEvent('dialog').then(async (dialog) => {
       expect(dialog.type()).toBe('confirm')
-      expect(dialog.message()).toBe('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')
+      expect(dialog.message()).toBe('쓰던 글이 사라져요. 새 쪽지를 쓸까요?')
       await dialog.accept()
     }),
     clickPhoto(page, 0.65, 0.65),

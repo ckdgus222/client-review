@@ -669,3 +669,104 @@ describe('IssueReview', () => {
     expect(screen.getByRole('alert').textContent).toBe('새 버전이 올라왔어요. 검수실로 돌아가기')
   })
 })
+
+describe('IssueReview 쓰던 글 알림', () => {
+  it.each(reasonActions)(
+    '$name 사유의 빈 글과 공백은 알리지 않고 글을 쓰면 알리며 취소하면 지운다',
+    async ({ name, label, status }) => {
+      const onDraftChange = vi.fn()
+      renderReview({ issue: { ...issue, status }, onDraftChange })
+      expect(onDraftChange).toHaveBeenLastCalledWith(false)
+      await click(name)
+      fillReason(' \n\t ')
+      expect(onDraftChange).not.toHaveBeenCalledWith(true)
+      fillReason('남길 사유')
+      expect(onDraftChange).toHaveBeenLastCalledWith(true)
+      fillReason(' \n\t ')
+      expect(onDraftChange).toHaveBeenLastCalledWith(false)
+      fillReason('취소할 사유')
+      await click('취소')
+      expect(onDraftChange).toHaveBeenLastCalledWith(false)
+      await click(name)
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: label }).value).toBe('')
+      expectNoRequest()
+    },
+  )
+
+  it.each(reasonActions)(
+    '$name 사유를 보내는 동안 알림이 남고 저장되면 꺼진다',
+    async ({ name, status, api, submit, savedStatus }) => {
+      let resolve!: (value: Issue) => void
+      vi.mocked(api).mockReturnValueOnce(
+        new Promise((done) => {
+          resolve = done
+        }),
+      )
+      const onDraftChange = vi.fn()
+      renderReview({ issue: { ...issue, status }, onDraftChange })
+      await click(name)
+      fillReason('보내는 사유')
+      await click(submit)
+      expect(api).toHaveBeenCalledTimes(1)
+      expect(reasonInput().readOnly).toBe(true)
+      expect(onDraftChange).toHaveBeenLastCalledWith(true)
+      await act(async () => {
+        resolve({ ...issue, status: savedStatus })
+      })
+      expect(onDraftChange).toHaveBeenLastCalledWith(false)
+      expect(screen.queryByRole('textbox')).toBeNull()
+    },
+  )
+
+  it('사유가 없는 확인 완료도 보내는 동안 알리고 저장되면 꺼진다', async () => {
+    let resolve!: (value: Issue) => void
+    vi.mocked(verifyIssue).mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    const onDraftChange = vi.fn()
+    renderReview({ onDraftChange })
+    expect(onDraftChange).toHaveBeenLastCalledWith(false)
+    await click('확인 완료')
+    expect(verifyIssue).toHaveBeenCalledTimes(1)
+    expect(onDraftChange).toHaveBeenLastCalledWith(true)
+    await act(async () => {
+      resolve({ ...issue, status: 'VERIFIED' })
+    })
+    expect(onDraftChange).toHaveBeenLastCalledWith(false)
+  })
+
+  it.each(['읽기 전용', '권한 변경', '새 고쳤어요', '상태 변경'] as const)(
+    '%s으로 사유 칸이 감춰져도 남은 사유를 알리고 사라지면 꺼진다',
+    async (change) => {
+      const onDraftChange = vi.fn()
+      const { props, rerender, unmount } = renderReview({ onDraftChange })
+      await click('재요청')
+      fillReason('감춰져도 남는 사유')
+      const changedIssue: Issue = {
+        ...issue,
+        canReview: change !== '권한 변경',
+        status: change === '상태 변경' ? 'IN_PROGRESS' : issue.status,
+        attempts:
+          change === '새 고쳤어요' ? [...issue.attempts, { ...latestAttempt, id: 'new-attempt' }] : issue.attempts,
+      }
+      rerender(<IssueReview {...props} canWrite={change !== '읽기 전용'} issue={changedIssue} />)
+      expect(screen.queryByRole('textbox', { name: '재요청 사유' })).toBeNull()
+      expect(onDraftChange).toHaveBeenLastCalledWith(true)
+      unmount()
+      expect(onDraftChange).toHaveBeenLastCalledWith(false)
+    },
+  )
+
+  it('저장 여부를 모르는 실패 뒤에도 사유 알림이 남는다', async () => {
+    vi.mocked(reopenIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    const onDraftChange = vi.fn()
+    renderReview({ onDraftChange })
+    await click('재요청')
+    fillReason('남겨야 할 사유')
+    await click('재요청 보내기')
+    expect(screen.getByText(unconfirmedMessage)).toBeTruthy()
+    expect(onDraftChange).toHaveBeenLastCalledWith(true)
+  })
+})

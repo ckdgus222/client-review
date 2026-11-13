@@ -188,8 +188,9 @@ const ReviewRoom = ({ id }: { id: string }) => {
   const [draftPin, setDraftPin] = useState<DraftPin>()
   // 쪽지를 보내는 중이거나, 보낸 쪽지가 저장됐는지 몰라 잠긴 동안이다. 이때는 임시 핀을 옮기지도 지우지도 않는다(기획 정할 것 12).
   const [composerLocked, setComposerLocked] = useState(false)
-  // 열어 둔 쪽지에 아직 저장되지 않은 댓글 글이 있는가(쓰는 중, 보내는 중, 잠김). 새 쪽지 쓰기로 넘어가기 전에 묻는 데 쓴다.
-  const [hasCommentDraft, setHasCommentDraft] = useState(false)
+  // 열어 둔 쪽지에 아직 저장되지 않은 글(댓글, 고쳤어요 설명, 사유)이 있는가(쓰는 중, 보내는 중, 잠김).
+  // 새 쪽지 쓰기로 넘어가기 전에 묻는 데 쓴다.
+  const [hasDraft, setHasDraft] = useState(false)
   // 승인 검토 창을 연 버전. 검토 결과와 승인 요청이 이 버전에 묶인다. 닫혀 있으면 undefined다.
   const [approvalFor, setApprovalFor] = useState<string>()
   // 승인 요청이 "승인자가 아니에요"(403)를 받았다. 그사이 승인자가 바뀐 것이라 "버전 승인" 버튼을 없앤다.
@@ -565,8 +566,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
   }
 
   const startComposing = (pin?: DraftPin) => {
-    // 새 쪽지를 쓰면 열어 둔 쪽지가 닫혀서 쓰던 댓글이 사라진다. 사진을 잘못 눌러도 글을 잃지 않게 먼저 묻는다(기획 정할 것 13).
-    if (hasCommentDraft && !window.confirm('쓰던 댓글이 사라져요. 새 쪽지를 쓸까요?')) return
+    // 새 쪽지를 쓰면 열어 둔 쪽지가 닫혀서 쓰던 글이 사라진다. 사진을 잘못 눌러도 글을 잃지 않게 먼저 묻는다(기획 정할 것 13).
+    if (hasDraft && !window.confirm('쓰던 글이 사라져요. 새 쪽지를 쓸까요?')) return
     // 쪽지를 열어서 그 쪽지의 화면을 보던 중이면, 그 화면을 "고른 화면"으로 붙잡아 둔다. 주소에서 쪽지를 지우면
     // 화면을 고른 근거도 사라져서 첫 화면으로 돌아가고, 방금 찍은 핀이 다른 사진의 쪽지로 보내진다.
     if (selected) setSelectedScreenId(selected.screenId)
@@ -737,7 +738,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
             onChanged={(issue) => applyChange(issue, detailNumber)}
             onCommented={(comment) => addComment(shownIssue.id, comment)}
             onRefresh={() => refreshIssues(shownIssue.id)}
-            onDraftChange={setHasCommentDraft}
+            onDraftChange={setHasDraft}
             onGoLatest={goLatest}
             onClose={() => setParam('issue')}
           />
