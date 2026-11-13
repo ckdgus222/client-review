@@ -208,6 +208,7 @@ describe('쪽지 정리 API (e2e)', () => {
     const response = await update({ versionId: draft.body.id, scope: 'OUT_OF_SCOPE' }).expect(200);
     expect(response.body).toEqual({
       ...before.body,
+      currentVersion: { id: draft.body.id, status: 'IN_REVIEW' },
       scope: 'OUT_OF_SCOPE',
       commentCount: 1,
       comments: [
@@ -492,7 +493,12 @@ describe('쪽지 정리 API (e2e)', () => {
         body: '범위: 하자 수정 → 추가 요청',
       }),
     ]);
-    await get(`/api/issues/${issueId}`).expect(200).expect(changed.body);
+    await get(`/api/issues/${issueId}`)
+      .expect(200)
+      .expect({
+        ...changed.body,
+        currentVersion: { id: draft.body.id, status: 'IN_REVIEW' },
+      });
   });
 
   it('멤버가 아닌 사람은 404이고 아무것도 바뀌지 않는다', async () => {
@@ -718,7 +724,11 @@ describe('쪽지 정리 API (e2e)', () => {
     const response = await update({ versionId: draft.body.id, category: 'COPY' }, clientCookie, pinned.body.id).expect(
       200,
     );
-    expect(response.body).toEqual({ ...pinned.body, category: 'COPY' });
+    expect(response.body).toEqual({
+      ...pinned.body,
+      currentVersion: { id: draft.body.id, status: 'IN_REVIEW' },
+      category: 'COPY',
+    });
     await get(`/api/issues/${pinned.body.id}`, clientCookie).expect(200).expect(response.body);
   });
 

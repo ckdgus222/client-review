@@ -689,7 +689,12 @@ describe('고쳤어요 API (e2e)', () => {
           reviewedAt: verificationWon ? expect.any(String) : null,
         },
       ]);
-      if (verificationWon) expect(verified.body).toEqual(detail.body);
+      if (verificationWon) {
+        expect(verified.body).toEqual({
+          ...detail.body,
+          currentVersion: { id: versionId, status: 'IN_REVIEW' },
+        });
+      }
       versionId = draft.body.id;
     }
   });

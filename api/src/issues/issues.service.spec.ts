@@ -6,6 +6,7 @@ import type { Asset, DeliveryVersion, ProjectMember, Screen, User, VersionScreen
 import { PrismaModule } from '../prisma/prisma.module.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
+import { ApprovalService } from '../versions/approval.service.js';
 import { VersionsService } from '../versions/versions.service.js';
 import { IssuesService, type NewIssue, toDateText } from './issues.service.js';
 
@@ -42,6 +43,7 @@ describe('IssuesService', () => {
   let prisma: PrismaService;
   let service: IssuesService;
   let versions: VersionsService;
+  let approvals: ApprovalService;
   let developer: User;
   let client: User;
   let approver: User;
@@ -102,11 +104,12 @@ describe('IssuesService', () => {
   beforeAll(async () => {
     module = await Test.createTestingModule({
       imports: [PrismaModule],
-      providers: [IssuesService, ProjectsService, ActivityService, VersionsService],
+      providers: [IssuesService, ProjectsService, ActivityService, VersionsService, ApprovalService],
     }).compile();
     prisma = module.get(PrismaService);
     service = module.get(IssuesService);
     versions = module.get(VersionsService);
+    approvals = module.get(ApprovalService);
   });
 
   beforeEach(async () => {
@@ -185,6 +188,7 @@ describe('IssuesService', () => {
         comments: [],
         attempts: [],
         canReview: role !== '개발자',
+        currentVersion: { id: current.id, status: 'IN_REVIEW' },
         projectId,
       });
       expect(await service.list(projectId, client.id)).toEqual([summary]);
@@ -226,6 +230,58 @@ describe('IssuesService', () => {
       ]);
     },
   );
+
+  it('currentVersion은 게시 전 버전이나 다른 프로젝트의 버전이 아니라 이 프로젝트의 현재 버전이다', async () => {
+    const own = await service.create(projectId, client.id, input());
+    const foreign = await service.create(otherProjectId, developer.id, input({ versionId: otherCurrent.id }));
+    const draft = await versions.createDraft(projectId, developer.id);
+    expect(draft.id).not.toBe(current.id);
+
+    for (const reader of [client, approver, developer]) {
+      const detail = await service.getDetail(own.id, reader.id);
+      expect(detail.currentVersion).toEqual({ id: current.id, status: 'IN_REVIEW' });
+    }
+    expect((await service.getDetail(foreign.id, developer.id)).currentVersion).toEqual({
+      id: otherCurrent.id,
+      status: 'IN_REVIEW',
+    });
+  });
+
+  it('새 버전을 게시하면 지난 버전에서 시작한 쪽지도 새 현재 버전을 주고 처음 버전은 유지한다', async () => {
+    const issue = await service.create(projectId, client.id, input());
+    const draft = await versions.createDraft(projectId, developer.id);
+    await versions.publish(draft.id, developer.id);
+    await versions.createDraft(projectId, developer.id);
+
+    for (const reader of [client, developer]) {
+      const detail = await service.getDetail(issue.id, reader.id);
+      expect(detail.originVersion).toEqual({ id: current.id, number: 0 });
+      expect(detail.currentVersion).toEqual({ id: draft.id, status: 'IN_REVIEW' });
+    }
+  });
+
+  it('현재 버전을 승인하면 지난 버전 쪽지의 currentVersion도 APPROVED이고 다음 버전을 게시하면 IN_REVIEW다', async () => {
+    const issue = await service.create(projectId, client.id, input());
+    await prisma.issue.update({ where: { id: issue.id }, data: { scope: 'OUT_OF_SCOPE' } });
+    const draft = await versions.createDraft(projectId, developer.id);
+    await versions.publish(draft.id, developer.id);
+    const review = await approvals.check(draft.id, approver.id);
+    await approvals.approve(draft.id, approver.id, review.serverTime);
+    const next = await versions.createDraft(projectId, developer.id);
+
+    for (const reader of [client, developer]) {
+      expect((await service.getDetail(issue.id, reader.id)).currentVersion).toEqual({
+        id: draft.id,
+        status: 'APPROVED',
+      });
+    }
+    expect((await prisma.deliveryVersion.findUniqueOrThrow({ where: { id: current.id } })).status).toBe('IN_REVIEW');
+    await versions.publish(next.id, developer.id);
+    expect((await service.getDetail(issue.id, client.id)).currentVersion).toEqual({
+      id: next.id,
+      status: 'IN_REVIEW',
+    });
+  });
 
   it.each(['BUG', 'DESIGN', 'COPY', 'OTHER'] as const)(
     '분류 %s로 쓰면 DB와 목록·상세에 그 분류가 남고 범위는 하자 수정, 마감일은 없다',
@@ -322,6 +378,7 @@ describe('IssuesService', () => {
       comments: [],
       attempts: [],
       canReview: true,
+      currentVersion: { id: current.id, status: 'IN_REVIEW' },
       projectId,
     });
     expect(await service.list(projectId, client.id)).toEqual([summary]);
@@ -393,16 +450,25 @@ describe('IssuesService', () => {
     const draft = await versions.createDraft(projectId, developer.id);
     await versions.publish(draft.id, developer.id);
     const before = await readState();
-    expect(await service.create(projectId, client.id, request)).toEqual(first);
+    expect(await service.create(projectId, client.id, request)).toEqual({
+      ...first,
+      currentVersion: { id: draft.id, status: 'IN_REVIEW' },
+    });
     expect(await readState()).toEqual(before);
   });
 
   it('저장된 뒤 승인돼도 같은 requestId는 처음 쪽지를 돌려준다', async () => {
     const request = input();
     const first = await service.create(projectId, client.id, request);
-    await prisma.deliveryVersion.update({ where: { id: current.id }, data: { status: 'APPROVED' } });
+    await prisma.$transaction([
+      prisma.deliveryVersion.update({ where: { id: current.id }, data: { status: 'APPROVED' } }),
+      prisma.approval.create({ data: { versionId: current.id, approverId: approver.id, summary: { issues: [] } } }),
+    ]);
     const before = await readState();
-    expect(await service.create(projectId, client.id, request)).toEqual(first);
+    expect(await service.create(projectId, client.id, request)).toEqual({
+      ...first,
+      currentVersion: { id: current.id, status: 'APPROVED' },
+    });
     expect(await readState()).toEqual(before);
   });
 
@@ -674,8 +740,14 @@ describe('IssuesService', () => {
     await versions.publish(draft.id, developer.id);
     await prisma.screen.update({ where: { id: screen.id }, data: { hiddenAt: new Date() } });
     expect(await service.list(projectId, client.id)).toEqual(before);
-    expect(await service.getDetail(pinned.id, client.id)).toEqual(pinned);
-    expect(await service.getDetail(unpinned.id, client.id)).toEqual(unpinned);
+    expect(await service.getDetail(pinned.id, client.id)).toEqual({
+      ...pinned,
+      currentVersion: { id: draft.id, status: 'IN_REVIEW' },
+    });
+    expect(await service.getDetail(unpinned.id, client.id)).toEqual({
+      ...unpinned,
+      currentVersion: { id: draft.id, status: 'IN_REVIEW' },
+    });
     expect((await service.getDetail(pinned.id, client.id)).origin?.asset.id).toBe(asset.id);
   });
 
@@ -724,6 +796,7 @@ describe('IssuesService', () => {
     });
     expect(await service.getDetail(issue.id, developer.id)).toEqual({
       ...issue,
+      currentVersion: { id: next.id, status: 'IN_REVIEW' },
       isMine: false,
       canReview: false,
       commentCount: 3,
@@ -948,9 +1021,21 @@ describe('IssuesService', () => {
         reviewedAt: new Date('2026-03-03T01:00:00Z'),
       },
     ];
-    for (const [reader, canReview] of [[client, true], [approver, true], [developer, false], [outsider, false]] as const) {
+    for (const [reader, canReview] of [
+      [client, true],
+      [approver, true],
+      [developer, false],
+      [outsider, false],
+    ] as const) {
       const detail = await service.getDetail(issue.id, reader.id);
-      expect(detail).toEqual({ ...issue, attempts, canReview, projectId, isMine: reader.id === client.id });
+      expect(detail).toEqual({
+        ...issue,
+        currentVersion: { id: next.id, status: 'IN_REVIEW' },
+        attempts,
+        canReview,
+        projectId,
+        isMine: reader.id === client.id,
+      });
     }
     expect(await prisma.resolutionAttempt.findMany({ orderBy: { id: 'asc' } })).toEqual(before);
   });
@@ -1266,6 +1351,7 @@ describe('IssuesService', () => {
       const next = await publishVersion();
       expect(await service.start(issue.id, developer.id, next.id)).toEqual({
         ...issue,
+        currentVersion: { id: next.id, status: 'IN_REVIEW' },
         status: 'IN_PROGRESS',
         isMine: false,
         canReview: false,

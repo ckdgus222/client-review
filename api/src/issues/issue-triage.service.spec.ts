@@ -374,6 +374,7 @@ describe('IssueTriageService', () => {
       isMine: false,
       attempts: [],
       canReview: false,
+      currentVersion: { id: next.id, status: 'IN_REVIEW' },
       projectId,
       attachments: [],
       comments: [

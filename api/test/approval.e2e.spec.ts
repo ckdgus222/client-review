@@ -235,6 +235,119 @@ describe('승인 API (e2e)', () => {
     }
   });
 
+  it('쪽지 상세의 currentVersion은 프로젝트의 현재 버전과 그 상태다', async () => {
+    await prepareVersion();
+    const originalVersionId = versionId;
+    const created = await post(`/api/projects/${projectId}/issues`).send(issueInput()).expect(201);
+    expect(created.body.currentVersion).toEqual({ id: originalVersionId, status: 'IN_REVIEW' });
+
+    // 같은 멤버가 참여한 다른 프로젝트도 현재 버전과 쪽지를 가진다.
+    const otherProject = await prisma.project.create({
+      data: {
+        name: '별도 검수 프로젝트',
+        members: {
+          create: [
+            { userId: developerId, role: 'DEVELOPER' },
+            { userId: firstClient.id, role: 'CLIENT' },
+          ],
+        },
+      },
+    });
+    const otherVersion = await prisma.deliveryVersion.create({
+      data: { projectId: otherProject.id, number: 0, status: 'IN_REVIEW', publishedAt: new Date() },
+    });
+    await prisma.project.update({ where: { id: otherProject.id }, data: { currentVersionId: otherVersion.id } });
+    const otherIssue = await post(`/api/projects/${otherProject.id}/issues`)
+      .send({ ...issueInput(), versionId: otherVersion.id })
+      .expect(201);
+    expect(otherIssue.body.currentVersion).toEqual({ id: otherVersion.id, status: 'IN_REVIEW' });
+
+    const draft = await post(`/api/projects/${projectId}/versions`, developerCookie).expect(201);
+    expect(draft.body.id).not.toBe(originalVersionId);
+    for (const cookie of [firstClient.cookie, secondClient.cookie, developerCookie]) {
+      const detail = await request(server).get(`/api/issues/${created.body.id}`).set('Cookie', cookie).expect(200);
+      expect(detail.body.currentVersion).toEqual({ id: originalVersionId, status: 'IN_REVIEW' });
+    }
+    await post(`/api/versions/${draft.body.id}/publish`, developerCookie).expect(200);
+    versionId = draft.body.id;
+    const nextDraft = await post(`/api/projects/${projectId}/versions`, developerCookie).expect(201);
+    const currentVersion = { id: versionId, status: 'IN_REVIEW' };
+    for (const cookie of [firstClient.cookie, secondClient.cookie, developerCookie]) {
+      const detail = await request(server).get(`/api/issues/${created.body.id}`).set('Cookie', cookie).expect(200);
+      expect(detail.body.currentVersion).toEqual(currentVersion);
+      expect(detail.body.originVersion).toEqual({ id: originalVersionId, number: 1 });
+    }
+
+    for (const changes of [{ category: 'DESIGN' }, { scope: 'OUT_OF_SCOPE' }, { dueDate: '2027-01-01' }]) {
+      const updated = await updateIssue(created.body.id, changes).expect(200);
+      expect(updated.body.currentVersion).toEqual(currentVersion);
+    }
+    const photo = await sharp({ create: { width: 16, height: 16, channels: 3, background: '#ffffff' } })
+      .png()
+      .toBuffer();
+    const attached = await post(`/api/issues/${created.body.id}/attachments`)
+      .attach('file', photo, 'reference.png')
+      .expect(201);
+    expect(attached.body.currentVersion).toEqual(currentVersion);
+    const removed = await request(server)
+      .delete(`/api/issues/${created.body.id}/attachments/${attached.body.attachments[0].id}`)
+      .set('Origin', origin)
+      .set('Cookie', firstClient.cookie)
+      .expect(200);
+    expect(removed.body.currentVersion).toEqual(currentVersion);
+    const started = await post(`/api/issues/${created.body.id}/start`, developerCookie).send({ versionId }).expect(200);
+    expect(started.body.currentVersion).toEqual(currentVersion);
+
+    const ready = await post(`/api/issues/${created.body.id}/submit-resolution`, developerCookie)
+      .send({ versionId, summary: '크기를 고쳤어요', screenId })
+      .expect(200);
+    expect(ready.body.currentVersion).toEqual(currentVersion);
+    const reopened = await post(`/api/issues/${created.body.id}/reopen`)
+      .send({ versionId, attemptId: ready.body.attempts[0].id, reason: '조금 더 크게 해 주세요' })
+      .expect(200);
+    expect(reopened.body.currentVersion).toEqual(currentVersion);
+    const readyAgain = await post(`/api/issues/${created.body.id}/submit-resolution`, developerCookie)
+      .send({ versionId, summary: '다시 고쳤어요', screenId })
+      .expect(200);
+    expect(readyAgain.body.currentVersion).toEqual(currentVersion);
+    const verified = await post(`/api/issues/${created.body.id}/verify`)
+      .send({ versionId, attemptId: readyAgain.body.attempts.at(-1).id })
+      .expect(200);
+    expect(verified.body.currentVersion).toEqual(currentVersion);
+    const openAgain = await post(`/api/issues/${created.body.id}/reopen`)
+      .send({ versionId, reason: '다시 살펴봐 주세요' })
+      .expect(200);
+    expect(openAgain.body.currentVersion).toEqual(currentVersion);
+    const withdrawn = await post(`/api/issues/${created.body.id}/withdraw`)
+      .send({ versionId, reason: '추가 요청을 취소해요' })
+      .expect(200);
+    expect(withdrawn.body.currentVersion).toEqual(currentVersion);
+
+    // 범위 밖 확인 요청은 남긴 채 승인할 수 있다. 비교 화면이 이 상태를 읽는다.
+    await post(`/api/issues/${created.body.id}/reopen`).send({ versionId, reason: '추가 요청으로 남겨요' }).expect(200);
+    await post(`/api/issues/${created.body.id}/submit-resolution`, developerCookie)
+      .send({ versionId, summary: '다음 차수에서 확인해 주세요', screenId })
+      .expect(200);
+    const review = await check().expect(200);
+    await approve(review.body.serverTime).expect(200);
+    for (const cookie of [firstClient.cookie, secondClient.cookie, developerCookie]) {
+      const detail = await request(server).get(`/api/issues/${created.body.id}`).set('Cookie', cookie).expect(200);
+      expect(detail.body.currentVersion).toEqual({ id: versionId, status: 'APPROVED' });
+      expect(detail.body.status).toBe('READY_FOR_REVIEW');
+      expect(detail.body.originVersion).toEqual({ id: originalVersionId, number: 1 });
+    }
+    for (const cookie of [firstClient.cookie, developerCookie]) {
+      const detail = await request(server).get(`/api/issues/${otherIssue.body.id}`).set('Cookie', cookie).expect(200);
+      expect(detail.body.currentVersion).toEqual({ id: otherVersion.id, status: 'IN_REVIEW' });
+    }
+    await post(`/api/versions/${nextDraft.body.id}/publish`, developerCookie).expect(200);
+    const latest = await request(server)
+      .get(`/api/issues/${created.body.id}`)
+      .set('Cookie', firstClient.cookie)
+      .expect(200);
+    expect(latest.body.currentVersion).toEqual({ id: nextDraft.body.id, status: 'IN_REVIEW' });
+  });
+
   it('개발자와 승인자가 아닌 클라이언트가 승인하거나 승인 검토를 조회하면 403이고 아무것도 바뀌지 않는다', async () => {
     await prepareVersion();
     const review = await check().expect(200);
