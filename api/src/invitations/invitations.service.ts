@@ -141,7 +141,8 @@ export class InvitationsService {
                expires_at <= clock_timestamp() AS expired
         FROM invitations WHERE id = ${found.id}::uuid
       `;
-      if (invitation.accepted || invitation.revoked || projectStatus === ProjectStatus.DELETE_PENDING) {
+      // 처음 찾은 뒤 정리 작업(30일 지난 기록)이 지웠으면 줄이 없다. 없는 초대와 같다.
+      if (!invitation || invitation.accepted || invitation.revoked || projectStatus === ProjectStatus.DELETE_PENDING) {
         throw invitationNotFound();
       }
       if (invitation.expired) throw invitationExpired();

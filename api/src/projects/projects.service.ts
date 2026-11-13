@@ -17,7 +17,7 @@ const PROJECT_FIELDS = { id: true, name: true, createdAt: true, status: true, de
 
 // 지운 프로젝트를 되살릴 수 있는 기간. 정리 작업과 되살리기의 SQL도 같은 7일을 쓴다(docs/archive.md 정할 것 9·13).
 export const DELETE_GRACE_DAYS = 7;
-const DAY_MS = 24 * 60 * 60 * 1000;
+export const DAY_MS = 24 * 60 * 60 * 1000;
 const purgeAfterOf = (deleteRequestedAt: Date | null) =>
   deleteRequestedAt && new Date(deleteRequestedAt.getTime() + DELETE_GRACE_DAYS * DAY_MS);
 

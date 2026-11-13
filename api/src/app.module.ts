@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AssetsModule } from './assets/assets.module.js';
 import { AuthModule } from './auth/auth.module.js';
+import { CleanupModule } from './cleanup/cleanup.module.js';
 import { HealthModule } from './health/health.module.js';
 import { InvitationsModule } from './invitations/invitations.module.js';
 import { IssuesModule } from './issues/issues.module.js';
@@ -26,6 +27,7 @@ import { VersionsModule } from './versions/versions.module.js';
     MembersModule,
     IssuesModule,
     NotificationsModule,
+    CleanupModule,
   ],
 })
 export class AppModule {}
