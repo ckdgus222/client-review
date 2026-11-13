@@ -24,7 +24,7 @@ describe('requestCode', () => {
     expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/auth/email-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, privacyAgreed: true }),
     })
     expect(readJson).not.toHaveBeenCalled()
     expect(response.bodyUsed).toBe(false)

@@ -156,6 +156,7 @@ describe('로그인 표와 테스트 DB', () => {
       email: 'user@example.com',
       name: '사용자',
       lastSeenAt: null,
+      privacyAgreedAt: null,
       createdAt: expect.any(Date),
     });
   });
@@ -177,6 +178,7 @@ describe('로그인 표와 테스트 DB', () => {
       expiresAt,
       attempts: 0,
       usedAt: null,
+      privacyAgreed: false,
       createdAt: expect.any(Date),
     });
   });

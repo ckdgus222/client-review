@@ -24,6 +24,7 @@ const submitLoginCode = async (page: Page, email: string) => {
   const responsePromise = page.waitForResponse(
     (response) => new URL(response.url()).pathname === '/api/auth/email-code' && response.request().method() === 'POST',
   )
+  await page.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)', exact: true }).check()
   await page.getByRole('button', { name: '코드 받기', exact: true }).click()
   expect((await responsePromise).status()).toBe(204)
   await useKnownLoginCode(email)

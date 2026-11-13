@@ -49,6 +49,7 @@ export class AuthService {
   ) {}
 
   // email은 입력 검사(DTO)에서 앞뒤 공백을 지우고 소문자로 바꾼 값이다.
+  // 개인정보 수집·이용 동의는 DTO가 확인했다. 그래서 코드 줄에 동의했다고 적는다.
   async requestCode(email: string) {
     // 000000~999999. 앞자리가 0이어도 6자리로 맞춘다.
     const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
@@ -58,11 +59,11 @@ export class AuthService {
     // 넣기·덮어쓰기와 60초 검사를 한 문장으로 한다. 같은 이메일로 동시에 와도 한 요청만 줄을 바꾼다.
     // 시각은 서버 시계가 아니라 DB 시계(now())로 정하고 비교한다.
     const issued = await this.prisma.$queryRaw<{ id: string }[]>`
-      INSERT INTO login_codes (email, code_hash, expires_at, attempts, used_at, created_at)
-      VALUES (${email}, ${codeHash}, now() + interval '10 minutes', 0, NULL, now())
+      INSERT INTO login_codes (email, code_hash, expires_at, attempts, used_at, created_at, privacy_agreed)
+      VALUES (${email}, ${codeHash}, now() + interval '10 minutes', 0, NULL, now(), true)
       ON CONFLICT (email) DO UPDATE
         SET code_hash = EXCLUDED.code_hash, expires_at = EXCLUDED.expires_at,
-            attempts = 0, used_at = NULL, created_at = now()
+            attempts = 0, used_at = NULL, created_at = now(), privacy_agreed = true
         WHERE login_codes.created_at <= now() - interval '60 seconds'
       RETURNING id
     `;
@@ -79,9 +80,10 @@ export class AuthService {
   // 돌려준 token(세션 ID 원본)은 컨트롤러가 쿠키에 담는다.
   async verifyCode(email: string, code: string, name?: string): Promise<{ user: AuthUser; token: string }> {
     // 1. 비교하기 전에 시도 횟수부터 올린다. 동시에 여러 번 와도 5번까지만 해시를 받아 비교한다.
+    // 동의 없이 만든 코드(동의 기능 전에 받은 코드)는 만료된 코드와 같다.
     const [attempt] = await this.prisma.$queryRaw<{ code_hash: string }[]>`
       UPDATE login_codes SET attempts = attempts + 1
-      WHERE email = ${email} AND used_at IS NULL AND expires_at > now() AND attempts < 5
+      WHERE email = ${email} AND used_at IS NULL AND expires_at > now() AND attempts < 5 AND privacy_agreed
       RETURNING code_hash
     `;
     if (!attempt) throw loginCodeError('CODE_EXPIRED');
@@ -129,7 +131,10 @@ export class AuthService {
         VALUES (${sessionUser.id}::uuid, ${hashSessionToken(token)}, now() + interval '7 days')
       `;
       // 마지막 접속은 로그인할 때 바로 적는다. 아래 5분 규칙만 쓰면 로그인하고 5분 안에 로그아웃한 사람은 기록이 없다.
-      await tx.$executeRaw`UPDATE users SET last_seen_at = now() WHERE id = ${sessionUser.id}::uuid`;
+      // 동의 시각도 같은 문장에서 적는다. 동의한 코드로만 여기까지 와서, 로그인했다는 것은 동의했다는 뜻이다.
+      await tx.$executeRaw`
+        UPDATE users SET last_seen_at = now(), privacy_agreed_at = now() WHERE id = ${sessionUser.id}::uuid
+      `;
       return sessionUser;
     });
 

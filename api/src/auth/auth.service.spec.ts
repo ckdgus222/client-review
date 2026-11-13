@@ -288,8 +288,8 @@ describe('AuthService.verifyCode', () => {
   // 해시를 한 번만 만들어 재사용하고, 시도 횟수와 유효시간은 매번 새로 저장한다.
   const createLoginCode = async () => {
     await prisma.$executeRaw`
-      INSERT INTO login_codes (email, code_hash, expires_at)
-      VALUES (${email}, ${codeHash}, now() + interval '10 minutes')
+      INSERT INTO login_codes (email, code_hash, expires_at, privacy_agreed)
+      VALUES (${email}, ${codeHash}, now() + interval '10 minutes', true)
     `;
   };
 
@@ -341,7 +341,7 @@ describe('AuthService.verifyCode', () => {
       token: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
     });
     const users = await prisma.user.findMany();
-    expect(users).toEqual([{ ...user, lastSeenAt: expect.any(Date) }]);
+    expect(users).toEqual([{ ...user, lastSeenAt: expect.any(Date), privacyAgreedAt: expect.any(Date) }]);
     expect(users[0].lastSeenAt!.getTime()).toBeGreaterThanOrEqual(before.getTime());
     expect(users[0].lastSeenAt!.getTime()).toBeLessThanOrEqual(after.getTime());
     const sessions = await prisma.session.findMany();
@@ -775,7 +775,7 @@ describe('AuthService.verifyCode', () => {
     const [{ now: after }] = await prisma.$queryRaw<{ now: Date }[]>`SELECT now()`;
     expect(result.user).toEqual({ id: user.id, email, name: user.name });
     const users = await prisma.user.findMany();
-    expect(users).toEqual([{ ...user, lastSeenAt: expect.any(Date) }]);
+    expect(users).toEqual([{ ...user, lastSeenAt: expect.any(Date), privacyAgreedAt: expect.any(Date) }]);
     expect(users[0].lastSeenAt!.getTime()).toBeGreaterThanOrEqual(before.getTime());
     expect(users[0].lastSeenAt!.getTime()).toBeLessThanOrEqual(after.getTime());
     expect(await prisma.session.findMany()).toEqual([expect.objectContaining({ userId: user.id })]);

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router'
 import { requestCode, verifyCode } from '../api/auth.ts'
 import { ApiError } from '../api/client.ts'
 import { Button } from '../components/Button.tsx'
+import { ErrorText } from '../components/ErrorText.tsx'
 import { TextField } from '../components/TextField.tsx'
 import styles from './LoginPage.module.css'
 
@@ -40,9 +41,18 @@ export const LoginPage = () => {
   const [name, setName] = useState('')
   const [error, setError] = useState<string>()
   const [sending, setSending] = useState(false)
+  // 개인정보 수집·이용 동의(필수, docs/landing.md 정할 것 4). 이메일 다시 입력으로 돌아와도 체크는 그대로 둔다.
+  const [agreed, setAgreed] = useState(false)
+  // 체크하지 않고 보냈는가. 보낸 뒤에만 문구를 보여서 agreed만으로는 알 수 없다.
+  const [consentMissing, setConsentMissing] = useState(false)
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
+    // 버튼을 잠그지 않고, 누르면 왜 안 되는지 알린다. 서버도 동의 값이 없으면 막는다.
+    if (step === 'email' && !agreed) {
+      setConsentMissing(true)
+      return
+    }
     setSending(true)
     setError(undefined)
     try {
@@ -79,15 +89,36 @@ export const LoginPage = () => {
     <form className={styles.form} onSubmit={handleSubmit} noValidate>
       <h1>로그인</h1>
       {step === 'email' && (
-        <TextField
-          label="이메일"
-          type="email"
-          autoComplete="email"
-          value={email}
-          onChange={setEmail}
-          error={error}
-          disabled={sending}
-        />
+        <>
+          <TextField
+            label="이메일"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={setEmail}
+            error={error}
+            disabled={sending}
+          />
+          <div className={styles.consent}>
+            <label>
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={(event) => {
+                  setAgreed(event.target.checked)
+                  setConsentMissing(false)
+                }}
+                disabled={sending}
+              />
+              개인정보 수집·이용에 동의해요(필수)
+            </label>
+            {/* 앱 밖 주소(nginx가 보내는 HTML)라 React 링크가 아니다. 새 탭으로 열어 쓰던 이메일이 남는다. */}
+            <a href="/privacy" target="_blank" rel="noreferrer">
+              개인정보처리방침 보기
+            </a>
+            {consentMissing && <ErrorText message="개인정보 수집·이용에 동의해 주세요" />}
+          </div>
+        </>
       )}
       {step === 'code' && (
         <>
@@ -124,6 +155,10 @@ export const LoginPage = () => {
           이메일 다시 입력
         </Button>
       )}
+      <nav className={styles.legal} aria-label="약관">
+        <a href="/privacy">개인정보처리방침</a>
+        <a href="/terms">이용약관</a>
+      </nav>
     </form>
   )
 }
