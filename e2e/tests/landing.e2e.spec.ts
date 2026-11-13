@@ -18,7 +18,8 @@ test('소개 페이지가 뜨고 시작하기를 누르면 로그인 화면이 �
   await page.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)', exact: true }).check()
 
   const codeResponsePromise = page.waitForResponse(
-    (response) => response.url() === 'http://localhost:4103/api/auth/email-code' && response.request().method() === 'POST',
+    (response) =>
+      response.url() === 'http://localhost:4103/api/auth/email-code' && response.request().method() === 'POST',
   )
   await page.getByRole('button', { name: '코드 받기', exact: true }).click()
   const codeResponse = await codeResponsePromise
@@ -39,7 +40,10 @@ test('robots.txt가 앱과 api를 막고 소개 페이지에 제목과 설명 �
 
   const robotsResponse = await request.get('/robots.txt')
   expect(robotsResponse.status()).toBe(200)
-  const directives = (await robotsResponse.text()).trim().split(/\r?\n/).map((line) => line.trim())
+  const directives = (await robotsResponse.text())
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
   expect(directives).toEqual(['User-agent: *', 'Disallow: /app/', 'Disallow: /api/'])
 })
 
@@ -48,7 +52,12 @@ test('개인정보처리방침에 항목·보유 기간·권리·보호책임자
 
   expect(response?.status()).toBe(200)
   await expect(page.getByRole('heading', { level: 1, name: '개인정보처리방침', exact: true })).toBeVisible()
-  for (const name of ['2. 모으는 항목과 모으는 때', '3. 보유 기간', '7. 정보주체의 권리와 요청 방법', '10. 개인정보 보호책임자']) {
+  for (const name of [
+    '2. 모으는 항목과 모으는 때',
+    '3. 보유 기간',
+    '7. 정보주체의 권리와 요청 방법',
+    '10. 개인정보 보호책임자',
+  ]) {
     await expect(page.getByRole('heading', { level: 2, name, exact: true })).toBeVisible()
   }
 
@@ -106,16 +115,58 @@ test('소개 페이지에서 개인정보처리방침과 이용약관 링크를 
   }
 })
 
+test('앱 밖의 없는 주소는 404 상태와 404 화면이고 소개 페이지로 돌아갈 수 있다', async ({ page }) => {
+  const response = await page.goto('/abc')
+
+  expect(response?.status()).toBe(404)
+  await expect(page).toHaveURL('http://localhost:4103/abc')
+  await expect(page.getByRole('heading', { level: 1, name: '찾을 수 없는 주소예요', exact: true })).toBeVisible()
+  await expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', /\bnoindex\b/)
+  await page.getByRole('link', { name: '처음으로', exact: true }).click()
+
+  await expect(page).toHaveURL('http://localhost:4103/')
+  await expect(page.getByRole('heading', { level: 1, name: 'client-review', exact: true })).toBeVisible()
+
+  await page.goto('/abc')
+  await page.getByRole('link', { name: '로그인', exact: true }).click()
+
+  await expect(page).toHaveURL('http://localhost:4103/app/login')
+  await expect(page.getByRole('heading', { level: 1, name: '로그인', exact: true })).toBeVisible()
+})
+
+test('앱 안의 없는 주소는 nginx의 404 화면 대신 React가 처리한다', async ({ page }) => {
+  const response = await page.goto('/app/abc')
+
+  expect(response?.status()).toBe(200)
+  await expect(page).toHaveURL('http://localhost:4103/app/abc')
+  await expect(page.getByRole('heading', { level: 1, name: '없는 화면이에요', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: '첫 화면으로 가기', exact: true })).toHaveAttribute('href', /^\/app\/?$/)
+  await expect(page.getByRole('heading', { name: '찾을 수 없는 주소예요', exact: true })).toHaveCount(0)
+})
+
+test('api의 없는 주소는 nginx의 404 화면 대신 api의 JSON 404를 그대로 보낸다', async ({ request }) => {
+  const response = await request.get('/api/abc')
+
+  expect(response.status()).toBe(404)
+  expect(response.headers()['content-type']).toContain('application/json')
+  const body = await response.json()
+  expect(body).toMatchObject({ statusCode: 404 })
+
+  const apiResponse = await request.get('http://localhost:4101/api/abc')
+  expect(apiResponse.status()).toBe(404)
+  expect(body).toEqual(await apiResponse.json())
+})
+
 test('휴대폰 폭에서 소개·방침·약관·404가 옆으로 넘치지 않는다', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 })
-  // 404는 조각 4에서 더한다.
-  for (const { path, heading } of [
-    { path: '/', heading: 'client-review' },
-    { path: '/privacy', heading: '개인정보처리방침' },
-    { path: '/terms', heading: '이용약관' },
+  for (const { path, heading, status } of [
+    { path: '/', heading: 'client-review', status: 200 },
+    { path: '/privacy', heading: '개인정보처리방침', status: 200 },
+    { path: '/terms', heading: '이용약관', status: 200 },
+    { path: '/abc', heading: '찾을 수 없는 주소예요', status: 404 },
   ]) {
     const response = await page.goto(path)
-    expect(response?.status()).toBe(200)
+    expect(response?.status()).toBe(status)
     await expect(page.getByRole('heading', { level: 1, name: heading, exact: true })).toBeVisible()
 
     const { scrollWidth, clientWidth } = await page.evaluate(() => ({
