@@ -84,6 +84,16 @@ export const enqueueNotifications = async (tx: Prisma.TransactionClient, event: 
   });
 };
 
+// 실패 원인 글. nodemailer 오류의 message에는 SMTP 서버 응답 원문이 붙어 메일 내용이 섞일 수 있어서,
+// 코드가 있는 오류(nodemailer, 네트워크, Prisma)는 코드만 남긴다. 코드가 없는 것은 이 파일이 만든 글이다.
+const failureCause = (error: unknown) => {
+  if (!(error instanceof Error)) return String(error);
+  const { code, responseCode } = error as { code?: unknown; responseCode?: unknown };
+  if (code === undefined) return error.message;
+  if (responseCode === undefined) return `오류 코드 ${String(code)}`;
+  return `오류 코드 ${String(code)}(SMTP ${String(responseCode)})`;
+};
+
 @Injectable()
 export class NotificationsService implements OnModuleDestroy {
   private readonly logger = new Logger(NotificationsService.name);
@@ -153,9 +163,11 @@ export class NotificationsService implements OnModuleDestroy {
       if (!appUrl) throw new Error('APP_URL이 없어요');
       const message = buildNotificationMessage(await this.loadEvent(delivery.eventId), appUrl);
       await withinLimit(this.mail.send({ to: delivery.toEmail, ...message }), this.sendLimitMs);
-    } catch {
-      // 실패 내용에는 메일 본문이 섞일 수 있어서 남기지 않는다.
-      this.logger.warn(`알림 메일을 보내지 못했어요(${delivery.attempts + 1}번째) → ${delivery.toEmail}`);
+    } catch (error) {
+      // 원인(APP_URL 빠짐, SMTP 인증 실패 등)을 남겨야 다섯 번 실패하기 전에 고칠 수 있다.
+      this.logger.warn(
+        `알림 메일을 보내지 못했어요(${delivery.attempts + 1}번째) → ${delivery.toEmail}: ${failureCause(error)}`,
+      );
       await this.recordFailure(delivery);
       return;
     }

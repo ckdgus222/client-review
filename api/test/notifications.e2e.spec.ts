@@ -392,6 +392,66 @@ describe('알림 우편함 (e2e)', () => {
     });
   });
 
+  it('APP_URL이 없으면 보내지 않고 원인을 로그에 남긴 뒤 1분 뒤 다시 보낸다', async () => {
+    await prepareReview();
+    await approve();
+    const originalAppUrl = process.env.APP_URL;
+    try {
+      vi.stubEnv('APP_URL', undefined);
+      const [{ before }] = await prisma.$queryRaw<{ before: Date }[]>`SELECT clock_timestamp() AS before`;
+      await worker.processDue();
+      const [{ after }] = await prisma.$queryRaw<{ after: Date }[]>`SELECT clock_timestamp() AS after`;
+      const failed = await prisma.notificationDelivery.findFirstOrThrow();
+      expect(send).not.toHaveBeenCalled();
+      expect(failed).toMatchObject({ toEmail: developer.email, status: 'PENDING', attempts: 1, sentAt: null });
+      expect(failed.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before.getTime() + 60_000);
+      expect(failed.nextAttemptAt.getTime()).toBeLessThanOrEqual(after.getTime() + 60_000);
+      const warning = `알림 메일을 보내지 못했어요(1번째) → ${developer.email}: APP_URL이 없어요`;
+      expect(logs).toContain(warning);
+      expect(Logger.prototype.warn).toHaveBeenCalledWith(warning);
+      await worker.processDue();
+      expect(send).not.toHaveBeenCalled();
+      expect(await prisma.notificationDelivery.findFirstOrThrow()).toEqual(failed);
+    } finally {
+      vi.stubEnv('APP_URL', originalAppUrl);
+    }
+    await makeDue();
+    await worker.processDue();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(mails).toEqual([expect.objectContaining({ to: developer.email })]);
+    expect(await prisma.notificationDelivery.findFirstOrThrow()).toMatchObject({
+      status: 'SENT',
+      attempts: 1,
+      sentAt: expect.any(Date),
+    });
+  });
+
+  it('SMTP 오류는 서버 응답 원문 없이 오류 코드만 로그에 남긴다', async () => {
+    await publish();
+    const smtpError = Object.assign(new Error('SMTP 인증 실패\r\n메일본문표식'), {
+      code: 'EAUTH',
+      responseCode: 535,
+    });
+    const connectionError = Object.assign(new Error('SMTP 연결 실패\n메일본문표식'), {
+      code: 'ECONNREFUSED',
+    });
+    send.mockImplementation(async (mail) => {
+      if (mail.to === client.email) throw smtpError;
+      throw connectionError;
+    });
+
+    await worker.processDue();
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(logs).toContain(`알림 메일을 보내지 못했어요(1번째) → ${client.email}: 오류 코드 EAUTH(SMTP 535)`);
+    expect(logs).toContain(`알림 메일을 보내지 못했어요(1번째) → ${approver.email}: 오류 코드 ECONNREFUSED`);
+    expect(logs.join('\n')).not.toContain('메일본문표식');
+    expect(await deliveriesFor('VERSION_PUBLISHED')).toEqual([
+      expect.objectContaining({ toEmail: approver.email, status: 'PENDING', attempts: 1, sentAt: null }),
+      expect.objectContaining({ toEmail: client.email, status: 'PENDING', attempts: 1, sentAt: null }),
+    ]);
+  });
+
   it('다섯 번 실패하면 FAILED가 되고 더 보내지 않는다', async () => {
     await prepareReview();
     await approve();
@@ -547,6 +607,52 @@ describe('알림 우편함 (e2e)', () => {
     expect(new Set(mails.map(({ to, text }) => `${to}:${text}`)).size).toBe(4);
     expect(await prisma.notificationDelivery.count({ where: { status: 'SENT', attempts: 0 } })).toBe(4);
   });
+
+  it('다른 트랜잭션이 잠근 줄은 건너뛰고 다음 줄을 보낸다', async () => {
+    await publish();
+    const [first, second] = await deliveriesFor('VERSION_PUBLISHED');
+    await prisma.$executeRaw`
+      UPDATE notification_deliveries
+      SET next_attempt_at = clock_timestamp() -
+        CASE WHEN id = ${first.id}::uuid THEN interval '2 minutes' ELSE interval '1 minute' END
+      WHERE id IN (${first.id}::uuid, ${second.id}::uuid)
+    `;
+    const locked = await prisma.notificationDelivery.findUniqueOrThrow({ where: { id: first.id } });
+    const rollback = new Error('잠금 테스트 트랜잭션 되돌리기');
+    let pending: Promise<PromiseSettledResult<void>[]> | undefined;
+    let finished = false;
+    try {
+      await expect(
+        prisma.$transaction(
+          async (tx) => {
+            await tx.$queryRaw`SELECT id FROM notification_deliveries WHERE id = ${first.id}::uuid FOR UPDATE`;
+            pending = Promise.allSettled([
+              (async () => {
+                await worker.processDue();
+                finished = true;
+              })(),
+            ]);
+            // 잠금을 풀기 전에 끝나야 한다. SKIP LOCKED가 없으면 여기서 실패한다.
+            await vi.waitFor(() => expect(finished).toBe(true), { timeout: 2_000, interval: 20 });
+            expect(await pending).toEqual([{ status: 'fulfilled', value: undefined }]);
+            expect(send).toHaveBeenCalledTimes(1);
+            expect(mails).toEqual([expect.objectContaining({ to: second.toEmail })]);
+            expect(await prisma.notificationDelivery.findUniqueOrThrow({ where: { id: second.id } })).toMatchObject({
+              status: 'SENT',
+              attempts: 0,
+              sentAt: expect.any(Date),
+            });
+            expect(await tx.notificationDelivery.findUniqueOrThrow({ where: { id: first.id } })).toEqual(locked);
+            expect(locked).toMatchObject({ status: 'PENDING', attempts: 0, sentAt: null });
+            throw rollback;
+          },
+          { maxWait: 5_000, timeout: 10_000 },
+        ),
+      ).rejects.toBe(rollback);
+    } finally {
+      await pending;
+    }
+  }, 15_000);
 
   it('임대가 끝난 뒤 늦게 끝난 옛 작업자의 결과는 새 작업자의 결과를 덮지 않는다', async () => {
     await prepareReview();
