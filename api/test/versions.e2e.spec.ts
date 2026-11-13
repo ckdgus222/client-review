@@ -266,7 +266,7 @@ describe('버전 API (e2e)', () => {
     '프로젝트 상세는 %s에게 게시 전 null, 1차 게시 뒤 1차, 2차 게시 뒤 2차를 돌려준다',
     async (role) => {
       const memberCookie = role === 'DEVELOPER' ? cookie : clientCookie;
-      const projectDetail = { id: projectId, name: '버전 검수 프로젝트', myRole: role, approver: null };
+      const projectDetail = { id: projectId, name: '버전 검수 프로젝트', myRole: role, approver: null, isApprover: false };
       await request(server)
         .get(`/api/projects/${projectId}`)
         .set('Cookie', memberCookie)
@@ -345,6 +345,7 @@ describe('버전 API (e2e)', () => {
             myRole: role,
             currentVersion: { id: first.body.id, number: 0 },
             approver: null,
+            isApprover: false,
           });
       }
 
@@ -796,7 +797,14 @@ describe('버전 API (e2e)', () => {
         .get(`/api/projects/${projectId}`)
         .set('Cookie', role === 'DEVELOPER' ? cookie : clientCookie)
         .expect(200)
-        .expect({ id: projectId, name: '버전 검수 프로젝트', myRole: role, currentVersion: null, approver: null });
+        .expect({
+          id: projectId,
+          name: '버전 검수 프로젝트',
+          myRole: role,
+          currentVersion: null,
+          approver: null,
+          isApprover: false,
+        });
     }
 
     const screen = await createScreen();
@@ -882,6 +890,7 @@ describe('버전 API (e2e)', () => {
           myRole: role,
           currentVersion: { id: draft.body.id, number: 0 },
           approver: null,
+          isApprover: false,
         });
     }
 

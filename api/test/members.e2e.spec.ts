@@ -496,7 +496,7 @@ describe('참여자 API (e2e)', () => {
       .expect({ projectId });
 
     const detail = await get(`/api/projects/${projectId}`, client.cookie).expect(200);
-    expect(detail.body).toMatchObject({ myRole: 'CLIENT', approver: null });
+    expect(detail.body).toMatchObject({ myRole: 'CLIENT', approver: null, isApprover: false });
     expect(await prisma.projectMember.findMany({ where: { projectId, userId: client.id } })).toEqual([original]);
     const members = await list().expect(200);
     expect(members.body.members.map(({ id }: { id: string }) => id)).toEqual([developerMemberId, client.memberId]);
