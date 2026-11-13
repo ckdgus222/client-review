@@ -227,21 +227,24 @@ enum ActivityType {
 
 // 한 번 쓴 줄은 고치거나 지우지 않는다. 그래서 가리키는 버전도 NoAction으로 지우기를 막는다.
 model ActivityEvent {
-  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  projectId String           @map("project_id") @db.Uuid
-  project   Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  actorId   String           @map("actor_id") @db.Uuid
-  actor     User             @relation(fields: [actorId], references: [id])
-  type      ActivityType
-  versionId String?          @map("version_id") @db.Uuid
-  version   DeliveryVersion? @relation(fields: [versionId], references: [id], onDelete: NoAction)
+  id         String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId  String                 @map("project_id") @db.Uuid
+  project    Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  actorId    String                 @map("actor_id") @db.Uuid
+  actor      User                   @relation(fields: [actorId], references: [id])
+  type       ActivityType
+  versionId  String?                @map("version_id") @db.Uuid
+  version    DeliveryVersion?       @relation(fields: [versionId], references: [id], onDelete: NoAction)
   // 초대 수락·접근 철회·승인자 변경의 대상 멤버. 초대 사건은 비워 둔다(초대 줄은 나중에 지워진다).
-  memberId  String?          @map("member_id") @db.Uuid
-  member    ProjectMember?   @relation("ActivityMember", fields: [memberId], references: [id], onDelete: NoAction)
+  memberId   String?                @map("member_id") @db.Uuid
+  member     ProjectMember?         @relation("ActivityMember", fields: [memberId], references: [id], onDelete: NoAction)
   // 쪽지 작성·수정 시작·고쳤어요·확인 완료·다시 열기·철회의 대상 쪽지.
-  issueId   String?          @map("issue_id") @db.Uuid
-  issue     Issue?           @relation(fields: [issueId], references: [id], onDelete: NoAction)
-  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  issueId    String?                @map("issue_id") @db.Uuid
+  issue      Issue?                 @relation(fields: [issueId], references: [id], onDelete: NoAction)
+  // 줄을 쓰는 순간의 시각이다(clock_timestamp). now()는 트랜잭션을 시작한 시각이라, 먼저 시작했지만 프로젝트 잠금을
+  // 늦게 얻은 요청이 더 이른 시각을 받는다. 기록 메일의 시각은 복원 때 다시 적용하는 순서라 실제 처리 순서와 같아야 한다.
+  createdAt  DateTime               @default(dbgenerated("clock_timestamp()")) @map("created_at") @db.Timestamptz
+  deliveries NotificationDelivery[]
 
   // 활동 일지는 한 프로젝트의 줄을 최신순으로 읽는다. 찾기와 정렬을 인덱스 하나로 끝낸다.
   @@index([projectId, createdAt])
@@ -421,4 +424,33 @@ model Approval {
   summary    Json
 
   @@map("approvals")
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+
+  @@map("delivery_status")
+}
+
+// 보낼 메일 우편함(아웃박스). 사건 줄과 같은 트랜잭션에서 받는 사람마다 한 줄을 넣고, api 안의 반복 작업이 꺼내 보낸다.
+// 무슨 메일인지는 사건의 type에서 알아낸다. "시도 횟수 0~5"와 "SENT일 때만 보낸 시각"은 마이그레이션 SQL의 CHECK 제약이 지킨다.
+model NotificationDelivery {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId       String         @map("event_id") @db.Uuid
+  event         ActivityEvent  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  toEmail       String         @map("to_email")
+  status        DeliveryStatus @default(PENDING)
+  attempts      Int            @default(0)
+  // 다음에 보낼 시각. 보내는 동안에는 임대가 끝나는 시각이고, 실패하면 다시 보낼 시각이다.
+  nextAttemptAt DateTime       @default(now()) @map("next_attempt_at") @db.Timestamptz
+  sentAt        DateTime?      @map("sent_at") @db.Timestamptz
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  // 같은 사건의 메일을 같은 사람에게 두 번 넣지 않는다.
+  @@unique([eventId, toEmail])
+  // 반복 작업이 "보낼 때가 된 PENDING 줄"을 찾는다.
+  @@index([status, nextAttemptAt])
+  @@map("notification_deliveries")
 }

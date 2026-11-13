@@ -572,14 +572,15 @@ describe('버전과 사진 테이블', () => {
   it('activity_events의 UUID와 생성 시각은 DB가 만들고 version_id는 비워 둘 수 있다', async () => {
     const project = await prisma.project.create({ data: { name: '프로젝트' } });
     const actor = await prisma.user.create({ data: { email: 'actor@example.com', name: '개발자' } });
-    const [row] = await prisma.$queryRaw<{ id: string; created_at_is_now: boolean }[]>`
+    // 생성 시각은 줄을 쓰는 순간의 DB 시각(clock_timestamp)이다. 트랜잭션 시작(now())과 지금 사이에 있다(docs/mail.md 정할 것 15).
+    const [row] = await prisma.$queryRaw<{ id: string; created_at_is_db_clock: boolean }[]>`
       INSERT INTO activity_events (project_id, actor_id, type)
       VALUES (${project.id}::uuid, ${actor.id}::uuid, 'VERSION_PUBLISHED')
-      RETURNING id, created_at = now() AS created_at_is_now
+      RETURNING id, created_at BETWEEN now() AND clock_timestamp() AS created_at_is_db_clock
     `;
 
     expect(row.id).toMatch(uuidPattern);
-    expect(row.created_at_is_now).toBe(true);
+    expect(row.created_at_is_db_clock).toBe(true);
     expect(await prisma.activityEvent.findUniqueOrThrow({ where: { id: row.id } })).toEqual({
       id: row.id,
       projectId: project.id,
