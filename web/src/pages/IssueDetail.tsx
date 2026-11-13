@@ -318,7 +318,11 @@ export const IssueDetail = ({
       onRefresh={onRefresh}
       onGoLatest={onGoLatest}
     />
-    <AttemptHistory issueId={issue.id} attempts={issue.attempts} />
+    <AttemptHistory
+      issueId={issue.id}
+      attempts={issue.attempts}
+      isReadyForReview={issue.status === 'READY_FOR_REVIEW'}
+    />
     {/* 아래 두 칸도 쓸 수 없는 동안 늘 둔다. 입력은 부품이 감추고, 쓰던 설명과 사유는 버전을 옮겨 다녀도 남는다. */}
     <ResolutionForm
       issue={issue}

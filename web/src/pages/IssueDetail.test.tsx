@@ -1224,6 +1224,35 @@ describe('IssueDetail 고쳤어요와 확인 연결', () => {
   const reviewButtons = ['확인 완료', '재요청', '철회', '다시 열기']
   const summaryInput = () => screen.getByRole<HTMLTextAreaElement>('textbox', { name: '고친 내용' })
 
+  it.each([
+    ['READY_FOR_REVIEW', '확인 대기 중'],
+    ['IN_PROGRESS', '결과 없음'],
+    ['OPEN', '결과 없음'],
+    ['VERIFIED', '결과 없음'],
+    ['WITHDRAWN', '결과 없음'],
+  ] as const)('%s 쪽지의 가장 최근 결과 없는 줄은 %s으로 보인다', (status, result) => {
+    renderDetail({ issue: { ...ready, status }, screens })
+
+    const history = within(screen.getByRole('region', { name: '고쳤어요 이력' }))
+    expect(history.getByText(`결과: ${result}`)).toBeTruthy()
+    expect(history.queryByText(`결과: ${status === 'READY_FOR_REVIEW' ? '결과 없음' : '확인 대기 중'}`)).toBeNull()
+  })
+
+  it('같은 이력을 둔 채 쪽지 상태가 바뀌면 확인 대기 중 표시도 바뀐다', () => {
+    const { props, rerender } = renderDetail({ issue: ready, screens })
+    expect(screen.getByText('결과: 확인 대기 중')).toBeTruthy()
+
+    rerender(<IssueDetail {...props} issue={{ ...ready, status: 'IN_PROGRESS' }} />)
+
+    expect(screen.getByText('결과: 결과 없음')).toBeTruthy()
+    expect(screen.queryByText('결과: 확인 대기 중')).toBeNull()
+
+    rerender(<IssueDetail {...props} issue={ready} />)
+
+    expect(screen.getByText('결과: 확인 대기 중')).toBeTruthy()
+    expect(screen.queryByText('결과: 결과 없음')).toBeNull()
+  })
+
   it.each(statuses)('개발자에게 %s 상태의 고쳤어요 폼만 규칙대로 보이고 확인하기는 없다', (status) => {
     renderDetail({ issue: { ...issue, status }, screens })
 

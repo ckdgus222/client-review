@@ -8,16 +8,19 @@ type AttemptHistoryProps = {
   issueId: string
   // 오래된 순.
   attempts: IssueAttempt[]
+  // 쪽지가 확인 요청 상태인가. 그때만 가장 최근 줄이 아직 답을 기다리는 줄이다.
+  isReadyForReview: boolean
 }
 
-// 결과와, 답한 사람·시각. 새 버전 게시나 철회로 답을 받지 못한 줄과 아직 답을 기다리는 줄은 "결과 없음"이다.
-const resultText = ({ result, reviewedByName, reviewedAt }: IssueAttempt) => {
-  if (result === null || reviewedByName === null || reviewedAt === null) return '결과 없음'
+// 결과와, 답한 사람·시각. 결과가 없는 줄은 둘로 나뉜다. 아직 답을 기다리는 줄(isWaiting)은 "확인 대기 중",
+// 새 버전 게시나 철회로 답을 받지 못하고 지나간 줄은 "결과 없음"이다.
+const resultText = ({ result, reviewedByName, reviewedAt }: IssueAttempt, isWaiting: boolean) => {
+  if (result === null || reviewedByName === null || reviewedAt === null) return isWaiting ? '확인 대기 중' : '결과 없음'
   return `${RESOLUTION_RESULT_LABELS[result]} · ${reviewedByName} · ${timeFormat.format(new Date(reviewedAt))}`
 }
 
 // 쪽지의 고쳤어요 이력. 지난 줄도 지우지 않고 오래된 순으로 모두 보여 준다.
-export const AttemptHistory = ({ issueId, attempts }: AttemptHistoryProps) => {
+export const AttemptHistory = ({ issueId, attempts, isReadyForReview }: AttemptHistoryProps) => {
   if (attempts.length === 0) return null
   const latest = attempts[attempts.length - 1]
 
@@ -41,7 +44,7 @@ export const AttemptHistory = ({ issueId, attempts }: AttemptHistoryProps) => {
             </p>
             {/* 글은 일반 글자로만 보여 준다. 줄바꿈은 CSS(pre-wrap)가 살린다. */}
             <p className={styles.summary}>{attempt.summary}</p>
-            <p className={styles.result}>결과: {resultText(attempt)}</p>
+            <p className={styles.result}>결과: {resultText(attempt, isReadyForReview && attempt === latest)}</p>
             {/* 비교 화면은 가장 최근 고쳤어요의 사진만 보여 줘서, 링크도 그 줄에만 둔다. */}
             {attempt === latest && attempt.screen && <Link to={`/issues/${issueId}/compare`}>비교해서 보기</Link>}
           </li>
