@@ -459,6 +459,61 @@ describe('ActivityPage 고쳤어요와 확인 기록 순서', () => {
   )
 })
 
+describe('ActivityPage 승인 기록', () => {
+  it.each([
+    { number: 0, message: '승인자님이 초안을 승인했어요' },
+    { number: 1, message: '승인자님이 1차를 승인했어요' },
+    { number: 2, message: '승인자님이 2차를 승인했어요' },
+  ])('$number번 버전의 승인 문장과 그 버전을 여는 링크를 표시한다', async ({ number, message }) => {
+    const event: ActivityItem = {
+      ...items.find((item) => item.version?.number === number)!,
+      type: 'VERSION_APPROVED',
+      actorName: '승인자',
+    }
+    responses.set(activityUrl, () => Response.json([event]))
+    renderActivity()
+
+    const row = within(await screen.findByRole('list')).getByRole('listitem')
+    expect(within(row).getByText(message, { exact: true })).toBeDefined()
+    expect(within(row).getByRole('link').getAttribute('href')).toBe(
+      `/projects/${project.id}?version=${event.version!.id}`,
+    )
+  })
+
+  it('버전 없는 승인 기록은 번호 없는 문장과 시각을 링크 없이 표시한다', async () => {
+    const event: ActivityItem = { ...items[0], type: 'VERSION_APPROVED', actorName: '승인자', version: null }
+    responses.set(activityUrl, () => Response.json([event]))
+    renderActivity()
+
+    const row = within(await screen.findByRole('list')).getByRole('listitem')
+    expect(within(row).getByText('승인자님이 버전을 승인했어요', { exact: true })).toBeDefined()
+    expect(within(row).queryByRole('link')).toBeNull()
+    expect(row.querySelector('time')?.getAttribute('datetime')).toBe(event.createdAt)
+  })
+
+  it('승인과 게시가 섞여 있어도 각 문장과 서버 순서, /app 아래 버전 링크를 유지한다', async () => {
+    const events: ActivityItem[] = items.flatMap((item) => [
+      { ...item, id: `approved-${item.id}`, type: 'VERSION_APPROVED', actorName: '승인자' },
+      item,
+    ])
+    responses.set(activityUrl, () => Response.json(events))
+    renderActivity(activityPath, '/app')
+
+    const rows = within(await screen.findByRole('list')).getAllByRole('listitem')
+    expect(rows.map((row) => row.querySelector('span')?.textContent)).toEqual([
+      '승인자님이 2차를 승인했어요',
+      '최개발님이 2차를 게시했어요',
+      '승인자님이 1차를 승인했어요',
+      '김개발님이 1차를 게시했어요',
+      '승인자님이 초안을 승인했어요',
+      '이개발님이 초안을 게시했어요',
+    ])
+    expect(rows.map((row) => within(row).getByRole('link').getAttribute('href'))).toEqual(
+      events.map((event) => `/app/projects/${project.id}?version=${event.version!.id}`),
+    )
+  })
+})
+
 describe('ActivityPage 로그인과 불러오기', () => {
   it('로그인 확인 중에는 이미 받은 일지와 프로젝트 이름을 보여 주지 않는다', async () => {
     const pending = deferred<Response>()
