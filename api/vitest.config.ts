@@ -8,6 +8,8 @@ if (existsSync('../.env')) process.loadEnvFile('../.env');
 // 테스트는 표를 비우므로 개발 DB 대신 테스트 DB에 붙인다. 검사를 통과한 주소만 쓴다.
 // 여기서 바꾸면 globalSetup(마이그레이션)과 테스트 파일이 모두 이 주소를 물려받는다.
 process.env.DATABASE_URL = assertTestDatabaseUrl(process.env.TEST_DATABASE_URL);
+// 루트 .env에 실제 SMTP 값을 넣어도 테스트는 메일을 보내지 않고 로그에 찍는다(docs/mail.md).
+process.env.MAIL_MODE = 'log';
 
 export default defineConfig({
   test: {

@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
-import { Link, Navigate, useParams, useSearchParams } from 'react-router'
+import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router'
 import { ApiError } from '../api/client.ts'
 import { isUuid } from '../api/ids.ts'
 import {
@@ -162,6 +162,7 @@ const isWaiting = (inFlight: InFlight, latest: number) =>
 
 const ReviewRoom = ({ id }: { id: string }) => {
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation()
   const requestedVersionId = searchParams.get('version')
   const requestedIssueId = searchParams.get('issue')
   const isValidId = isUuid(id)
@@ -479,7 +480,11 @@ const ReviewRoom = ({ id }: { id: string }) => {
     return () => clearInterval(timer)
   }, [isValidId])
 
-  if (user === null) return <Navigate to="/login" replace />
+  // 메일 속 쪽지·버전 링크로 온 사람이 로그인한 뒤 같은 곳으로 돌아오게 지금 주소를 next로 넘긴다.
+  // 로그인 화면은 안전한 주소(/로 시작, //가 아님)만 따른다.
+  if (user === null) {
+    return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />
+  }
   // 확인 중 오류여도 로그인 화면으로 보내지 않는다. 서버가 잠깐 멈춘 것일 수 있다.
   if (user === undefined) return <p>{meError ?? '확인하는 중이에요.'}</p>
   if (!isValidId || notFound) return <ProjectNotFound />

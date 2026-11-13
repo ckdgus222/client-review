@@ -32,6 +32,13 @@ services:
       ASSET_DIR: /data/assets
       # 초대 메일 속 링크의 앞부분. Docker에서는 nginx(8080)로 화면을 연다.
       APP_URL: http://localhost:8080
+      # 메일 설정(docs/mail.md). 루트 .env의 값을 넘긴다. MAIL_MODE를 비우면 log(보내지 않고 로그에 찍음)다.
+      MAIL_MODE: ${MAIL_MODE:-log}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
     volumes:
       - assets-data:/data/assets
     depends_on:

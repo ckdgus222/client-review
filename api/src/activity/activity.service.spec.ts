@@ -102,6 +102,7 @@ describe('ActivityService', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: events[0].createdAt,
         actorName: '개발자',
+        mailFailedTo: [],
         issue: null,
         memberName: null,
         version: { id: version.id, number: 1 },
@@ -151,6 +152,7 @@ describe('ActivityService', () => {
           type,
           createdAt: events[0].createdAt,
           actorName: '개발자',
+          mailFailedTo: [],
           memberName: null,
           version: null,
           issue: { id: issue.id, number: 14 },
@@ -305,6 +307,7 @@ describe('ActivityService', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: events[0].createdAt,
         actorName: '개발자',
+        mailFailedTo: [],
         issue: null,
         memberName: null,
         version: null,
@@ -346,6 +349,7 @@ describe('ActivityService', () => {
         type,
         createdAt: events[0].createdAt,
         actorName: '개발자',
+        mailFailedTo: [],
         issue: null,
         memberName: hasMember ? '클라이언트' : null,
         version: null,
@@ -368,6 +372,7 @@ describe('ActivityService', () => {
         type: 'APPROVER_CHANGED',
         createdAt: event.createdAt,
         actorName: '개발자',
+        mailFailedTo: [],
         issue: null,
         memberName: null,
         version: null,
@@ -403,6 +408,7 @@ describe('ActivityService', () => {
         type: 'MEMBER_REVOKED',
         createdAt: event.createdAt,
         actorName: '개발자',
+        mailFailedTo: [],
         issue: null,
         memberName: '클라이언트',
         version: null,
@@ -555,6 +561,7 @@ describe('ActivityService', () => {
           type: 'VERSION_PUBLISHED',
           createdAt: latest.createdAt,
           actorName: '개발자',
+          mailFailedTo: [],
           issue: null,
           memberName: null,
           version: { id: secondVersion.id, number: 2 },
@@ -564,6 +571,7 @@ describe('ActivityService', () => {
           type: 'VERSION_PUBLISHED',
           createdAt: middle.createdAt,
           actorName: '개발자',
+          mailFailedTo: [],
           issue: null,
           memberName: null,
           version: { id: firstVersion.id, number: 1 },
@@ -573,6 +581,7 @@ describe('ActivityService', () => {
           type: 'VERSION_PUBLISHED',
           createdAt: oldest.createdAt,
           actorName: '개발자',
+          mailFailedTo: [],
           issue: null,
           memberName: null,
           version: null,
@@ -580,6 +589,65 @@ describe('ActivityService', () => {
       ]);
     },
   );
+
+  it.each(['DEVELOPER', 'CLIENT'] as const)(
+    'listForMember는 %s에게 사건별 FAILED 주소만 주소 순으로 돌려주고 클라이언트에게는 숨긴다',
+    async (role) => {
+      const failedEvent = await prisma.activityEvent.create({
+        data: {
+          projectId,
+          actorId: developerId,
+          type: 'VERSION_PUBLISHED',
+          createdAt: new Date('2026-01-02T00:00:00Z'),
+        },
+      });
+      const pendingEvent = await prisma.activityEvent.create({
+        data: {
+          projectId,
+          actorId: developerId,
+          type: 'VERSION_APPROVED',
+          createdAt: new Date('2026-01-01T00:00:00Z'),
+        },
+      });
+      const otherEvent = await prisma.activityEvent.create({
+        data: { projectId: otherProjectId, actorId: outsiderId, type: 'VERSION_PUBLISHED' },
+      });
+      // 실패 주소를 역순으로 넣고, 같은 사건의 성공·재시도 중인 주소도 함께 준비한다.
+      await prisma.notificationDelivery.createMany({
+        data: [
+          { eventId: failedEvent.id, toEmail: 'z@example.com', status: 'FAILED', attempts: 5 },
+          { eventId: failedEvent.id, toEmail: 'a@example.com', status: 'FAILED', attempts: 5 },
+          { eventId: failedEvent.id, toEmail: 'sent@example.com', status: 'SENT', sentAt: new Date() },
+          { eventId: failedEvent.id, toEmail: 'retry@example.com', status: 'PENDING', attempts: 4 },
+          { eventId: pendingEvent.id, toEmail: 'pending@example.com', status: 'PENDING' },
+          { eventId: otherEvent.id, toEmail: 'other@example.com', status: 'FAILED', attempts: 5 },
+        ],
+      });
+
+      const events = await service.listForMember(projectId, role === 'DEVELOPER' ? developerId : clientId);
+
+      expect(events.map(({ id, mailFailedTo }) => ({ id, mailFailedTo }))).toEqual([
+        { id: failedEvent.id, mailFailedTo: role === 'DEVELOPER' ? ['a@example.com', 'z@example.com'] : [] },
+        { id: pendingEvent.id, mailFailedTo: [] },
+      ]);
+    },
+  );
+
+  it('다른 프로젝트의 개발자여도 조회할 프로젝트에서 CLIENT이면 실패 주소를 숨긴다', async () => {
+    const event = await prisma.activityEvent.create({
+      data: { projectId: otherProjectId, actorId: outsiderId, type: 'VERSION_PUBLISHED' },
+    });
+    await prisma.notificationDelivery.create({
+      data: { eventId: event.id, toEmail: 'client@example.com', status: 'FAILED', attempts: 5 },
+    });
+
+    const developerEvents = await service.listForMember(otherProjectId, outsiderId);
+    const clientEvents = await service.listForMember(otherProjectId, developerId);
+
+    expect(developerEvents).toHaveLength(1);
+    expect(developerEvents[0].mailFailedTo).toEqual(['client@example.com']);
+    expect(clientEvents).toEqual(developerEvents.map((item) => ({ ...item, mailFailedTo: [] })));
+  });
 
   it('listForMember의 actorName은 조회한 사람이나 다른 프로젝트 개발자가 아닌 사건을 일으킨 사람 이름이다', async () => {
     const event = await prisma.activityEvent.create({
@@ -592,6 +660,7 @@ describe('ActivityService', () => {
         type: 'VERSION_PUBLISHED',
         createdAt: event.createdAt,
         actorName: '다른 개발자',
+        mailFailedTo: [],
         issue: null,
         memberName: null,
         version: null,

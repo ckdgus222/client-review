@@ -826,6 +826,7 @@ describe('승인 API (e2e)', () => {
         type: 'VERSION_APPROVED',
         actorName: firstClient.name,
         createdAt: events[0].createdAt.toISOString(),
+        mailFailedTo: [],
         version: { id: versionId, number: 1 },
         issue: null,
         memberName: null,
