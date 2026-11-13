@@ -54,9 +54,9 @@ const describeFailure = (error: SubmitError, phase: 'load' | 'approve') => {
     : '승인 검토를 불러오지 못했어요. 연결을 확인하고 다시 불러와 주세요'
 }
 
-type IssueRowsProps = { issues: ApprovalCheckIssue[]; onOpenIssue?: (issueId: string) => void }
+type IssueRowsProps = { issues: ApprovalCheckIssue[]; disabled: boolean; onOpenIssue?: (issueId: string) => void }
 
-const IssueRows = ({ issues, onOpenIssue }: IssueRowsProps) => (
+const IssueRows = ({ issues, disabled, onOpenIssue }: IssueRowsProps) => (
   <ul className={styles.issues}>
     {issues.map((issue) => (
       <li key={issue.id}>
@@ -65,6 +65,7 @@ const IssueRows = ({ issues, onOpenIssue }: IssueRowsProps) => (
             type="button"
             className={styles.link}
             aria-label={`쪽지 #${issue.number} 열기`}
+            disabled={disabled}
             onClick={() => onOpenIssue(issue.id)}
           >
             #{issue.number}
@@ -79,10 +80,15 @@ const IssueRows = ({ issues, onOpenIssue }: IssueRowsProps) => (
   </ul>
 )
 
-type CheckListsProps = { check: ApprovalCheck; onOpenIssue?: (issueId: string) => void }
+type CheckListsProps = {
+  check: ApprovalCheck
+  // 승인을 보내는 중인가. 그동안에는 쪽지 번호를 누를 수 없다. 누르면 창이 닫혀서 승인 결과 안내를 놓친다.
+  sending: boolean
+  onOpenIssue?: (issueId: string) => void
+}
 
 // 승인자가 승인하기 전에 훑어보는 세 목록: 끝나지 않은 쪽지, 범위 밖 쪽지, 이번 차수의 댓글.
-const CheckLists = ({ check, onOpenIssue }: CheckListsProps) => {
+const CheckLists = ({ check, sending, onOpenIssue }: CheckListsProps) => {
   const { unresolved, outOfScope, comments } = check
   const hasIssues = unresolved.length > 0 || outOfScope.length > 0
 
@@ -93,7 +99,7 @@ const CheckLists = ({ check, onOpenIssue }: CheckListsProps) => {
       {unresolved.length > 0 ? (
         <section className={styles.section} aria-label="끝나지 않은 쪽지">
           <h3>아직 끝나지 않은 쪽지가 {unresolved.length}개 있어요</h3>
-          <IssueRows issues={unresolved} onOpenIssue={onOpenIssue} />
+          <IssueRows issues={unresolved} disabled={sending} onOpenIssue={onOpenIssue} />
         </section>
       ) : (
         <p>끝나지 않은 쪽지가 없어요.</p>
@@ -101,7 +107,7 @@ const CheckLists = ({ check, onOpenIssue }: CheckListsProps) => {
       {outOfScope.length > 0 && (
         <section className={styles.section} aria-label="범위 밖 쪽지">
           <h3>범위 밖(추가 요청) 쪽지 {outOfScope.length}개는 이번 승인에서 빼요</h3>
-          <IssueRows issues={outOfScope} onOpenIssue={onOpenIssue} />
+          <IssueRows issues={outOfScope} disabled={sending} onOpenIssue={onOpenIssue} />
         </section>
       )}
       <section className={styles.section} aria-label="이번 차수의 댓글">
@@ -266,7 +272,7 @@ export const ApprovalReview = ({
     <Modal title={`${label} 승인 검토`} onClose={sending ? () => {} : onClose}>
       <div className={styles.review}>
         {isLoading && <p role="status">승인 검토를 불러오는 중이에요</p>}
-        {check && <CheckLists check={check} onOpenIssue={onOpenIssue} />}
+        {check && <CheckLists check={check} sending={sending} onOpenIssue={onOpenIssue} />}
         <div className={styles.footer}>
           {loadError && errorText(loadError, 'load')}
           {approveError && errorText(approveError, 'approve')}

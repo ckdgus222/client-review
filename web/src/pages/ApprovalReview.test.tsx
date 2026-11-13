@@ -362,6 +362,33 @@ describe('ApprovalReview', () => {
     expect(props.onNotApprover).not.toHaveBeenCalled()
   })
 
+  it('범위 밖 쪽지 번호는 확인 단계에서 열 수 있고 승인 전송 중에는 잠기며 실패하면 다시 열린다', async () => {
+    const request = pending<VersionDetail>()
+    vi.mocked(getApprovalCheck).mockResolvedValue({ ...emptyCheck, outOfScope })
+    vi.mocked(approveVersion).mockReturnValueOnce(request.promise)
+    const { props } = renderReview()
+    await screen.findByRole('button', { name: '쪽지 #15 열기' })
+    await click('승인하기')
+
+    expect(button('쪽지 #15 열기').disabled).toBe(false)
+    expect(approveVersion).not.toHaveBeenCalled()
+    await click('승인 확정')
+
+    expect(approveVersion).toHaveBeenCalledExactlyOnceWith(version.id, emptyCheck.serverTime)
+    expect(button('쪽지 #15 열기').disabled).toBe(true)
+    await click('쪽지 #15 열기')
+    expect(props.onOpenIssue).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: '2차 승인 검토' })).toBeDefined()
+
+    await act(async () => request.reject(new TypeError('Failed to fetch')))
+
+    expect(screen.queryByText(confirmation)).toBeNull()
+    expect(button('승인하기').disabled).toBe(false)
+    expect(button('쪽지 #15 열기').disabled).toBe(false)
+    await click('쪽지 #15 열기')
+    expect(props.onOpenIssue).toHaveBeenCalledExactlyOnceWith(outOfScope[0].id)
+  })
+
   it('새 댓글로 거절되면 지난 목록을 치우고 새 댓글과 새 서버 시각을 받아 다시 승인한다', async () => {
     const reload = pending<ApprovalCheck>()
     const refreshed = {

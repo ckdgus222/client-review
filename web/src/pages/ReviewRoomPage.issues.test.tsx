@@ -5214,6 +5214,28 @@ describe('ReviewRoomPage 승인 연결', () => {
     },
   )
 
+  it('승인을 보내는 동안 쪽지 번호를 눌러도 창이 남고 주소의 쪽지가 바뀌지 않는다', async () => {
+    const pending = deferred<VersionDetail>()
+    vi.mocked(getApprovalCheck).mockResolvedValue({ ...check, outOfScope: [productIssue] })
+    vi.mocked(approveVersion).mockReturnValueOnce(pending.promise)
+    await renderRoom(`?issue=${cartIssue.id}`)
+    await openApproval()
+    await approve()
+
+    expect(approveVersion).toHaveBeenCalledExactlyOnceWith(current.id, check.serverTime)
+    expect(modal().getByRole<HTMLButtonElement>('button', { name: '쪽지 #1 열기' }).disabled).toBe(true)
+    await click('쪽지 #1 열기')
+
+    expect(screen.getByRole('dialog', { name: '1차 승인 검토' })).toBeTruthy()
+    expect(queryParams().get('issue')).toBe(cartIssue.id)
+    expect(screen.getByRole('article', { name: '쪽지 #2' })).toBeTruthy()
+
+    await act(async () => pending.resolve(approved))
+
+    expect(screen.getByRole('dialog', { name: '1차 승인 완료' })).toBeTruthy()
+    expect(queryParams().get('issue')).toBe(cartIssue.id)
+  })
+
   it('목록에 있는 승인 검토 쪽지 번호를 누르면 창을 닫고 그 쪽지를 바로 연다', async () => {
     vi.mocked(getApprovalCheck).mockResolvedValue({ ...check, unresolved: [productIssue] })
     await renderRoom()

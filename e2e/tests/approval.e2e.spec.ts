@@ -979,3 +979,32 @@ test('승인이 활동 일지에 보이고 누르면 그 버전이 열린다', a
   await expect(page.getByText('승인됨', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '버전 승인', exact: true })).toHaveCount(0)
 })
+
+test('승인을 보내는 동안에는 쪽지 번호를 눌러도 승인 검토 창이 닫히지 않고 승인 완료가 보인다', async ({ page, loginAs }) => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room)
+  await db.issue.update({ where: { id: issue.id }, data: { scope: 'OUT_OF_SCOPE' } })
+  await loginAs(room.approver.id)
+  await openRoom(page, room)
+  await openApproval(page)
+  const issueButton = dialog(page).getByRole('button', { name: `쪽지 #${issue.number} 열기`, exact: true })
+  await expect(issueButton).toBeEnabled()
+  const roomUrl = page.url()
+  const held = await holdResponse(page, `versions/${room.version.id}/approve`)
+  try {
+    await confirmApproval(page)
+    await held.received
+    await expect(issueButton).toBeDisabled()
+    await issueButton.click({ force: true })
+
+    await expect(dialog(page)).toBeVisible()
+    await expect(dialog(page)).toHaveAccessibleName('초안 승인 검토')
+    await expect(page).toHaveURL(roomUrl)
+
+    held.release()
+    await expect(dialog(page)).toHaveAccessibleName('초안 승인 완료')
+    await expect(dialog(page).getByText('초안이 승인됐어요', { exact: false })).toBeVisible()
+  } finally {
+    held.release()
+  }
+})
