@@ -4,11 +4,11 @@ import App from './App.tsx'
 import { getVersion, listVersions } from './api/versions.ts'
 import { getMe } from './api/auth.ts'
 import { getProject, listProjects, listScreens } from './api/projects.ts'
-import { listIssues } from './api/issues.ts'
+import { getIssue, listIssues } from './api/issues.ts'
 
 vi.mock('./api/issues.ts', async () => {
   const actual = await vi.importActual<typeof import('./api/issues.ts')>('./api/issues.ts')
-  return { ...actual, listIssues: vi.fn() }
+  return { ...actual, listIssues: vi.fn(), getIssue: vi.fn() }
 })
 
 vi.mock('./api/auth.ts', async () => {
@@ -34,6 +34,7 @@ const user = {
 }
 
 beforeEach(() => {
+  vi.mocked(getIssue).mockReset()
   vi.mocked(listIssues).mockReset().mockResolvedValue([])
   vi.mocked(listVersions).mockReset().mockResolvedValue([])
   vi.mocked(getVersion).mockReset()
@@ -44,6 +45,49 @@ beforeEach(() => {
 })
 
 describe('App', () => {
+  it.each(['/', '/app'])('basename이 %s이면 쪽지 비교 주소에 비교 화면을 그린다', async (basename) => {
+    const id = '11111111-1111-4111-8111-111111111111'
+    const projectId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    const prefix = basename === '/' ? '' : basename
+    vi.mocked(getMe).mockResolvedValueOnce(user)
+    vi.mocked(getIssue).mockResolvedValueOnce({
+      id,
+      projectId,
+      number: 14,
+      title: '비교할 쪽지',
+      body: '고친 화면을 확인해 주세요',
+      status: 'OPEN',
+      category: 'BUG',
+      scope: 'IN_SCOPE',
+      dueDate: null,
+      authorName: '김수정',
+      createdAt: '2026-11-12T00:00:00.000Z',
+      commentCount: 0,
+      originVersion: { id: '22222222-2222-4222-8222-222222222222', number: 1 },
+      origin: null,
+      isMine: true,
+      canReview: true,
+      attempts: [],
+      attachments: [],
+      comments: [],
+    })
+    render(
+      <MemoryRouter basename={basename} initialEntries={[`${prefix}/issues/${id}/compare`]}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    const main = within(screen.getByRole('main'))
+    expect(await main.findByRole('heading', { level: 1, name: '#14 비교할 쪽지' })).toBeDefined()
+    expect(main.getByText('비교할 사진이 없어요.')).toBeDefined()
+    expect(main.getByRole('link', { name: '검수실로 돌아가기' }).getAttribute('href')).toBe(
+      `${prefix}/projects/${projectId}?issue=${id}`,
+    )
+    expect(getIssue).toHaveBeenCalledExactlyOnceWith(id)
+    expect(screen.queryByRole('heading', { name: '없는 화면이에요' })).toBeNull()
+    expect(within(screen.getByRole('banner')).getByText('Client Review')).toBeDefined()
+  })
+
   it.each(['/', '/app'])('basename이 %s이면 프로젝트 설정 주소에 설정 화면을 그린다', async (basename) => {
     const project = {
       id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
