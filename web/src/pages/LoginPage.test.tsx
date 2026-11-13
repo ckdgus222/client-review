@@ -25,6 +25,8 @@ const renderLogin = () =>
   )
 
 const enterCodeStep = async () => {
+  const consent = screen.getByRole<HTMLInputElement>('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)' })
+  if (!consent.checked) fireEvent.click(consent)
   fireEvent.change(screen.getByLabelText('이메일'), { target: { value: email } })
   fireEvent.click(screen.getByRole('button', { name: '코드 받기' }))
   return screen.findByLabelText<HTMLInputElement>('로그인 코드')
@@ -155,6 +157,7 @@ describe('LoginPage 요청 중 입력 잠금', () => {
     renderLogin()
     const emailInput = screen.getByLabelText<HTMLInputElement>('이메일')
     expect(emailInput.disabled).toBe(false)
+    fireEvent.click(screen.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)' }))
     fireEvent.change(emailInput, { target: { value: email } })
     fireEvent.click(screen.getByRole('button', { name: '코드 받기' }))
 
@@ -254,6 +257,8 @@ describe('LoginPage 요청 중 입력 잠금', () => {
     '$step 요청 중 입력을 잠그고 $message 응답 뒤 수정과 재시도를 허용한다',
     async ({ step, error, message }) => {
       renderLogin()
+      if (step === 'email')
+        fireEvent.click(screen.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)' }))
       if (step === 'code') await enterCodeStep()
       if (step === 'name') await enterNameStep()
       const label = { email: '이메일', code: '로그인 코드', name: '이름' }[step]
@@ -374,6 +379,7 @@ describe('LoginPage', () => {
         }),
     )
     renderLogin()
+    fireEvent.click(screen.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)' }))
     fireEvent.change(screen.getByLabelText('이메일'), { target: { value: email } })
     const submit = screen.getByRole<HTMLButtonElement>('button', { name: '코드 받기' })
     fireEvent.click(submit)
@@ -434,6 +440,7 @@ describe('LoginPage', () => {
   it('Enter가 일으키는 form submit으로 이메일, 코드, 이름을 차례로 보낼 수 있다', async () => {
     renderLogin()
     const emailInput = screen.getByLabelText<HTMLInputElement>('이메일')
+    fireEvent.click(screen.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)' }))
     fireEvent.change(emailInput, { target: { value: email } })
     // jsdom은 Enter의 기본 제출 동작을 재현하지 않아 submit 이벤트를 직접 보낸다.
     fireEvent.submit(emailInput.form!)
@@ -459,6 +466,7 @@ describe('LoginPage', () => {
       vi.mocked(requestCode).mockRejectedValueOnce(new ApiError(422, 'SOMETHING_NEW'))
       renderLogin()
       const input = screen.getByLabelText<HTMLInputElement>('이메일')
+      fireEvent.click(screen.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)' }))
       fireEvent.change(input, { target: { value: email } })
       fireEvent.click(screen.getByRole('button', { name: '코드 받기' }))
 
@@ -492,6 +500,7 @@ describe('LoginPage', () => {
       vi.mocked(requestCode).mockRejectedValueOnce(error)
       renderLogin()
       const input = screen.getByLabelText<HTMLInputElement>('이메일')
+      fireEvent.click(screen.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)' }))
       fireEvent.change(input, { target: { value } })
       fireEvent.click(screen.getByRole('button', { name: '코드 받기' }))
 
@@ -628,6 +637,8 @@ describe('LoginPage', () => {
     '%s 단계에서 재제출하면 오류를 지우고 응답 전까지 버튼을 잠가 중복 클릭을 막는다',
     async (step) => {
       renderLogin()
+      if (step === 'email')
+        fireEvent.click(screen.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)' }))
       if (step === 'code') await enterCodeStep()
       if (step === 'name') await enterNameStep()
       const label = { email: '이메일', code: '로그인 코드', name: '이름' }[step]
@@ -748,4 +759,77 @@ describe('LoginPage', () => {
       expect(screen.queryByText('첫 화면')).toBeNull()
     },
   )
+})
+
+describe('LoginPage 개인정보 동의', () => {
+  it.each(['버튼', 'Enter'] as const)(
+    '동의하지 않고 %s로 제출하면 요청 없이 동의 오류를 보여 준다',
+    async (submitBy) => {
+      renderLogin()
+      const emailInput = screen.getByLabelText<HTMLInputElement>('이메일')
+      const consent = screen.getByRole<HTMLInputElement>('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)' })
+      const submit = screen.getByRole<HTMLButtonElement>('button', { name: '코드 받기' })
+      expect(consent.checked).toBe(false)
+      expect(submit.disabled).toBe(false)
+      fireEvent.change(emailInput, { target: { value: email } })
+
+      if (submitBy === '버튼') fireEvent.click(submit)
+      if (submitBy === 'Enter') fireEvent.submit(emailInput.form!)
+
+      const errorText = screen.getByText('개인정보 수집·이용에 동의해 주세요')
+      expect(consent.compareDocumentPosition(errorText) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+      expect(requestCode).not.toHaveBeenCalled()
+      expect(verifyCode).not.toHaveBeenCalled()
+      expect(emailInput.value).toBe(email)
+      expect(screen.queryByLabelText('로그인 코드')).toBeNull()
+
+      fireEvent.click(consent)
+      expect(screen.queryByText('개인정보 수집·이용에 동의해 주세요')).toBeNull()
+      fireEvent.click(submit)
+
+      await screen.findByLabelText('로그인 코드')
+      expect(requestCode).toHaveBeenCalledExactlyOnceWith(email)
+      expect(screen.queryByRole('checkbox')).toBeNull()
+    },
+  )
+
+  it.each(['code', 'name'] as const)(
+    '%s 단계에서 이메일로 돌아오면 동의를 유지하고 해제하면 다시 요청을 막는다',
+    async (step) => {
+      renderLogin()
+      if (step === 'code') await enterCodeStep()
+      if (step === 'name') await enterNameStep()
+      expect(screen.queryByRole('checkbox')).toBeNull()
+      expect(screen.queryByRole('link', { name: '개인정보처리방침 보기' })).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: '이메일 다시 입력' }))
+
+      const consent = screen.getByRole<HTMLInputElement>('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)' })
+      expect(consent.checked).toBe(true)
+      expect(screen.getByLabelText<HTMLInputElement>('이메일').value).toBe(email)
+      fireEvent.click(consent)
+      fireEvent.click(screen.getByRole('button', { name: '코드 받기' }))
+      expect(screen.getByText('개인정보 수집·이용에 동의해 주세요')).toBeDefined()
+      expect(requestCode).toHaveBeenCalledTimes(1)
+
+      fireEvent.click(consent)
+      fireEvent.click(screen.getByRole('button', { name: '코드 받기' }))
+      await screen.findByLabelText('로그인 코드')
+      expect(requestCode).toHaveBeenCalledTimes(2)
+    },
+  )
+
+  it('동의 옆 방침은 새 탭 링크이고 아래 약관 메뉴는 각 문서 주소를 가리킨다', () => {
+    renderLogin()
+    const privacy = screen.getByRole('link', { name: '개인정보처리방침 보기' })
+    expect(privacy.getAttribute('href')).toBe('/privacy')
+    expect(privacy.getAttribute('target')).toBe('_blank')
+    const legal = screen.getByRole('navigation', { name: '약관' })
+    const privacyLink = screen.getByRole('link', { name: '개인정보처리방침' })
+    const termsLink = screen.getByRole('link', { name: '이용약관' })
+    expect(legal.contains(privacyLink)).toBe(true)
+    expect(legal.contains(termsLink)).toBe(true)
+    expect(privacyLink.getAttribute('href')).toBe('/privacy')
+    expect(termsLink.getAttribute('href')).toBe('/terms')
+  })
 })

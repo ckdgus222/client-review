@@ -18,3 +18,43 @@
 .form > p {
   margin: 0;
 }
+
+/* 동의 체크와 방침 링크. 체크 칸과 글을 한 줄에 두고, 링크와 오류는 그 아래에 둔다. */
+.consent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+}
+
+/* 글자까지 눌러도 체크되는 label을 44px 높이로 둔다(IssueFilters의 체크 칸과 같은 방법). */
+.consent label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+}
+
+.consent input {
+  margin: 0;
+}
+
+.consent p {
+  margin: 0;
+}
+
+/* 판 맨 아래의 방침·약관 링크. 주 동작과 떨어뜨려 작게 둔다. */
+.legal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+/* 손가락으로 누르기 쉽게 높이를 44px로 키운다(ReviewRoomPage의 링크와 같다). */
+.consent a,
+.legal a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}

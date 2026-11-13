@@ -1,7 +1,8 @@
-# nginx 이미지는 web과 nginx 폴더만 쓴다. 전부 뺀 뒤 쓰는 폴더만 허용해서,
+# nginx 이미지는 web, nginx, landing 폴더만 쓴다. 전부 뺀 뒤 쓰는 폴더만 허용해서,
 # 새로 생기는 파일(비밀값 .env 등)이 저절로 이미지에 들어가지 않게 한다.
 *
 !web
 !nginx
+!landing
 **/node_modules
 **/dist

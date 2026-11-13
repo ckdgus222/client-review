@@ -32,6 +32,7 @@ test('로그인 화면에서 이메일과 코드를 넣으면 프로젝트 목�
   const codeResponsePromise = page.waitForResponse(
     (response) => new URL(response.url()).pathname === '/api/auth/email-code' && response.request().method() === 'POST',
   )
+  await page.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)', exact: true }).check()
   await page.getByRole('button', { name: '코드 받기', exact: true }).click()
   const codeResponse = await codeResponsePromise
   expect(codeResponse.ok()).toBe(true)

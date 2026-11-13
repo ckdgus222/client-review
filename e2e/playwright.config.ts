@@ -7,6 +7,12 @@ import { assertTestDatabaseUrl } from '../api/test/test-database-url.ts'
 const API_PORT = 4101
 const WEB_PORT = 5174
 const WEB_ORIGIN = `http://localhost:${WEB_PORT}`
+// 소개·약관 테스트는 배포와 같은 nginx 이미지(nginx/Dockerfile과 같은 판)로 띄운다(docs/landing.md 정할 것 3). 앱·api도 이 주소로 넘겨서
+// 소개 → 로그인 → 방침을 한 주소에서 실제로 눌러 간다.
+const NGINX_PORT = 4103
+const NGINX_ORIGIN = `http://localhost:${NGINX_PORT}`
+const NGINX_CONTAINER = 'client-review-e2e-nginx'
+const repoPath = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url))
 
 // api 테스트(vitest.config.ts)와 같은 방법으로 루트 .env를 읽는다. 이미 있는 환경 변수는 덮지 않는다.
 const envFile = fileURLToPath(new URL('../.env', import.meta.url))
@@ -46,7 +52,8 @@ export default defineConfig({
       timeout: 120_000,
       env: {
         PORT: String(API_PORT),
-        APP_ORIGINS: WEB_ORIGIN,
+        // nginx 주소(4103)에서 연 로그인 화면의 요청도 다른 사이트 요청 막기(OriginGuard)를 통과해야 한다.
+        APP_ORIGINS: `${WEB_ORIGIN},${NGINX_ORIGIN}`,
         // 서버가 뒤에 /app/invite/<토큰>을 붙인다. 브라우저가 여는 앱 주소(/app/)와 다르다.
         APP_URL: WEB_ORIGIN,
         ASSET_DIR: fileURLToPath(new URL('./.assets', import.meta.url)),
@@ -55,11 +62,28 @@ export default defineConfig({
       },
     },
     {
-      command: `npm run dev -- --port ${WEB_PORT} --strictPort`,
+      // Vite는 localhost를 IPv6(::1)로만 연다. Docker 안의 nginx는 맥의 IPv4 루프백에만 닿아서 127.0.0.1로 연다.
+      command: `npm run dev -- --host 127.0.0.1 --port ${WEB_PORT} --strictPort`,
       cwd: '../web',
       url: `${WEB_ORIGIN}/app/`,
       reuseExistingServer: false,
       env: { API_PROXY_TARGET: `http://localhost:${API_PORT}` },
+    },
+    {
+      // 지난 실행이 남긴 컨테이너를 먼저 지운다. 끝낼 때는 SIGTERM을 docker가 컨테이너로 넘기고 --rm이 지운다.
+      command: [
+        `docker rm -f ${NGINX_CONTAINER} >/dev/null 2>&1;`,
+        // 127.0.0.1에만 연다. 모든 주소로 열면 같은 망의 다른 기기가 nginx를 거쳐 개발 서버에 닿는다.
+        `exec docker run --rm --name ${NGINX_CONTAINER} -p 127.0.0.1:${NGINX_PORT}:80`,
+        '--add-host=host.docker.internal:host-gateway',
+        `-v ${repoPath('landing')}:/usr/share/nginx/html:ro`,
+        `-v ${repoPath('nginx/landing.conf')}:/etc/nginx/landing.conf:ro`,
+        `-v ${repoPath('e2e/nginx.e2e.conf')}:/etc/nginx/conf.d/default.conf:ro`,
+        'nginx:1.30-alpine',
+      ].join(' '),
+      url: `${NGINX_ORIGIN}/`,
+      reuseExistingServer: false,
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 },
     },
   ],
 })

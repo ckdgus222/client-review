@@ -17,6 +17,8 @@ model User {
   name              String
   // 마지막 접속 시각. 로그인할 때 적고, 세션을 쓸 때 5분에 한 번 고친다. 로그아웃으로 세션 줄이 지워져도 남는다.
   lastSeenAt        DateTime?           @map("last_seen_at") @db.Timestamptz
+  // 마지막으로 개인정보 수집·이용에 동의하고 로그인한 시각(docs/landing.md 정할 것 6). 로그인할 때마다 적는다.
+  privacyAgreedAt   DateTime?           @map("privacy_agreed_at") @db.Timestamptz
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz
   sessions          Session[]
   memberships       ProjectMember[]
@@ -40,6 +42,8 @@ model LoginCode {
   usedAt    DateTime? @map("used_at") @db.Timestamptz
   // 이 코드를 발급한 시각. 새 코드로 덮어쓸 때 함께 바꾸고, 60초 다시 보내기 검사에 쓴다.
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  // 동의하고 요청한 코드인가. 기본값 false라서 동의 기능 전에 만든 코드는 로그인에 쓸 수 없다.
+  privacyAgreed Boolean @default(false) @map("privacy_agreed")
 
   @@map("login_codes")
 }

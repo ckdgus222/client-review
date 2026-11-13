@@ -1,9 +1,9 @@
 import { Transform } from 'class-transformer';
 import { IsOptional, Length, Matches } from 'class-validator';
-import { RequestCodeDto } from './request-code.dto.js';
+import { EmailDto } from './request-code.dto.js';
 
-// 이메일 규칙은 코드를 받을 때와 같아야 같은 줄을 찾는다. 그래서 물려받는다.
-export class VerifyCodeDto extends RequestCodeDto {
+// 동의는 코드를 받을 때 끝나서 여기서 다시 받지 않는다.
+export class VerifyCodeDto extends EmailDto {
   // 앞자리가 0일 수 있어서 숫자가 아니라 6글자 문자열로 받는다.
   @Matches(/^\d{6}$/)
   code: string;

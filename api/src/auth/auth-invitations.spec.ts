@@ -49,8 +49,8 @@ describe('AuthService 초대에 따른 메일·가입 제한', () => {
 
   const createLoginCode = async () => {
     await prisma.$executeRaw`
-      INSERT INTO login_codes (email, code_hash, expires_at)
-      VALUES (${email}, ${codeHash}, now() + interval '10 minutes')
+      INSERT INTO login_codes (email, code_hash, expires_at, privacy_agreed)
+      VALUES (${email}, ${codeHash}, now() + interval '10 minutes', true)
     `;
   };
 

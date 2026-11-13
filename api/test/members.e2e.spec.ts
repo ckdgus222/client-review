@@ -164,7 +164,7 @@ describe('참여자 API (e2e)', () => {
 
   it('마지막 접속은 로그인하면 바로 적히고 5분이 지난 요청에서만 고쳐지며 로그아웃해도 남는다', async () => {
     expect((await prisma.user.findUniqueOrThrow({ where: { id: client.id } })).lastSeenAt).toBeNull();
-    await post('/api/auth/email-code').send({ email: client.email }).expect(204);
+    await post('/api/auth/email-code').send({ email: client.email, privacyAgreed: true }).expect(204);
     expect(sendLoginCode).toHaveBeenCalledExactlyOnceWith(client.email, expect.stringMatching(/^\d{6}$/));
     const code = sendLoginCode.mock.calls[0][1];
     const [loginStart] = await prisma.$queryRaw<{ now: Date }[]>`SELECT clock_timestamp() AS now`;

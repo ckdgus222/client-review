@@ -805,7 +805,10 @@ describe('알림 우편함 (e2e)', () => {
       await release.promise;
     });
     try {
-      await post('/api/auth/email-code').send({ email: client.email }).timeout({ deadline: 2_000 }).expect(204);
+      await post('/api/auth/email-code')
+        .send({ email: client.email, privacyAgreed: true })
+        .timeout({ deadline: 2_000 })
+        .expect(204);
       expect(mails).toHaveLength(1);
       const code = mails[0].text.match(/\b\d{6}\b/)?.[0];
       expect(code).toMatch(/^\d{6}$/);
@@ -817,14 +820,17 @@ describe('알림 우편함 (e2e)', () => {
         mails.push(mail);
         throw new Error(mail.text);
       });
-      await post('/api/auth/email-code').send({ email: approver.email }).timeout({ deadline: 2_000 }).expect(204);
+      await post('/api/auth/email-code')
+        .send({ email: approver.email, privacyAgreed: true })
+        .timeout({ deadline: 2_000 })
+        .expect(204);
       await vi.waitFor(() => expect(logs.join('\n')).toContain(approver.email));
       const secondCode = mails[1].text.match(/\b\d{6}\b/)?.[0];
       expect(secondCode).toMatch(/^\d{6}$/);
       expect(logs.join('\n')).not.toContain(secondCode);
       expect(logs.join('\n')).toContain('메일을 보내지 못했어요');
       await post('/api/auth/email-code')
-        .send({ email: 'unknown@example.com' })
+        .send({ email: 'unknown@example.com', privacyAgreed: true })
         .timeout({ deadline: 2_000 })
         .expect(204);
       expect(send).toHaveBeenCalledTimes(2);

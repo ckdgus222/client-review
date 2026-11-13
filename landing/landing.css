@@ -1,0 +1,109 @@
+/* 소개·방침·약관·404 페이지가 같이 쓰는 모양. 빌드 없이 nginx가 그대로 보낸다.
+   색·간격은 web/src/styles/tokens.css와 같은 이름의 변수로 옮겨 적었다. 색을 바꿀 때 두 파일을 함께 고친다. */
+:root {
+  --color-text: #252525;
+  --color-text-muted: #6b6b6b;
+  --color-bg: #f7f7f5;
+  --color-surface: #ffffff;
+  --color-border: #e2e2df;
+  --color-accent: #252525;
+  --color-on-accent: #ffffff;
+
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.25rem;
+
+  --radius: 2px;
+  --font-family: system-ui, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  line-height: 1.5;
+  /* 긴 영어 주소나 이메일이 휴대폰 폭을 넘지 않게 줄을 바꾼다. */
+  overflow-wrap: anywhere;
+}
+
+a {
+  color: var(--color-accent);
+}
+
+/* 글 폭을 읽기 좋은 길이로 묶고, 휴대폰에서는 양옆 여백만 남긴다. */
+.page {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-3);
+}
+
+h1 {
+  font-size: 1.75rem;
+  line-height: 1.3;
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+h2 {
+  font-size: var(--font-size-lg);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.lead {
+  color: var(--color-text-muted);
+  margin: 0 0 var(--space-4);
+}
+
+/* 세 단계: 번호가 붙은 칸을 위아래로 쌓는다(넓은 화면에서도 같은 모양이라 따로 나누지 않는다). */
+.steps {
+  list-style: none;
+  counter-reset: step;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+}
+
+.steps li {
+  counter-increment: step;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.steps li::before {
+  content: counter(step) '. ';
+  font-weight: 700;
+}
+
+/* 앱의 기본 버튼(web/src/components/Button.module.css의 .button.primary)과 같은 값. 손가락으로 누르기 좋게 높이 44px. */
+.start {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  border-radius: var(--radius);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+}
