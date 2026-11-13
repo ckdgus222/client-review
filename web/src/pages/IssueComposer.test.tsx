@@ -19,6 +19,9 @@ const pin = {
   label: '상품 상세 · PC',
 }
 const saved: IssueDetail = {
+  projectId,
+  canReview: false,
+  attempts: [],
   id: '44444444-4444-4444-8444-444444444444',
   number: 1,
   title: '버튼을 옮겨 주세요',

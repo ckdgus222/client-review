@@ -1,0 +1,61 @@
+.page {
+  /* 사진 칸(PhotoCanvas)이 쓰는 안쪽 여백. 검수실 밖이라 여기서 정한다. 바깥 여백은 PageLayout이 준다. */
+  --gutter: var(--space-3);
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* 기본 바깥 여백이 gap에 더해지지 않게 지운다. */
+.page :where(h1, p) {
+  margin: 0;
+}
+
+/* 링크 글자만 눌리게 한다. */
+.page > a {
+  align-self: flex-start;
+}
+
+.heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.heading h1 {
+  font-size: var(--font-size-md);
+  overflow-wrap: anywhere;
+}
+
+/* 개발자가 줄을 나눠 쓴 설명을 그대로 보여 준다. */
+.summary {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 처음 사진과 고친 사진을 나란히 둔다. 긴 사진은 칸마다 따로 스크롤해서 같은 높이를 맞춰 볼 수 있다. */
+.photos {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+
+.pane {
+  max-height: 80vh;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  background: var(--color-canvas);
+}
+
+.empty {
+  padding: var(--space-4);
+}
+
+/* 좁은 화면에서는 위아래로 놓는다. */
+@media (max-width: 48rem) {
+  .photos {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

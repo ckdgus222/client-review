@@ -21,11 +21,16 @@ import { projectNotFound } from '../projects/projects.service.js';
 import { CommentsService } from './comments.service.js';
 import { CreateCommentDto } from './dto/create-comment.dto.js';
 import { CreateIssueDto } from './dto/create-issue.dto.js';
+import { ReopenIssueDto } from './dto/reopen-issue.dto.js';
 import { StartIssueDto } from './dto/start-issue.dto.js';
+import { SubmitResolutionDto } from './dto/submit-resolution.dto.js';
 import { UpdateIssueDto } from './dto/update-issue.dto.js';
+import { VerifyIssueDto } from './dto/verify-issue.dto.js';
+import { WithdrawIssueDto } from './dto/withdraw-issue.dto.js';
 import { IssueAttachmentsService } from './issue-attachments.service.js';
 import { IssueTriageService } from './issue-triage.service.js';
 import { issueNotFound, IssuesService } from './issues.service.js';
+import { ResolutionService } from './resolution.service.js';
 
 // 틀린 모양의 id는 DB에 묻기 전에, 없는 프로젝트·쪽지와 같은 404로 끝낸다.
 const projectIdPipe = new ParseUUIDPipe({ exceptionFactory: projectNotFound });
@@ -40,6 +45,7 @@ export class IssuesController {
     private readonly comments: CommentsService,
     private readonly attachments: IssueAttachmentsService,
     private readonly triage: IssueTriageService,
+    private readonly resolution: ResolutionService,
   ) {}
 
   @Get('projects/:id/issues')
@@ -94,6 +100,50 @@ export class IssuesController {
   @HttpCode(HttpStatus.OK)
   start(@Req() request: AuthenticatedRequest, @Param('id', issueIdPipe) issueId: string, @Body() body: StartIssueDto) {
     return this.issues.start(issueId, request.user.id, body.versionId);
+  }
+
+  // 고쳤어요와 그 답(확인 완료, 재요청·다시 열기, 철회). 모두 쪽지의 상태를 바꾸는 것이라 200이고, 바뀐 쪽지 상세를 돌려준다.
+
+  // 개발자가 "고쳤어요"를 보낸다. 쪽지는 확인 요청이 된다.
+  @Post('issues/:id/submit-resolution')
+  @HttpCode(HttpStatus.OK)
+  submitResolution(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', issueIdPipe) issueId: string,
+    @Body() body: SubmitResolutionDto,
+  ) {
+    return this.resolution.submit(issueId, request.user.id, body);
+  }
+
+  @Post('issues/:id/verify')
+  @HttpCode(HttpStatus.OK)
+  verify(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', issueIdPipe) issueId: string,
+    @Body() body: VerifyIssueDto,
+  ) {
+    return this.resolution.verify(issueId, request.user.id, body);
+  }
+
+  // 확인 요청을 돌려보내는 재요청과, 끝난 쪽지를 다시 여는 것이 같은 주소다(attemptId가 있으면 재요청).
+  @Post('issues/:id/reopen')
+  @HttpCode(HttpStatus.OK)
+  reopen(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', issueIdPipe) issueId: string,
+    @Body() body: ReopenIssueDto,
+  ) {
+    return this.resolution.reopen(issueId, request.user.id, body);
+  }
+
+  @Post('issues/:id/withdraw')
+  @HttpCode(HttpStatus.OK)
+  withdraw(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', issueIdPipe) issueId: string,
+    @Body() body: WithdrawIssueDto,
+  ) {
+    return this.resolution.withdraw(issueId, request.user.id, body);
   }
 
   // file 칸의 사진 한 장을 메모리(Buffer)에 받는다. 20 MiB를 넘으면 multer가 멈추고 Nest가 413으로 바꾼다(버전 화면 사진과 같다).

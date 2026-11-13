@@ -13,6 +13,9 @@ vi.mock('../api/issues.ts', async (importOriginal) => ({
 const versionId = '22222222-2222-4222-8222-222222222222'
 const latestVersionId = '33333333-3333-4333-8333-333333333333'
 const issue: Issue = {
+  projectId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  canReview: false,
+  attempts: [],
   id: '11111111-1111-4111-8111-111111111111',
   number: 14,
   status: 'OPEN',
@@ -444,6 +447,63 @@ describe('IssueTriage', () => {
     expect(screen.queryByRole('alert')).toBeNull()
     expect(categoryInput().value).toBe(issue.category)
   })
+
+  it.each([
+    ['범위', '조회 먼저'],
+    ['범위', '실패 먼저'],
+    ['마감일 저장', '조회 먼저'],
+    ['마감일 저장', '실패 먼저'],
+  ] as const)('%s 저장에서 %s 처리하고 같은 화면 갱신에 묶여도 저장 여부 안내가 남는다', async (action, order) => {
+    const pending = deferred<Issue>()
+    vi.mocked(updateIssue).mockReturnValueOnce(pending.promise)
+    const { props, rerender } = renderTriage()
+    fillDate()
+    if (action === '범위') await select('범위', 'OUT_OF_SCOPE')
+    if (action === '마감일 저장') await click('마감일 저장')
+
+    await act(async () => {
+      if (order === '조회 먼저') rerender(<IssueTriage {...props} fetchCount={4} />)
+      pending.reject(new TypeError('Failed to fetch'))
+      // 저장 요청의 catch까지 처리하되, 화면 갱신은 이 act 끝까지 묶는다.
+      await Promise.resolve()
+      if (order === '실패 먼저') rerender(<IssueTriage {...props} fetchCount={4} />)
+    })
+
+    expect(screen.getByRole('alert').textContent).toBe(unconfirmedMessage)
+    expect(props.onRefresh).toHaveBeenCalledExactlyOnceWith()
+    expect(props.onChanged).not.toHaveBeenCalled()
+    expect(updateIssue).toHaveBeenCalledExactlyOnceWith(
+      issue.id,
+      versionId,
+      action === '범위' ? { scope: 'OUT_OF_SCOPE' } : { dueDate: '2026-11-20' },
+    )
+
+    rerender(<IssueTriage {...props} fetchCount={4} issue={{ ...issue }} />)
+    expect(screen.getByRole('alert').textContent).toBe(unconfirmedMessage)
+    rerender(<IssueTriage {...props} fetchCount={5} />)
+    expect(screen.queryByText(unconfirmedMessage)).toBeNull()
+    expect(dueDateInput().value).toBe('2026-11-20')
+    expect(props.onRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['범위', '마감일 저장'] as const)(
+    '%s 연결 실패를 그린 뒤 조회 횟수가 그대로면 안내가 남고 다음 성공에서만 사라진다',
+    async (action) => {
+      vi.mocked(updateIssue).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      const { props, rerender } = renderTriage()
+      fillDate()
+      if (action === '범위') await select('범위', 'OUT_OF_SCOPE')
+      if (action === '마감일 저장') await click('마감일 저장')
+      expect(screen.getByRole('alert').textContent).toBe(unconfirmedMessage)
+
+      rerender(<IssueTriage {...props} issue={{ ...issue }} />)
+      expect(screen.getByRole('alert').textContent).toBe(unconfirmedMessage)
+      rerender(<IssueTriage {...props} fetchCount={4} />)
+      expect(screen.queryByText(unconfirmedMessage)).toBeNull()
+      expect(props.onRefresh).toHaveBeenCalledExactlyOnceWith()
+      expect(props.onChanged).not.toHaveBeenCalled()
+    },
+  )
 
   it('요청 중 fetchCount가 올랐어도 실패 뒤에는 안내가 남고 그 뒤 한 번 더 올라야 사라진다', async () => {
     const pending = deferred<Issue>()

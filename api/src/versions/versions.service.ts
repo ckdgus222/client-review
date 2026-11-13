@@ -1,6 +1,13 @@
 import { ConflictException, ForbiddenException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { ActivityService } from '../activity/activity.service.js';
-import { ActivityType, Prisma, ProjectRole, VersionStatus, type Viewport } from '../generated/prisma/client.js';
+import {
+  ActivityType,
+  IssueStatus,
+  Prisma,
+  ProjectRole,
+  VersionStatus,
+  type Viewport,
+} from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 
@@ -121,6 +128,13 @@ export class VersionsService {
         data: { status: VersionStatus.IN_REVIEW, number: (_max.number ?? -1) + 1, publishedAt: new Date() },
       });
       await tx.project.update({ where: { id: projectId }, data: { currentVersionId: versionId } });
+      // 확인 요청 쪽지의 "고쳤어요"는 지난 버전의 화면을 가리킨다. 새 버전이 올라오면 그 화면은 옛것이라, 수정 중으로 돌려서
+      // 개발자가 새 버전의 화면으로 고쳤어요를 다시 보내게 한다. 고쳤어요 줄은 건드리지 않는다(결과 없이 남는다).
+      // 쪽지마다 일지를 남기지 않는다. 아래 게시 사건 하나면 된다.
+      await tx.issue.updateMany({
+        where: { projectId, status: IssueStatus.READY_FOR_REVIEW },
+        data: { status: IssueStatus.IN_PROGRESS },
+      });
       await this.activity.record(tx, { projectId, actorId: userId, type: ActivityType.VERSION_PUBLISHED, versionId });
       return this.loadDetail(versionId, tx);
     });

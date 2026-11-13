@@ -21,3 +21,29 @@
 .badge[data-status='IN_PROGRESS'] .dot {
   background: currentColor;
 }
+
+/* 확인 요청: 반만 채운 점. 고쳤고, 확인을 기다린다. */
+.badge[data-status='READY_FOR_REVIEW'] {
+  color: var(--color-review-selected);
+}
+
+.badge[data-status='READY_FOR_REVIEW'] .dot {
+  background: linear-gradient(to right, currentColor 50%, transparent 50%);
+}
+
+/* 확인 완료: 채운 네모. 끝난 쪽지는 동그라미가 아니라서 진행 중인 쪽지와 모양으로 갈린다. */
+.badge[data-status='VERIFIED'] .dot {
+  border-radius: 0;
+  background: currentColor;
+}
+
+/* 철회: 흐린 글자와 가로줄. 위쪽 테두리만 남겨 줄로 보이게 한다. */
+.badge[data-status='WITHDRAWN'] {
+  color: var(--color-text-muted);
+}
+
+.badge[data-status='WITHDRAWN'] .dot {
+  height: 0;
+  border-width: 1px 0 0;
+  border-radius: 0;
+}

@@ -33,6 +33,11 @@ const describe = ({ type, actorName, version, memberName, issue }: ActivityItem)
   const issueLabel = issue ? `#${issue.number} 쪽지` : '쪽지'
   if (type === 'ISSUE_CREATED') return `${actorName}님이 ${issueLabel}를 남겼어요`
   if (type === 'ISSUE_STARTED') return `${actorName}님이 ${issueLabel} 수정을 시작했어요`
+  if (type === 'RESOLUTION_SUBMITTED') return `${actorName}님이 ${issueLabel}에 고쳤어요를 보냈어요`
+  if (type === 'ISSUE_VERIFIED') return `${actorName}님이 ${issueLabel}를 확인 완료했어요`
+  // 확인 요청을 돌려보낸 재요청과 끝난 쪽지를 다시 연 것이 같은 사건이다. 사유는 쪽지의 댓글에 있다.
+  if (type === 'ISSUE_REOPENED') return `${actorName}님이 ${issueLabel}를 다시 열었어요`
+  if (type === 'ISSUE_WITHDRAWN') return `${actorName}님이 ${issueLabel}를 철회했어요`
   if (!version) return `${actorName}님이 버전을 게시했어요`
   // "초안을", "1차를"처럼 받침에 따라 조사가 다르다. 번호 0이 초안이다.
   const particle = version.number === 0 ? '을' : '를'

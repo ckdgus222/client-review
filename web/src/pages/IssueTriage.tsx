@@ -51,27 +51,29 @@ export const IssueTriage = ({
   // 보내는 중인 변경. 응답이 올 때까지 고르기 칸은 고른 값을 보여 주고, 입력은 모두 잠긴다(한 번에 하나만 보낸다).
   const [sending, setSending] = useState<IssueChange>()
   const [error, setError] = useState<SubmitError>()
-  // 연결이 끊기거나 서버 오류(5xx)로 저장됐는지 모르는 상태. 쪽지를 새로 받아 오면 풀린다.
-  const [unconfirmed, setUnconfirmed] = useState(false)
-  // 그릴 때마다 지금 횟수를 따라간다. 실패한 순간의 횟수를 기억하는 방식은 쓸 수 없다. 요청을 보낸 함수는 누른 때의
-  // 횟수만 알아서, 응답을 기다리는 사이 오른 횟수를 실패 뒤에 오른 것으로 잘못 본다.
-  const [seenFetchCount, setSeenFetchCount] = useState(fetchCount)
+  // 연결이 끊기거나 서버 오류(5xx)로 저장됐는지 모르는 실패가 난 뒤 처음 그릴 때의 fetchCount. 그런 실패가 없으면 undefined다.
+  // 그 뒤에 쪽지를 새로 받아 오면(fetchCount가 이 값에서 오르면) 안내가 걷힌다.
+  const [unconfirmedAt, setUnconfirmedAt] = useState<number>()
+  // 방금 그런 실패가 났다는 표시. 요청을 보낸 함수는 누른 때의 횟수만 알아서, 실패한 때의 횟수는 여기서 적지 못한다.
+  const [failedUnknown, setFailedUnknown] = useState(false)
   // 날짜 칸에 치던 날짜. 치지 않았으면(undefined) 지금 마감일을 보여 준다.
   const [dueDraft, setDueDraft] = useState<string>()
 
-  // 받은 횟수(fetchCount)가 올랐으면 안내를 거둔다. 받은 값이 바뀐 것을 그리는 중에 알아채 상태를 맞추는,
-  // React 문서가 effect 대신 권하는 방식이다(바로 다시 그려서 안내가 한 번도 잘못 보이지 않는다).
+  // 실패 뒤 처음 그릴 때 그때의 fetchCount를 적는다(그리는 중에 상태를 맞추는, React 문서가 effect 대신 권하는 방식).
+  // 실패보다 먼저 끝난 불러오기가 실패와 같은 화면 갱신에 묶여도, 그 몫이 이미 더해진 값이 적힌다. 그래서 그 불러오기가
+  // 방금 뜬 안내를 지우지 않고, 실패 뒤에 받아 온 쪽지만 안내를 거둔다(고쳤어요·확인하기의 useIssueRequest와 같은 규칙).
   // 쪽지 내용이 달라졌는지로 판단하지 않는다. 저장된 댓글은 서버에 다시 묻지 않고 화면에 바로 붙어서,
   // 새로 받아 오지 못했는데도 내용은 달라질 수 있다.
-  if (seenFetchCount !== fetchCount) {
-    setSeenFetchCount(fetchCount)
-    setUnconfirmed(false)
+  if (failedUnknown) {
+    setFailedUnknown(false)
+    setUnconfirmedAt(fetchCount)
   }
+  const unconfirmed = unconfirmedAt === fetchCount
 
   const send = async (change: IssueChange) => {
     setSending(change)
     setError(undefined)
-    setUnconfirmed(false)
+    setUnconfirmedAt(undefined)
     try {
       onChanged(await updateIssue(issue.id, versionId, change))
       if (change.dueDate !== undefined) setDueDraft(undefined)
@@ -82,7 +84,7 @@ export const IssueTriage = ({
         return
       }
       // 잠그지 않는다. 같은 값을 다시 보내도 서버가 지금 값과 비교해서, 이미 저장됐으면 기록이 두 번 남지 않는다.
-      setUnconfirmed(true)
+      setFailedUnknown(true)
       onRefresh()
     } finally {
       // 실패하면 고르기 칸이 서버가 아는 값으로 돌아간다. 날짜 칸에 친 날짜는 남는다.

@@ -2,13 +2,20 @@ import { apiDelete, apiGet, apiPatch, apiPost, apiPostForm } from './client.ts'
 import { screenLabel, type Viewport } from './projects.ts'
 import { versionLabel } from './versions.ts'
 
-// 확인 요청·확인 완료·철회는 6번 기능에서 생긴다.
-export type IssueStatus = 'OPEN' | 'IN_PROGRESS'
+// 접수 → 수정 중 → 확인 요청 → 확인 완료. 철회는 끝나기 전 어디서든 되고, 끝난 쪽지를 다시 열면 접수로 돌아간다.
+export type IssueStatus = 'OPEN' | 'IN_PROGRESS' | 'READY_FOR_REVIEW' | 'VERIFIED' | 'WITHDRAWN'
 
-export const ISSUE_STATUS_LABELS: Record<IssueStatus, string> = { OPEN: '접수', IN_PROGRESS: '수정 중' }
+// 적은 순서가 상태 필터의 선택지 순서다.
+export const ISSUE_STATUS_LABELS: Record<IssueStatus, string> = {
+  OPEN: '접수',
+  IN_PROGRESS: '수정 중',
+  READY_FOR_REVIEW: '확인 요청',
+  VERIFIED: '확인 완료',
+  WITHDRAWN: '철회',
+}
 
-// 아직 끝나지 않은 상태. 6번에서 확인 요청이 생기면 여기에 더하고, 확인 완료와 철회는 넣지 않는다.
-const UNRESOLVED: IssueStatus[] = ['OPEN', 'IN_PROGRESS']
+// 아직 끝나지 않은 상태. 확인 완료와 철회는 끝난 것이라 넣지 않는다.
+const UNRESOLVED: IssueStatus[] = ['OPEN', 'IN_PROGRESS', 'READY_FOR_REVIEW']
 export const isUnresolved = (status: IssueStatus) => UNRESOLVED.includes(status)
 
 export type IssueCategory = 'BUG' | 'DESIGN' | 'COPY' | 'OTHER'
@@ -54,11 +61,36 @@ export type IssueSummary = {
 export type IssueComment = { id: string; authorName: string; versionNumber: number; body: string; createdAt: string }
 export type IssueAttachment = { id: string; assetId: string; width: number; height: number }
 
+export type ResolutionResult = 'VERIFIED' | 'REOPENED'
+
+// 고쳤어요 한 번이 한 줄이다. versionId·versionNumber는 보낼 때의 현재 버전이다.
+// screen은 고친 결과를 볼 수 있는 화면이고, 위치 없는 쪽지의 고쳤어요는 null일 수 있다.
+// 새 버전 게시나 철회로 답을 받지 못한 줄은 result·reviewedByName·reviewedAt이 null로 남는다.
+export type IssueAttempt = {
+  id: string
+  versionId: string
+  versionNumber: number
+  screen: Omit<IssuePin, 'xRatio' | 'yRatio'> | null
+  summary: string
+  submittedByName: string
+  createdAt: string
+  result: ResolutionResult | null
+  reviewedByName: string | null
+  reviewedAt: string | null
+}
+
+export const RESOLUTION_RESULT_LABELS: Record<ResolutionResult, string> = { VERIFIED: '확인 완료', REOPENED: '재요청' }
+
 export type IssueDetail = IssueSummary & {
+  projectId: string
   body: string
   isMine: boolean
+  // 내가 이 쪽지를 확인 완료·재요청·철회·다시 열기 할 수 있는 사람인가(쓴 클라이언트이거나 승인자). 쪽지 상태와는 상관없다.
+  canReview: boolean
   attachments: IssueAttachment[]
   comments: IssueComment[]
+  // 오래된 순.
+  attempts: IssueAttempt[]
 }
 
 // 쪽지가 처음 남겨진 자리. 예: "초안 · 상품 상세 · PC", "2차 · 위치 없음". 목록과 상세가 같은 글자로 보여 준다.
@@ -134,6 +166,13 @@ export type NewIssue = {
 export type NewComment = { requestId: string; versionId: string; body: string }
 // 보낸 칸만 바뀐다. dueDate의 null은 마감일을 지운다는 뜻이다.
 export type IssueChange = { category?: IssueCategory; scope?: IssueScope; dueDate?: string | null }
+// 아래 네 요청의 versionId도 보고 있던 버전이다. screenId는 고친 결과를 볼 수 있는 화면이고, 핀이 있는 쪽지는 꼭 보낸다.
+export type NewResolution = { versionId: string; summary: string; screenId?: string }
+// attemptId는 보고 있던 고쳤어요 줄이다. 그사이 새 고쳤어요가 왔으면 서버가 409(ATTEMPT_CHANGED)로 답한다.
+export type Verification = { versionId: string; attemptId: string }
+// attemptId가 있으면 확인 요청을 돌려보내는 "재요청"이고, 없으면 끝난 쪽지(확인 완료·철회)를 "다시 열기"다.
+export type Reopening = { versionId: string; reason: string; attemptId?: string }
+export type Withdrawal = { versionId: string; reason: string }
 
 // 주소 속 id는 projects.ts와 같은 이유로 encodeURIComponent로 감싼다.
 export const listIssues = async (projectId: string): Promise<IssueSummary[]> => {
@@ -165,6 +204,27 @@ export const startIssue = async (issueId: string, versionId: string): Promise<Is
 // 범위나 마감일을 바꾸면 서버가 자동 댓글이 든 쪽지 상세를 돌려준다.
 export const updateIssue = async (issueId: string, versionId: string, change: IssueChange): Promise<IssueDetail> => {
   const response = await apiPatch(`/issues/${encodeURIComponent(issueId)}`, { versionId, ...change })
+  return response.json()
+}
+
+// 아래 네 요청은 서버가 바뀐 쪽지 상세(상태, 고쳤어요 이력, 사유 댓글)를 돌려준다.
+export const submitResolution = async (issueId: string, resolution: NewResolution): Promise<IssueDetail> => {
+  const response = await apiPost(`/issues/${encodeURIComponent(issueId)}/submit-resolution`, resolution)
+  return response.json()
+}
+
+export const verifyIssue = async (issueId: string, verification: Verification): Promise<IssueDetail> => {
+  const response = await apiPost(`/issues/${encodeURIComponent(issueId)}/verify`, verification)
+  return response.json()
+}
+
+export const reopenIssue = async (issueId: string, reopening: Reopening): Promise<IssueDetail> => {
+  const response = await apiPost(`/issues/${encodeURIComponent(issueId)}/reopen`, reopening)
+  return response.json()
+}
+
+export const withdrawIssue = async (issueId: string, withdrawal: Withdrawal): Promise<IssueDetail> => {
+  const response = await apiPost(`/issues/${encodeURIComponent(issueId)}/withdraw`, withdrawal)
   return response.json()
 }
 

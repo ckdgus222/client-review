@@ -61,7 +61,7 @@ describe('IssueFilters', () => {
       within(selectFor('상태'))
         .getAllByRole('option')
         .map((option) => option.textContent),
-    ).toEqual(['전체', '접수', '수정 중'])
+    ).toEqual(['전체', '접수', '수정 중', '확인 요청', '확인 완료', '철회'])
     expect(
       within(selectFor('화면'))
         .getAllByRole('option')

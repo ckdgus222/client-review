@@ -372,7 +372,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
     if (issueId && detailRequest.current.issueId === issueId) loadIssue(issueId)
   }
 
-  // 수정 시작·참고 사진·쪽지 정리(분류·범위·마감일)의 응답(서버가 돌려준 바뀐 쪽지)을 화면에 쓴다.
+  // 수정 시작·참고 사진·쪽지 정리(분류·범위·마감일)·고쳤어요·확인하기의 응답(서버가 돌려준 바뀐 쪽지)을 화면에 쓴다.
   // startedAt은 그 버튼을 누른 때의 상세 요청 번호다.
   const applyChange = (issue: IssueDetailData, startedAt: number) => {
     // 목록에 보이는 상태도 바뀌었으니 목록은 늘 새로 부른다.
@@ -650,6 +650,8 @@ const ReviewRoom = ({ id }: { id: string }) => {
             canWrite={canWrite}
             versionLoaded={detail !== undefined}
             isDeveloper={isDeveloper}
+            screens={detail?.screens ?? []}
+            needsApprover={isDeveloper && !project.approver}
             fetchCount={fetchCount}
             // 누른 때의 번호를 넘긴다(applyChange).
             onChanged={(issue) => applyChange(issue, detailNumber)}

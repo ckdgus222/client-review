@@ -8,6 +8,9 @@ describe('StatusBadge', () => {
   it.each([
     ['OPEN', '접수'],
     ['IN_PROGRESS', '수정 중'],
+    ['READY_FOR_REVIEW', '확인 요청'],
+    ['VERIFIED', '확인 완료'],
+    ['WITHDRAWN', '철회'],
   ] as const)('%s는 %s 글자와 상태에 맞는 data-status를 보여 준다', (status, label) => {
     render(<StatusBadge status={status} />)
 
@@ -20,16 +23,19 @@ describe('StatusBadge', () => {
     expect(isInaccessible(badge)).toBe(false)
   })
 
-  it.each(['OPEN', 'IN_PROGRESS'] as const)('%s의 점은 aria-hidden으로 읽어 주지 않는다', (status) => {
-    render(<StatusBadge status={status} />)
+  it.each(['OPEN', 'IN_PROGRESS', 'READY_FOR_REVIEW', 'VERIFIED', 'WITHDRAWN'] as const)(
+    '%s의 점은 aria-hidden으로 읽어 주지 않는다',
+    (status) => {
+      render(<StatusBadge status={status} />)
 
-    const badge = screen.getByText(ISSUE_STATUS_LABELS[status])
-    const dots = badge.getElementsByClassName(styles.dot)
+      const badge = screen.getByText(ISSUE_STATUS_LABELS[status])
+      const dots = badge.getElementsByClassName(styles.dot)
 
-    expect(dots).toHaveLength(1)
-    expect(dots[0].getAttribute('aria-hidden')).toBe('true')
-    expect(isInaccessible(dots[0])).toBe(true)
-  })
+      expect(dots).toHaveLength(1)
+      expect(dots[0].getAttribute('aria-hidden')).toBe('true')
+      expect(isInaccessible(dots[0])).toBe(true)
+    },
+  )
 
   it('접수에서 수정 중으로 바뀌면 글자와 점 모양을 정하는 data-status가 함께 바뀐다', () => {
     const { rerender } = render(<StatusBadge status="OPEN" />)
@@ -45,5 +51,28 @@ describe('StatusBadge', () => {
     expect(badge.getAttribute('data-status')).toBe('IN_PROGRESS')
     expect(badge.getElementsByClassName(styles.dot)).toHaveLength(1)
     expect(badge.getElementsByClassName(styles.dot)[0].getAttribute('aria-hidden')).toBe('true')
+  })
+
+  it('확인 요청에서 확인 완료, 접수로 바뀌면 글자와 data-status가 함께 바뀐다', () => {
+    const { rerender } = render(<StatusBadge status="READY_FOR_REVIEW" />)
+
+    expect(screen.getByText('확인 요청').getAttribute('data-status')).toBe('READY_FOR_REVIEW')
+
+    rerender(<StatusBadge status="VERIFIED" />)
+
+    const verifiedBadge = screen.getByText('확인 완료')
+
+    expect(screen.queryByText('확인 요청')).toBeNull()
+    expect(verifiedBadge.textContent).toBe('확인 완료')
+    expect(verifiedBadge.getAttribute('data-status')).toBe('VERIFIED')
+
+    rerender(<StatusBadge status="OPEN" />)
+
+    const openBadge = screen.getByText('접수')
+
+    expect(screen.queryByText('확인 요청')).toBeNull()
+    expect(screen.queryByText('확인 완료')).toBeNull()
+    expect(openBadge.textContent).toBe('접수')
+    expect(openBadge.getAttribute('data-status')).toBe('OPEN')
   })
 })

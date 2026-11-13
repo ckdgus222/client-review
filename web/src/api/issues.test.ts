@@ -16,8 +16,14 @@ import {
   NO_FILTER,
   NO_PLACE,
   removeIssuePhoto,
+  reopenIssue,
+  RESOLUTION_RESULT_LABELS,
   startIssue,
+  submitResolution,
   updateIssue,
+  verifyIssue,
+  withdrawIssue,
+  type IssueAttempt,
   type IssueCategory,
   type IssueChange,
   type IssueComment,
@@ -28,6 +34,10 @@ import {
   type IssueStatus,
   type NewComment,
   type NewIssue,
+  type NewResolution,
+  type Reopening,
+  type Verification,
+  type Withdrawal,
 } from './issues.ts'
 
 const projectId = '43a30b6d-1b77-46ba-8743-061b463c1d37'
@@ -36,6 +46,11 @@ const versionId = 'd565474f-17a5-4a8e-9b61-bde406fefdf3'
 const screenId = '0314675d-2c6d-47fc-807b-57af90d23564'
 const attachmentId = 'a15508e5-2f72-4a81-b57b-e66528971c89'
 const requestId = 'f056d584-e8eb-42e6-b421-33ef45f6c92f'
+const attemptId = '15523ac4-393c-414f-870b-32bea3de22a1'
+const newResolution: NewResolution = { versionId, summary: '  버튼 "색상"을 고쳤어요\n확인해 주세요  ', screenId }
+const verification: Verification = { versionId, attemptId }
+const reopening: Reopening = { versionId, reason: '  여백을 "다시" 확인해 주세요\n두 번째 줄  ', attemptId }
+const withdrawal: Withdrawal = { versionId, reason: '  이 요청은 "철회"해요\n두 번째 줄  ' }
 const photo = new File(['photo bytes'], '참고 사진.png', { type: 'image/png' })
 const newIssue: NewIssue = { requestId, versionId, title: '  버튼 "색상"  ', body: '첫 줄\n<script>참고</script>' }
 const newComment: NewComment = { requestId, versionId, body: '  댓글 "내용"\n다음 줄  ' }
@@ -69,10 +84,30 @@ const summary: IssueSummary = {
 }
 const detail: IssueDetail = {
   ...summary,
+  projectId,
+  canReview: false,
+  attempts: [],
   body: newIssue.body,
   isMine: true,
   attachments: [{ id: attachmentId, assetId: 'reference-asset', width: 800, height: 600 }],
   comments: [comment],
+}
+const attempt: IssueAttempt = {
+  id: attemptId,
+  versionId,
+  versionNumber: 2,
+  screen: {
+    screenId,
+    screenName: '상품 상세',
+    viewport: 'PC',
+    asset: { id: 'fixed-photo', width: 1440, height: 900 },
+  },
+  summary: '버튼 색상을 고쳤어요',
+  submittedByName: '개발자',
+  createdAt: '2026-11-12T09:00:00.000Z',
+  result: null,
+  reviewedByName: null,
+  reviewedAt: null,
 }
 const encodedIds = [
   { id: '../auth/me', encoded: '..%2Fauth%2Fme' },
@@ -116,6 +151,33 @@ describe('listIssues', () => {
 })
 
 describe('getIssue', () => {
+  it.each([true, false])(
+    'projectId·canReview=%s와 결과 없는 줄을 포함한 이력을 받은 순서대로 돌려준다',
+    async (canReview) => {
+      const responseBody: IssueDetail = {
+        ...detail,
+        status: 'READY_FOR_REVIEW',
+        canReview,
+        attempts: [
+          {
+            ...attempt,
+            id: 'earlier-attempt',
+            versionNumber: 1,
+            screen: null,
+            createdAt: '2026-11-11T09:00:00.000Z',
+            result: 'REOPENED',
+            reviewedByName: '김수정',
+            reviewedAt: '2026-11-11T10:00:00.000Z',
+          },
+          attempt,
+        ],
+      }
+      vi.mocked(fetch).mockResolvedValueOnce(Response.json(responseBody))
+
+      await expect(getIssue(issueId)).resolves.toEqual(responseBody)
+    },
+  )
+
   it.each([detail, { ...detail, origin: null, isMine: false, attachments: [], comments: [], commentCount: 0 }])(
     'GET으로 본문·작성자 여부·참고 사진·댓글과 null 값을 그대로 돌려준다: isMine=$isMine',
     async (responseBody) => {
@@ -251,6 +313,139 @@ describe('updateIssue', () => {
   })
 })
 
+describe('submitResolution', () => {
+  it.each([newResolution.summary, '글', '글'.repeat(2000)])(
+    'versionId·summary·screenId를 JSON POST하고 확인 요청 상세와 이력을 그대로 돌려준다',
+    async (summary) => {
+      const input: NewResolution = { ...newResolution, summary }
+      const responseBody: IssueDetail = { ...detail, status: 'READY_FOR_REVIEW', attempts: [attempt] }
+      vi.mocked(fetch).mockResolvedValueOnce(Response.json(responseBody))
+
+      await expect(submitResolution(issueId, input)).resolves.toEqual(responseBody)
+
+      expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/issues/${issueId}/submit-resolution`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ versionId, summary, screenId }),
+      })
+    },
+  )
+
+  it.each<NewResolution>([
+    { versionId, summary: newResolution.summary },
+    { versionId, summary: newResolution.summary, screenId: undefined },
+  ])('screenId가 없거나 undefined면 본문에서 빼고 화면 없는 이력을 돌려준다: %j', async (input) => {
+    const responseBody: IssueDetail = {
+      ...detail,
+      origin: null,
+      status: 'READY_FOR_REVIEW',
+      attempts: [{ ...attempt, screen: null }],
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(responseBody))
+
+    await expect(submitResolution(issueId, input)).resolves.toEqual(responseBody)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/issues/${issueId}/submit-resolution`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ versionId, summary: input.summary }),
+    })
+  })
+})
+
+describe('verifyIssue', () => {
+  it('versionId·attemptId만 JSON POST하고 확인 완료된 이력과 상세를 그대로 돌려준다', async () => {
+    const responseBody: IssueDetail = {
+      ...detail,
+      status: 'VERIFIED',
+      canReview: true,
+      attempts: [{ ...attempt, result: 'VERIFIED', reviewedByName: '김수정', reviewedAt: '2026-11-13T09:00:00.000Z' }],
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(responseBody))
+
+    await expect(verifyIssue(issueId, verification)).resolves.toEqual(responseBody)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/issues/${issueId}/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ versionId, attemptId }),
+    })
+  })
+})
+
+describe('reopenIssue', () => {
+  it.each([reopening.reason, '글', '글'.repeat(2000)])(
+    '재요청은 versionId·reason·attemptId를 POST하고 결과와 사유 댓글을 그대로 돌려준다',
+    async (reason) => {
+      const responseBody: IssueDetail = {
+        ...detail,
+        status: 'OPEN',
+        canReview: true,
+        attempts: [
+          { ...attempt, result: 'REOPENED', reviewedByName: '김수정', reviewedAt: '2026-11-13T09:00:00.000Z' },
+        ],
+        commentCount: 2,
+        comments: [comment, { ...comment, id: 'reason-comment', body: `재요청 사유: ${reason.trim()}` }],
+      }
+      vi.mocked(fetch).mockResolvedValueOnce(Response.json(responseBody))
+
+      await expect(reopenIssue(issueId, { ...reopening, reason })).resolves.toEqual(responseBody)
+
+      expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/issues/${issueId}/reopen`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ versionId, reason, attemptId }),
+      })
+    },
+  )
+
+  it.each<Reopening>([
+    { versionId, reason: reopening.reason },
+    { versionId, reason: reopening.reason, attemptId: undefined },
+  ])('다시 열기의 attemptId가 없거나 undefined면 본문에서 뺀다: %j', async (input) => {
+    const responseBody: IssueDetail = {
+      ...detail,
+      canReview: true,
+      commentCount: 2,
+      comments: [comment, { ...comment, id: 'reason-comment', body: `다시 연 사유: ${input.reason.trim()}` }],
+    }
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(responseBody))
+
+    await expect(reopenIssue(issueId, input)).resolves.toEqual(responseBody)
+
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/issues/${issueId}/reopen`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ versionId, reason: input.reason }),
+    })
+  })
+})
+
+describe('withdrawIssue', () => {
+  it.each([withdrawal.reason, '글', '글'.repeat(2000)])(
+    'versionId·reason만 POST하고 철회 상태·사유 댓글·결과 없는 이력을 그대로 돌려준다',
+    async (reason) => {
+      const responseBody: IssueDetail = {
+        ...detail,
+        status: 'WITHDRAWN',
+        canReview: true,
+        attempts: [attempt],
+        commentCount: 2,
+        comments: [comment, { ...comment, id: 'reason-comment', body: `철회 사유: ${reason.trim()}` }],
+      }
+      vi.mocked(fetch).mockResolvedValueOnce(Response.json(responseBody))
+
+      await expect(withdrawIssue(issueId, { ...withdrawal, reason })).resolves.toEqual(responseBody)
+
+      expect(fetch).toHaveBeenCalledExactlyOnceWith(`/api/issues/${issueId}/withdraw`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ versionId, reason }),
+      })
+    },
+  )
+})
+
 describe('attachIssuePhoto', () => {
   it('file 칸에 받은 File 하나만 담아 POST하고 Content-Type을 직접 붙이지 않는다', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(Response.json(detail, { status: 201 }))
@@ -306,6 +501,25 @@ describe.each([
   },
   { name: 'startIssue', call: (id: string) => startIssue(id, versionId), prefix: '/api/issues/', suffix: '/start' },
   {
+    name: 'submitResolution',
+    call: (id: string) => submitResolution(id, newResolution),
+    prefix: '/api/issues/',
+    suffix: '/submit-resolution',
+  },
+  {
+    name: 'verifyIssue',
+    call: (id: string) => verifyIssue(id, verification),
+    prefix: '/api/issues/',
+    suffix: '/verify',
+  },
+  { name: 'reopenIssue', call: (id: string) => reopenIssue(id, reopening), prefix: '/api/issues/', suffix: '/reopen' },
+  {
+    name: 'withdrawIssue',
+    call: (id: string) => withdrawIssue(id, withdrawal),
+    prefix: '/api/issues/',
+    suffix: '/withdraw',
+  },
+  {
     name: 'updateIssue',
     call: (id: string) => updateIssue(id, versionId, { dueDate: null }),
     prefix: '/api/issues/',
@@ -343,6 +557,30 @@ describe.each([
 describe.each([
   { name: 'listIssues', call: () => listIssues(projectId), statuses: [401, 404], codes: [] },
   { name: 'getIssue', call: () => getIssue(issueId), statuses: [401, 404], codes: [] },
+  {
+    name: 'submitResolution',
+    call: () => submitResolution(issueId, newResolution),
+    statuses: [401, 403, 404, 422, 500],
+    codes: ['VERSION_CHANGED', 'VERSION_NOT_IN_REVIEW', 'ISSUE_STATE_CHANGED'],
+  },
+  {
+    name: 'verifyIssue',
+    call: () => verifyIssue(issueId, verification),
+    statuses: [401, 403, 404, 422, 500],
+    codes: ['VERSION_CHANGED', 'VERSION_NOT_IN_REVIEW', 'ISSUE_STATE_CHANGED', 'ATTEMPT_CHANGED'],
+  },
+  {
+    name: 'reopenIssue',
+    call: () => reopenIssue(issueId, reopening),
+    statuses: [401, 403, 404, 422, 500],
+    codes: ['VERSION_CHANGED', 'VERSION_NOT_IN_REVIEW', 'ISSUE_STATE_CHANGED', 'ATTEMPT_CHANGED'],
+  },
+  {
+    name: 'withdrawIssue',
+    call: () => withdrawIssue(issueId, withdrawal),
+    statuses: [401, 403, 404, 422, 500],
+    codes: ['VERSION_CHANGED', 'VERSION_NOT_IN_REVIEW', 'ISSUE_STATE_CHANGED'],
+  },
   {
     name: 'updateIssue',
     call: () => updateIssue(issueId, versionId, { scope: 'OUT_OF_SCOPE' }),
@@ -444,8 +682,20 @@ describe.each([
 })
 
 describe('ISSUE_STATUS_LABELS', () => {
-  it('접수와 수정 중 두 상태의 한국어 이름을 제공한다', () => {
-    expect(ISSUE_STATUS_LABELS).toEqual({ OPEN: '접수', IN_PROGRESS: '수정 중' })
+  it('접수·수정 중·확인 요청·확인 완료·철회 순서로 다섯 상태의 한국어 이름을 제공한다', () => {
+    expect(Object.entries(ISSUE_STATUS_LABELS)).toEqual([
+      ['OPEN', '접수'],
+      ['IN_PROGRESS', '수정 중'],
+      ['READY_FOR_REVIEW', '확인 요청'],
+      ['VERIFIED', '확인 완료'],
+      ['WITHDRAWN', '철회'],
+    ])
+  })
+})
+
+describe('RESOLUTION_RESULT_LABELS', () => {
+  it('고쳤어요 결과 두 개의 한국어 이름을 제공한다', () => {
+    expect(RESOLUTION_RESULT_LABELS).toEqual({ VERIFIED: '확인 완료', REOPENED: '재요청' })
   })
 })
 
@@ -479,6 +729,10 @@ describe('분류·범위·마감일 응답', () => {
 })
 
 describe('isUnresolved', () => {
+  it('READY_FOR_REVIEW는 아직 끝나지 않은 상태다', () => {
+    expect(isUnresolved('READY_FOR_REVIEW')).toBe(true)
+  })
+
   it.each<IssueStatus>(['OPEN', 'IN_PROGRESS'])('%s는 아직 끝나지 않은 상태다', (status) => {
     expect(isUnresolved(status)).toBe(true)
   })
@@ -493,6 +747,13 @@ describe('isOverdue', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 10, 15, 12))
+  })
+
+  it('확인 요청 쪽지는 어제만 마감 지남이고 당일·내일·마감일 없음은 아니다', () => {
+    expect(isOverdue({ status: 'READY_FOR_REVIEW', dueDate: '2026-11-14' })).toBe(true)
+    expect(isOverdue({ status: 'READY_FOR_REVIEW', dueDate: '2026-11-15' })).toBe(false)
+    expect(isOverdue({ status: 'READY_FOR_REVIEW', dueDate: '2026-11-16' })).toBe(false)
+    expect(isOverdue({ status: 'READY_FOR_REVIEW', dueDate: null })).toBe(false)
   })
 
   it.each<IssueStatus>(['OPEN', 'IN_PROGRESS'])(
@@ -585,6 +846,11 @@ describe('NO_FILTER', () => {
 })
 
 describe('countFilters', () => {
+  it.each<IssueStatus>(['READY_FOR_REVIEW', 'VERIFIED', 'WITHDRAWN'])('%s도 고른 상태 조건 하나로 센다', (status) => {
+    expect(countFilters({ ...NO_FILTER, status })).toBe(1)
+    expect(countFilters({ status, screenId, category: 'BUG', scope: 'IN_SCOPE', overdueOnly: true })).toBe(5)
+  })
+
   it.each<{ filter: IssueFilter; expected: number }>([
     { filter: { ...NO_FILTER }, expected: 0 },
     { filter: { ...NO_FILTER, status: 'OPEN' }, expected: 1 },
@@ -609,6 +875,40 @@ describe('filterIssues', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 10, 15, 12))
+  })
+
+  it.each<IssueStatus>(['OPEN', 'IN_PROGRESS', 'READY_FOR_REVIEW', 'VERIFIED', 'WITHDRAWN'])(
+    '다섯 상태가 섞인 목록에서 %s만 남기고 필터를 풀면 모든 상태를 돌려준다',
+    (status) => {
+      const statuses: IssueStatus[] = ['WITHDRAWN', 'READY_FOR_REVIEW', 'OPEN', 'VERIFIED', 'IN_PROGRESS']
+      const issues = statuses.map((value) => ({ ...summary, id: value, status: value }))
+
+      expect(filterIssues(issues, { ...NO_FILTER, status })).toEqual([{ ...summary, id: status, status }])
+      expect(filterIssues(issues, NO_FILTER)).toEqual(issues)
+    },
+  )
+
+  it('확인 요청 상태와 마감 지남을 함께 고르면 기한이 지난 확인 요청만 남긴다', () => {
+    const ready: IssueSummary = { ...summary, status: 'READY_FOR_REVIEW', dueDate: '2026-11-14' }
+    const open: IssueSummary = { ...ready, id: 'open', status: 'OPEN' }
+    const inProgress: IssueSummary = { ...ready, id: 'in-progress', status: 'IN_PROGRESS' }
+    const verified: IssueSummary = { ...ready, id: 'verified', status: 'VERIFIED' }
+    const withdrawn: IssueSummary = { ...ready, id: 'withdrawn', status: 'WITHDRAWN' }
+    const issues: IssueSummary[] = [
+      verified,
+      { ...ready, id: 'today', dueDate: '2026-11-15' },
+      open,
+      ready,
+      { ...ready, id: 'tomorrow', dueDate: '2026-11-16' },
+      { ...ready, id: 'no-due-date', dueDate: null },
+      withdrawn,
+      inProgress,
+    ]
+
+    expect(filterIssues(issues, { ...NO_FILTER, overdueOnly: true })).toEqual([open, ready, inProgress])
+    expect(filterIssues(issues, { ...NO_FILTER, status: 'READY_FOR_REVIEW', overdueOnly: true })).toEqual([ready])
+    expect(filterIssues(issues, { ...NO_FILTER, status: 'VERIFIED', overdueOnly: true })).toEqual([])
+    expect(filterIssues(issues, { ...NO_FILTER, status: 'WITHDRAWN', overdueOnly: true })).toEqual([])
   })
 
   it.each<IssueStatus>(['OPEN', 'IN_PROGRESS'])('상태 %s인 쪽지만 남긴다', (status) => {

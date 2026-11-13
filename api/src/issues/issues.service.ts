@@ -7,6 +7,7 @@ import {
   IssueStatus,
   Prisma,
   ProjectRole,
+  type ResolutionResult,
   VersionStatus,
   type Viewport,
 } from '../generated/prisma/client.js';
@@ -42,11 +43,33 @@ export type IssueSummary = {
   origin: IssuePin | null;
 };
 
+// 고쳤어요 한 번이 한 줄이다. 새 버전 게시나 철회로 답을 받지 못한 줄은 결과·확인한 사람·확인 시각이 null로 남는다.
+export type IssueAttempt = {
+  id: string;
+  // 고쳤어요를 보낼 때의 현재 버전.
+  versionId: string;
+  versionNumber: number | null;
+  // 고친 결과를 볼 수 있는 화면. 위치 없는 쪽지의 고쳤어요는 null일 수 있다.
+  screen: Omit<IssuePin, 'xRatio' | 'yRatio'> | null;
+  summary: string;
+  submittedByName: string;
+  createdAt: Date;
+  result: ResolutionResult | null;
+  reviewedByName: string | null;
+  reviewedAt: Date | null;
+};
+
 export type IssueDetail = IssueSummary & {
+  // 비교 화면이 검수실로 돌아가는 주소를 만드는 데 쓴다.
+  projectId: string;
   body: string;
   isMine: boolean;
+  // 내가 이 쪽지를 확인 완료·재요청·철회·다시 열기 할 수 있는 사람인가. 쪽지 상태와는 상관없다.
+  canReview: boolean;
   attachments: { id: string; assetId: string; width: number; height: number }[];
   comments: { id: string; authorName: string; versionNumber: number | null; body: string; createdAt: Date }[];
+  // 오래된 순.
+  attempts: IssueAttempt[];
 };
 
 // title은 앞뒤 공백을 지운 값이다(입력 검사 DTO). pin은 화면·x·y를 셋 다 보냈을 때만 있다(컨트롤러).
@@ -63,6 +86,19 @@ export type NewIssue = {
 // 없는 쪽지, 남의 프로젝트의 쪽지, 틀린 모양 id(컨트롤러)가 모두 이 본문으로 답한다.
 export const issueNotFound = () => new NotFoundException('없는 쪽지예요');
 
+// 버전 화면 하나를 화면 이름표와 사진으로 읽는다. 쪽지의 핀과 고쳤어요의 화면이 같은 모양이다.
+const SCREEN_FIELDS = {
+  screen: { select: { id: true, name: true, viewport: true } },
+  asset: { select: { id: true, width: true, height: true } },
+} satisfies Prisma.VersionScreenSelect;
+
+const toScreenView = ({ screen, asset }: Prisma.VersionScreenGetPayload<{ select: typeof SCREEN_FIELDS }>) => ({
+  screenId: screen.id,
+  screenName: screen.name,
+  viewport: screen.viewport,
+  asset,
+});
+
 const SUMMARY_FIELDS = {
   id: true,
   number: true,
@@ -76,12 +112,7 @@ const SUMMARY_FIELDS = {
   yRatio: true,
   author: { select: { name: true } },
   originVersion: { select: { id: true, number: true } },
-  originVersionScreen: {
-    select: {
-      screen: { select: { id: true, name: true, viewport: true } },
-      asset: { select: { id: true, width: true, height: true } },
-    },
-  },
+  originVersionScreen: { select: SCREEN_FIELDS },
   _count: { select: { comments: true } },
 } satisfies Prisma.IssueSelect;
 
@@ -104,15 +135,44 @@ export const toCommentView = ({
   versionNumber: version.number,
 });
 
+const ATTEMPT_FIELDS = {
+  id: true,
+  versionId: true,
+  summary: true,
+  createdAt: true,
+  result: true,
+  reviewedAt: true,
+  version: { select: { number: true } },
+  versionScreen: { select: SCREEN_FIELDS },
+  submittedBy: { select: { name: true } },
+  reviewedBy: { select: { name: true } },
+} satisfies Prisma.ResolutionAttemptSelect;
+
+const toAttemptView = ({
+  version,
+  versionScreen,
+  submittedBy,
+  reviewedBy,
+  ...attempt
+}: Prisma.ResolutionAttemptGetPayload<{ select: typeof ATTEMPT_FIELDS }>): IssueAttempt => ({
+  ...attempt,
+  versionNumber: version.number,
+  screen: versionScreen && toScreenView(versionScreen),
+  submittedByName: submittedBy.name,
+  reviewedByName: reviewedBy?.name ?? null,
+});
+
 const DETAIL_FIELDS = {
   ...SUMMARY_FIELDS,
   body: true,
+  projectId: true,
   authorId: true,
   attachments: {
     select: { id: true, asset: { select: { id: true, width: true, height: true } } },
     orderBy: { createdAt: 'asc' },
   },
   comments: { select: COMMENT_FIELDS, orderBy: { createdAt: 'asc' } },
+  attempts: { select: ATTEMPT_FIELDS, orderBy: { createdAt: 'asc' } },
 } satisfies Prisma.IssueSelect;
 
 // date 칸은 UTC 자정의 Date로 읽힌다. 그래서 앞 10글자가 저장한 날짜 그대로다.
@@ -134,14 +194,7 @@ const toSummary = ({
   // 화면·x·y는 셋 다 있거나 셋 다 없다(DB CHECK 제약). 타입이 그것을 몰라서 셋 다 확인한다.
   origin:
     originVersionScreen && xRatio !== null && yRatio !== null
-      ? {
-          screenId: originVersionScreen.screen.id,
-          screenName: originVersionScreen.screen.name,
-          viewport: originVersionScreen.screen.viewport,
-          asset: originVersionScreen.asset,
-          xRatio,
-          yRatio,
-        }
+      ? { ...toScreenView(originVersionScreen), xRatio, yRatio }
       : null,
 });
 
@@ -271,17 +324,31 @@ export class IssuesService {
 
   // 권한을 확인한 뒤에만 부른다.
   async loadDetail(issueId: string, userId: string, db: Prisma.TransactionClient = this.prisma): Promise<IssueDetail> {
-    const { body, authorId, attachments, comments, ...summary } = await db.issue.findUniqueOrThrow({
-      where: { id: issueId },
-      select: DETAIL_FIELDS,
-    });
+    const issue = await db.issue.findUniqueOrThrow({ where: { id: issueId }, select: DETAIL_FIELDS });
+    const { body, projectId, authorId, attachments, comments, attempts, ...summary } = issue;
+    const canReview = await this.canReview(db, issue, userId);
     return {
       ...toSummary(summary),
+      projectId,
       body,
       isMine: authorId === userId,
+      canReview,
       attachments: attachments.map(({ id, asset: { id: assetId, ...size } }) => ({ id, assetId, ...size })),
       comments: comments.map(toCommentView),
+      attempts: attempts.map(toAttemptView),
     };
+  }
+
+  // 확인 완료·재요청·철회·다시 열기를 할 수 있는 사람인가: 개발자가 아닌 활성 멤버이면서, 그 쪽지를 썼거나 승인자다.
+  // 개발자는 자기가 쓴 쪽지도 확인할 수 없다(자기가 고치고 자기가 확인하는 길을 막는다).
+  // 이 규칙은 여기 한 곳에만 둔다. 쪽지 상세의 canReview와 네 요청의 권한 검사가 같은 답을 낸다.
+  async canReview(db: Prisma.TransactionClient, issue: { projectId: string; authorId: string }, userId: string) {
+    const member = await db.projectMember.findUnique({
+      where: { projectId_userId: { projectId: issue.projectId, userId } },
+      select: { id: true, role: true, revokedAt: true, project: { select: { approverMemberId: true } } },
+    });
+    if (!member || member.revokedAt !== null || member.role === ProjectRole.DEVELOPER) return false;
+    return issue.authorId === userId || member.project.approverMemberId === member.id;
   }
 
   // 남의 프로젝트의 쪽지도 없는 쪽지와 같은 404로 답한다. 문구가 다르면 그 쪽지 id가 어딘가 있다는 것이 드러난다.

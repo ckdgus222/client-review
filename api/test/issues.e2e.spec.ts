@@ -170,7 +170,16 @@ describe('쪽지 API (e2e)', () => {
         originVersion: { id: versionId, number: 0 },
         origin: null,
       };
-      expect(created.body).toEqual({ ...summary, body: input.body, isMine: true, attachments: [], comments: [] });
+      expect(created.body).toEqual({
+        ...summary,
+        body: input.body,
+        isMine: true,
+        attachments: [],
+        comments: [],
+        attempts: [],
+        canReview: role !== '개발자',
+        projectId,
+      });
       expect(new Date(created.body.createdAt).toISOString()).toBe(created.body.createdAt);
       const list = await get(`/api/projects/${projectId}/issues`, authorCookie).expect(200);
       expect(list.body).toEqual([summary]);
@@ -178,7 +187,7 @@ describe('쪽지 API (e2e)', () => {
       const readerCookie = role === '개발자' ? clientCookie : cookie;
       await get(`/api/issues/${created.body.id}`, readerCookie)
         .expect(200)
-        .expect({ ...created.body, isMine: false });
+        .expect({ ...created.body, isMine: false, canReview: false });
       expect(await prisma.issue.count()).toBe(1);
       expect(await prisma.activityEvent.findMany({ where: { type: 'ISSUE_CREATED' } })).toEqual([
         expect.objectContaining({ projectId, issueId: created.body.id }),
@@ -213,7 +222,16 @@ describe('쪽지 API (e2e)', () => {
         yRatio,
       },
     };
-    expect(created.body).toEqual({ ...summary, body: input.body, isMine: true, attachments: [], comments: [] });
+    expect(created.body).toEqual({
+      ...summary,
+      body: input.body,
+      isMine: true,
+      attachments: [],
+      comments: [],
+      attempts: [],
+      canReview: false,
+      projectId,
+    });
     await get(`/api/projects/${projectId}/issues`).expect(200).expect([summary]);
     await get(`/api/issues/${created.body.id}`).expect(200).expect(created.body);
   });
@@ -595,7 +613,7 @@ describe('쪽지 API (e2e)', () => {
         author === '개발자' ? cookie : clientCookie,
       ).expect(201);
       const before = await readIssueState();
-      const expected = { ...created.body, status: 'IN_PROGRESS', isMine: author === '개발자' };
+      const expected = { ...created.body, status: 'IN_PROGRESS', isMine: author === '개발자', canReview: false };
       await post(`/api/issues/${created.body.id}/start`).send({ versionId }).expect(200).expect(expected);
       await get(`/api/issues/${created.body.id}`).expect(200).expect(expected);
       const list = await get(`/api/projects/${projectId}/issues`).expect(200);
@@ -636,7 +654,7 @@ describe('쪽지 API (e2e)', () => {
     const created = await createIssue(issueInput({ screenId, xRatio: 0.2, yRatio: 0.8 }), clientCookie).expect(201);
     const draft = await createDraft();
     await publish(draft.body.id);
-    const expected = { ...created.body, status: 'IN_PROGRESS', isMine: false };
+    const expected = { ...created.body, status: 'IN_PROGRESS', isMine: false, canReview: false };
     await post(`/api/issues/${created.body.id}/start`).send({ versionId: draft.body.id }).expect(200).expect(expected);
     await get(`/api/issues/${created.body.id}`).expect(200).expect(expected);
     expect(await prisma.activityEvent.count({ where: { issueId: created.body.id, type: 'ISSUE_STARTED' } })).toBe(1);
@@ -670,6 +688,7 @@ describe('쪽지 API (e2e)', () => {
       ...created.body,
       status: 'IN_PROGRESS',
       isMine: false,
+      canReview: false,
     });
     expect(responses.find(({ status }) => status === 409)?.body).toEqual({
       statusCode: 409,
@@ -846,7 +865,7 @@ describe('쪽지 API (e2e)', () => {
     await get(`/api/issues/${created.body.id}`, clientCookie).expect(404).expect(issueNotFoundBody);
     await get(`/api/issues/${created.body.id}`)
       .expect(200)
-      .expect({ ...before.body, isMine: false });
+      .expect({ ...before.body, isMine: false, canReview: false });
     const list = await get(`/api/projects/${projectId}/issues`).expect(200);
     expect(list.body).toEqual([
       expect.objectContaining({ id: created.body.id, authorName: '클라이언트', commentCount: 1 }),
