@@ -7,8 +7,12 @@ import {
   createComment,
   type IssueDetail as Issue,
   removeIssuePhoto,
+  reopenIssue,
   startIssue,
+  submitResolution,
   updateIssue,
+  verifyIssue,
+  withdrawIssue,
 } from '../api/issues.ts'
 import { timeFormat } from '../api/versions.ts'
 import { IssueDetail } from './IssueDetail.tsx'
@@ -18,8 +22,12 @@ vi.mock('../api/issues.ts', async (importOriginal) => ({
   attachIssuePhoto: vi.fn(),
   createComment: vi.fn(),
   removeIssuePhoto: vi.fn(),
+  reopenIssue: vi.fn(),
   startIssue: vi.fn(),
+  submitResolution: vi.fn(),
   updateIssue: vi.fn(),
+  verifyIssue: vi.fn(),
+  withdrawIssue: vi.fn(),
 }))
 
 const versionId = '22222222-2222-4222-8222-222222222222'
@@ -82,6 +90,8 @@ const renderDetail = (overrides: Partial<ComponentProps<typeof IssueDetail>> = {
     canWrite: true,
     versionLoaded: true,
     isDeveloper: true,
+    screens: [],
+    needsApprover: false,
     fetchCount: 1,
     onChanged: vi.fn(),
     onCommented: vi.fn(),
@@ -121,6 +131,10 @@ beforeEach(() => {
     .mockResolvedValue({ ...issue, attachments: [photos[0]] })
   vi.mocked(createComment).mockReset().mockResolvedValue(savedComment)
   vi.mocked(updateIssue).mockReset().mockResolvedValue(issue)
+  vi.mocked(submitResolution).mockReset()
+  vi.mocked(verifyIssue).mockReset()
+  vi.mocked(reopenIssue).mockReset()
+  vi.mocked(withdrawIssue).mockReset()
   vi.spyOn(window, 'confirm').mockReturnValue(true)
 })
 
@@ -1184,5 +1198,381 @@ describe('IssueDetail 쪽지 정리', () => {
     expect(dueDateInput().value).toBe('2026-11-20')
     await click('마감일 저장')
     expect(updateIssue).toHaveBeenLastCalledWith(issue.id, latestVersionId, { dueDate: '2026-11-20' })
+  })
+})
+
+describe('IssueDetail 고쳤어요와 확인 연결', () => {
+  const screens: ComponentProps<typeof IssueDetail>['screens'] = [
+    { screenId: 'screen-2', name: '장바구니', viewport: 'MOBILE' },
+    { screenId: issue.origin!.screenId, name: '상품 상세', viewport: 'PC' },
+  ]
+  const attempt: Issue['attempts'][number] = {
+    id: 'attempt-1',
+    versionId,
+    versionNumber: 2,
+    screen: { ...issue.origin!, asset: { id: 'fixed-photo', width: 1200, height: 800 } },
+    summary: '버튼 간격을 넓혔어요',
+    submittedByName: '개발자',
+    createdAt: '2026-11-12T01:00:00.000Z',
+    result: null,
+    reviewedByName: null,
+    reviewedAt: null,
+  }
+  const ready: Issue = { ...issue, status: 'READY_FOR_REVIEW', canReview: true, attempts: [attempt] }
+  const statuses = ['OPEN', 'IN_PROGRESS', 'READY_FOR_REVIEW', 'VERIFIED', 'WITHDRAWN'] as const
+  const reviewButtons = ['확인 완료', '재요청', '철회', '다시 열기']
+  const summaryInput = () => screen.getByRole<HTMLTextAreaElement>('textbox', { name: '고친 내용' })
+
+  it.each(statuses)('개발자에게 %s 상태의 고쳤어요 폼만 규칙대로 보이고 확인하기는 없다', (status) => {
+    renderDetail({ issue: { ...issue, status }, screens })
+
+    const canSubmit = status === 'OPEN' || status === 'IN_PROGRESS'
+    expect(screen.queryByRole('form', { name: '고쳤어요 보내기' }) !== null).toBe(canSubmit)
+    expect(screen.queryByRole('button', { name: '고쳤어요 보내기' }) !== null).toBe(canSubmit)
+    expect(screen.queryByRole('region', { name: '확인하기' })).toBeNull()
+    for (const name of reviewButtons) expect(screen.queryByRole('button', { name })).toBeNull()
+  })
+
+  it.each([
+    ['OPEN', ['철회']],
+    ['IN_PROGRESS', ['철회']],
+    ['READY_FOR_REVIEW', ['확인 완료', '재요청', '철회']],
+    ['VERIFIED', ['다시 열기']],
+    ['WITHDRAWN', ['다시 열기']],
+  ] as const)('확인할 수 있는 클라이언트에게 %s 상태에 맞는 확인 버튼만 보인다', (status, expected) => {
+    renderDetail({ issue: { ...ready, status }, isDeveloper: false })
+
+    expect(screen.queryByRole('form', { name: '고쳤어요 보내기' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '고쳤어요 보내기' })).toBeNull()
+    expect(
+      within(screen.getByRole('region', { name: '확인하기' }))
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(expect.arrayContaining([...expected]))
+    for (const name of reviewButtons) {
+      expect(screen.queryByRole('button', { name }) !== null).toBe(expected.some((label) => label === name))
+    }
+  })
+
+  it.each(statuses)('canReview가 거짓인 클라이언트에게 %s 상태의 보내기와 확인 버튼은 없다', (status) => {
+    renderDetail({ issue: { ...ready, status, canReview: false }, isDeveloper: false })
+
+    expect(screen.queryByRole('form', { name: '고쳤어요 보내기' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '확인하기' })).toBeNull()
+    for (const name of reviewButtons) expect(screen.queryByRole('button', { name })).toBeNull()
+  })
+
+  it('남의 쪽지를 보는 승인자도 canReview가 참이면 확인·재요청·철회를 할 수 있다', () => {
+    renderDetail({ issue: { ...ready, isMine: false }, isDeveloper: false })
+
+    for (const name of ['확인 완료', '재요청', '철회']) expect(screen.getByRole('button', { name })).toBeTruthy()
+    expect(screen.queryByRole('form', { name: '고쳤어요 보내기' })).toBeNull()
+  })
+
+  it.each([
+    ['개발자', true, false],
+    ['확인할 수 있는 클라이언트', false, true],
+  ] as const)(
+    '읽기 전용이면 %s에게 모든 상태에서 이력만 보이고 보내기·확인 버튼은 없다',
+    (_role, isDeveloper, canReview) => {
+      const { props, rerender } = renderDetail({
+        issue: { ...ready, canReview },
+        isDeveloper,
+        canWrite: false,
+        screens,
+      })
+      for (const status of statuses) {
+        rerender(<IssueDetail {...props} issue={{ ...props.issue, status }} />)
+        expect(screen.getByRole('region', { name: '고쳤어요 이력' })).toBeTruthy()
+        expect(screen.getByText(attempt.summary)).toBeTruthy()
+        expect(screen.queryByRole('form', { name: '고쳤어요 보내기' })).toBeNull()
+        expect(screen.queryByRole('region', { name: '확인하기' })).toBeNull()
+        for (const name of ['고쳤어요 보내기', ...reviewButtons]) {
+          expect(screen.queryByRole('button', { name })).toBeNull()
+        }
+      }
+    },
+  )
+
+  it('참고 사진·수정 시작 아래, 댓글 위에 오래된 순의 이력과 고쳤어요 폼이 보인다', () => {
+    const first = {
+      ...attempt,
+      result: 'REOPENED' as const,
+      reviewedByName: '클라이언트',
+      reviewedAt: '2026-11-12T02:00:00.000Z',
+    }
+    const last = { ...attempt, id: 'attempt-2', summary: '다시 넓힌 버튼', createdAt: '2026-11-13T01:00:00.000Z' }
+    renderDetail({ issue: { ...issue, attempts: [first, last] }, screens })
+
+    const history = screen.getByRole('region', { name: '고쳤어요 이력' })
+    const rows = within(history).getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]).getByText(first.summary)).toBeTruthy()
+    expect(within(rows[0]).getByText(/결과: 재요청/)).toBeTruthy()
+    expect(within(rows[1]).getByText(last.summary)).toBeTruthy()
+    expect(within(rows[1]).getByText('결과: 결과 없음')).toBeTruthy()
+    expect(within(rows[0]).queryByRole('link', { name: '비교해서 보기' })).toBeNull()
+    expect(within(rows[1]).getByRole('link', { name: '비교해서 보기' }).getAttribute('href')).toBe(
+      `/issues/${issue.id}/compare`,
+    )
+    const ordered = [
+      screen.getByRole('list', { name: '참고 사진' }),
+      screen.getByRole('button', { name: '수정 시작' }),
+      history,
+      screen.getByRole('form', { name: '고쳤어요 보내기' }),
+      screen.getByRole('region', { name: '댓글' }),
+    ]
+    ordered.slice(1).forEach((element, index) => {
+      expect(ordered[index].compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    })
+  })
+
+  it('확인하기도 이력 아래, 댓글 위에 보이고 이력이 없으면 이력 영역이 없다', () => {
+    const { props, rerender } = renderDetail({ issue: ready, isDeveloper: false })
+    const history = screen.getByRole('region', { name: '고쳤어요 이력' })
+    const review = screen.getByRole('region', { name: '확인하기' })
+    expect(history.compareDocumentPosition(review) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      review.compareDocumentPosition(screen.getByRole('region', { name: '댓글' })) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+
+    rerender(<IssueDetail {...props} issue={{ ...ready, status: 'WITHDRAWN', attempts: [] }} />)
+    expect(screen.queryByRole('region', { name: '고쳤어요 이력' })).toBeNull()
+    expect(screen.getByRole('button', { name: '다시 열기' })).toBeTruthy()
+  })
+
+  it('받은 화면 목록을 고친 화면 선택지로 보여 주고 처음 화면을 기본값으로 고른다', () => {
+    renderDetail({ screens })
+    const select = screen.getByRole<HTMLSelectElement>('combobox', { name: '고친 화면' })
+
+    expect(
+      within(select)
+        .getAllByRole<HTMLOptionElement>('option')
+        .map((option) => [option.value, option.textContent]),
+    ).toEqual([
+      ['', '화면을 골라 주세요'],
+      ['screen-2', '장바구니 · 모바일'],
+      ['screen-1', '상품 상세 · PC'],
+    ])
+    expect(select.value).toBe(issue.origin!.screenId)
+  })
+
+  it('처음 화면이 현재 목록에 없으면 핀 쪽지를 화면 없이 보내지 않는다', async () => {
+    renderDetail({ screens: screens.slice(0, 1) })
+    fireEvent.change(summaryInput(), { target: { value: '간격을 고쳤어요' } })
+    await click('고쳤어요 보내기')
+
+    expect(screen.getByText('고친 화면을 골라 주세요')).toBeTruthy()
+    expect(submitResolution).not.toHaveBeenCalled()
+  })
+
+  it('위치 없는 쪽지는 화면 없음으로 보내고 선택한 다른 화면도 요청에 전달한다', async () => {
+    vi.mocked(submitResolution).mockResolvedValue(ready)
+    const { props } = renderDetail({ issue: { ...issue, origin: null }, screens })
+    const select = screen.getByRole<HTMLSelectElement>('combobox', { name: '고친 화면' })
+    expect(within(select).getByRole('option', { name: '화면 없음' })).toBeTruthy()
+    expect(select.value).toBe('')
+    fireEvent.change(summaryInput(), { target: { value: '전체 여백 수정' } })
+    await click('고쳤어요 보내기')
+    expect(submitResolution).toHaveBeenLastCalledWith(issue.id, {
+      versionId,
+      summary: '전체 여백 수정',
+      screenId: undefined,
+    })
+    expect(props.onChanged).toHaveBeenCalledWith(ready)
+    expect(summaryInput().value).toBe('')
+
+    fireEvent.change(select, { target: { value: 'screen-2' } })
+    fireEvent.change(summaryInput(), { target: { value: '장바구니 수정' } })
+    await click('고쳤어요 보내기')
+    expect(submitResolution).toHaveBeenLastCalledWith(issue.id, {
+      versionId,
+      summary: '장바구니 수정',
+      screenId: 'screen-2',
+    })
+  })
+
+  it.each([
+    [true, true, 'OPEN', true],
+    [true, true, 'IN_PROGRESS', true],
+    [true, true, 'READY_FOR_REVIEW', true],
+    [false, true, 'OPEN', false],
+    [true, false, 'OPEN', false],
+    [true, true, 'VERIFIED', false],
+    [true, true, 'WITHDRAWN', false],
+  ] as const)(
+    'needsApprover=%s, isMine=%s, %s일 때 승인자 없음 안내 표시=%s',
+    (needsApprover, isMine, status, shown) => {
+      renderDetail({ needsApprover, issue: { ...issue, isMine, status } })
+      expect(screen.queryByText('승인자가 정해지면 확인할 수 있어요.') !== null).toBe(shown)
+    },
+  )
+
+  const actions = [
+    {
+      name: '고쳤어요 보내기',
+      initial: issue,
+      developer: true,
+      api: submitResolution,
+      field: '고친 내용',
+      open: undefined,
+      submit: '고쳤어요 보내기',
+      input: { versionId, summary: '남겨 둘 설명', screenId: issue.origin!.screenId },
+      saved: ready,
+    },
+    {
+      name: '확인 완료',
+      initial: ready,
+      developer: false,
+      api: verifyIssue,
+      field: undefined,
+      open: undefined,
+      submit: '확인 완료',
+      input: { versionId, attemptId: attempt.id },
+      saved: { ...ready, status: 'VERIFIED' as const },
+    },
+    {
+      name: '재요청',
+      initial: ready,
+      developer: false,
+      api: reopenIssue,
+      field: '재요청 사유',
+      open: '재요청',
+      submit: '재요청 보내기',
+      input: { versionId, reason: '남겨 둘 설명', attemptId: attempt.id },
+      saved: { ...ready, status: 'OPEN' as const },
+    },
+    {
+      name: '철회',
+      initial: ready,
+      developer: false,
+      api: withdrawIssue,
+      field: '철회 사유',
+      open: '철회',
+      submit: '철회하기',
+      input: { versionId, reason: '남겨 둘 설명' },
+      saved: { ...ready, status: 'WITHDRAWN' as const },
+    },
+    {
+      name: '다시 열기',
+      initial: { ...ready, status: 'VERIFIED' as const },
+      developer: false,
+      api: reopenIssue,
+      field: '다시 여는 사유',
+      open: '다시 열기',
+      submit: '다시 열기',
+      input: { versionId, reason: '남겨 둘 설명', attemptId: undefined },
+      saved: { ...ready, status: 'OPEN' as const },
+    },
+  ]
+
+  describe.each(actions)('$name 요청 연결', (action) => {
+    const send = async () => {
+      if (action.open) await click(action.open)
+      if (action.field)
+        fireEvent.change(screen.getByRole('textbox', { name: action.field }), { target: { value: '  남겨 둘 설명  ' } })
+      await click(action.submit)
+    }
+
+    it('성공하면 보고 있던 버전으로 요청하고 서버가 돌려준 쪽지를 그대로 onChanged에 넘긴다', async () => {
+      vi.mocked(action.api).mockResolvedValue(action.saved)
+      const { props } = renderDetail({ issue: action.initial, isDeveloper: action.developer, screens })
+      await send()
+
+      expect(action.api).toHaveBeenCalledExactlyOnceWith(issue.id, action.input)
+      expect(props.onChanged).toHaveBeenCalledExactlyOnceWith(action.saved)
+      expect(vi.mocked(props.onChanged).mock.calls[0][0]).toBe(action.saved)
+      expect(props.onRefresh).not.toHaveBeenCalled()
+    })
+
+    it.each(['ISSUE_STATE_CHANGED', 'ATTEMPT_CHANGED'])(
+      '409 %s면 새로 불러오고 실패를 저장 성공으로 알리지 않는다',
+      async (code) => {
+        vi.mocked(action.api).mockRejectedValueOnce(new ApiError(409, code))
+        const { props } = renderDetail({ issue: action.initial, isDeveloper: action.developer, screens })
+        await send()
+
+        expect(screen.getByText('쪽지 상태가 바뀌었어요. 새로 불러왔어요.')).toBeTruthy()
+        expect(props.onRefresh).toHaveBeenCalledTimes(1)
+        expect(props.onChanged).not.toHaveBeenCalled()
+        if (action.field)
+          expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: action.field }).value).toBe(
+            '  남겨 둘 설명  ',
+          )
+      },
+    )
+
+    it('새 버전 409 뒤 읽기 전용이어도 최신 버전 보기로 이동하고 쓰던 글은 남는다', async () => {
+      vi.mocked(action.api).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+      const { props, rerender } = renderDetail({ issue: action.initial, isDeveloper: action.developer, screens })
+      await send()
+      expect(props.onRefresh).toHaveBeenCalledTimes(1)
+      expect(props.onChanged).not.toHaveBeenCalled()
+      rerender(<IssueDetail {...props} canWrite={false} />)
+      expect(screen.getByText(/새 버전이 올라왔어요/)).toBeTruthy()
+      await click('최신 버전 보기')
+      expect(props.onGoLatest).toHaveBeenCalledTimes(1)
+      rerender(<IssueDetail {...props} versionId={latestVersionId} />)
+      if (action.field)
+        expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: action.field }).value).toBe('  남겨 둘 설명  ')
+      vi.mocked(action.api).mockResolvedValueOnce(action.saved)
+      await click(action.submit)
+      expect(action.api).toHaveBeenLastCalledWith(issue.id, { ...action.input, versionId: latestVersionId })
+    })
+
+    it('응답을 못 받으면 새로 불러오고 fetchCount가 오른 뒤에만 저장 여부 안내를 걷는다', async () => {
+      vi.mocked(action.api).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      const { props, rerender } = renderDetail({ issue: action.initial, isDeveloper: action.developer, screens })
+      await send()
+      expect(screen.getByText(/저장됐는지 확인하지 못했어요/)).toBeTruthy()
+      expect(props.onRefresh).toHaveBeenCalledTimes(1)
+      expect(props.onChanged).not.toHaveBeenCalled()
+      rerender(<IssueDetail {...props} issue={{ ...action.initial }} />)
+      expect(screen.getByText(/저장됐는지 확인하지 못했어요/)).toBeTruthy()
+      rerender(<IssueDetail {...props} issue={{ ...action.initial }} fetchCount={props.fetchCount + 1} />)
+      expect(screen.queryByText(/저장됐는지 확인하지 못했어요/)).toBeNull()
+      if (action.field)
+        expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: action.field }).value).toBe('  남겨 둘 설명  ')
+    })
+  })
+
+  it.each([
+    ['고친 내용', issue, true, undefined],
+    ['재요청 사유', ready, false, '재요청'],
+    ['철회 사유', ready, false, '철회'],
+    ['다시 여는 사유', { ...ready, status: 'WITHDRAWN' as const }, false, '다시 열기'],
+  ] as const)(
+    '%s를 쓰다 새 객체를 받거나 읽기 전용으로 바뀌어도 글이 남는다',
+    async (field, initial, isDeveloper, open) => {
+      const { props, rerender } = renderDetail({ issue: initial, isDeveloper, screens })
+      if (open) await click(open)
+      fireEvent.change(screen.getByRole('textbox', { name: field }), { target: { value: '아직 저장하지 않은 글' } })
+      rerender(<IssueDetail {...props} issue={{ ...initial }} fetchCount={2} />)
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: field }).value).toBe('아직 저장하지 않은 글')
+      rerender(<IssueDetail {...props} issue={{ ...initial }} fetchCount={2} canWrite={false} />)
+      expect(screen.queryByRole('textbox', { name: field })).toBeNull()
+      rerender(<IssueDetail {...props} issue={{ ...initial }} fetchCount={3} />)
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: field }).value).toBe('아직 저장하지 않은 글')
+      expect(submitResolution).not.toHaveBeenCalled()
+      expect(reopenIssue).not.toHaveBeenCalled()
+      expect(withdrawIssue).not.toHaveBeenCalled()
+    },
+  )
+
+  it('고쳤어요 없이 철회한 쪽지도 사유를 적어 다시 열면 onChanged로 넘긴다', async () => {
+    vi.mocked(reopenIssue).mockResolvedValue({ ...issue, canReview: true })
+    const { props } = renderDetail({ issue: { ...ready, status: 'WITHDRAWN', attempts: [] }, isDeveloper: false })
+    await click('다시 열기')
+    fireEvent.change(screen.getByRole('textbox', { name: '다시 여는 사유' }), {
+      target: { value: '다시 확인해 주세요' },
+    })
+    await click('다시 열기')
+
+    expect(reopenIssue).toHaveBeenCalledExactlyOnceWith(issue.id, {
+      versionId,
+      reason: '다시 확인해 주세요',
+      attemptId: undefined,
+    })
+    expect(props.onChanged).toHaveBeenCalledExactlyOnceWith({ ...issue, canReview: true })
   })
 })

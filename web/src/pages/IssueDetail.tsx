@@ -9,6 +9,7 @@ import {
   type IssueComment,
   type IssueDetail as Issue,
   isOverdue,
+  isUnresolved,
   type NewComment,
   originLabel,
   removeIssuePhoto,
@@ -19,8 +20,11 @@ import { Button } from '../components/Button.tsx'
 import { ErrorText } from '../components/ErrorText.tsx'
 import { StatusBadge } from '../components/StatusBadge.tsx'
 import { type SubmitError, toSubmitError, useLockedSubmit } from '../hooks/useLockedSubmit.ts'
+import { AttemptHistory } from './AttemptHistory.tsx'
 import styles from './IssueDetail.module.css'
+import { IssueReview } from './IssueReview.tsx'
 import { IssueTriage } from './IssueTriage.tsx'
+import { ResolutionForm, type ResolutionScreen } from './ResolutionForm.tsx'
 import { SubmitErrorText } from './SubmitErrorText.tsx'
 
 // 서버의 한도와 같다(쪽지마다 참고 사진 3장, 댓글 2,000자). 바꾸면 서버도 함께 바꾼다.
@@ -37,9 +41,13 @@ type IssueDetailProps = {
   // 그때는 "읽기 전용"이 아니라 아직 불러오지 못했다고 알린다.
   versionLoaded: boolean
   isDeveloper: boolean
-  // 이 쪽지의 상세를 서버에서 새로 받아 화면에 쓴 횟수. 쪽지 정리 칸이 저장 여부를 다시 확인했는지 아는 데 쓴다.
+  // 지금 보고 있는 버전의 화면들. 고쳤어요를 보낼 때 고친 화면을 여기서 고른다.
+  screens: ResolutionScreen[]
+  // 개발자가 보는 프로젝트에 승인자가 없는가. 개발자가 쓴 쪽지는 승인자만 확인할 수 있어서, 없으면 그 쪽지를 끝낼 사람이 없다.
+  needsApprover: boolean
+  // 이 쪽지의 상세를 서버에서 새로 받아 화면에 쓴 횟수. 쪽지 정리·고쳤어요·확인하기 칸이 저장 여부를 다시 확인했는지 아는 데 쓴다.
   fetchCount: number
-  // 수정 시작·참고 사진·쪽지 정리처럼 서버가 바뀐 쪽지를 돌려준 경우.
+  // 수정 시작·참고 사진·쪽지 정리·고쳤어요·확인하기처럼 서버가 바뀐 쪽지를 돌려준 경우.
   onChanged: (issue: Issue) => void
   // 댓글이 저장된 경우. 서버는 저장한 댓글만 돌려준다. 바로 뒤에 onRefresh도 부른다.
   onCommented: (comment: IssueComment) => void
@@ -252,6 +260,8 @@ export const IssueDetail = ({
   canWrite,
   versionLoaded,
   isDeveloper,
+  screens,
+  needsApprover,
   fetchCount,
   onChanged,
   onCommented,
@@ -308,6 +318,32 @@ export const IssueDetail = ({
       onRefresh={onRefresh}
       onGoLatest={onGoLatest}
     />
+    <AttemptHistory issueId={issue.id} attempts={issue.attempts} />
+    {/* 아래 두 칸도 쓸 수 없는 동안 늘 둔다. 입력은 부품이 감추고, 쓰던 설명과 사유는 버전을 옮겨 다녀도 남는다. */}
+    <ResolutionForm
+      issue={issue}
+      versionId={versionId}
+      canWrite={canWrite}
+      isDeveloper={isDeveloper}
+      screens={screens}
+      fetchCount={fetchCount}
+      onChanged={onChanged}
+      onRefresh={onRefresh}
+      onGoLatest={onGoLatest}
+    />
+    <IssueReview
+      issue={issue}
+      versionId={versionId}
+      canWrite={canWrite}
+      fetchCount={fetchCount}
+      onChanged={onChanged}
+      onRefresh={onRefresh}
+      onGoLatest={onGoLatest}
+    />
+    {/* 개발자가 쓴 쪽지는 개발자 스스로 확인할 수 없다. 승인자가 없으면 끝낼 사람이 없다는 것을 알린다. */}
+    {needsApprover && issue.isMine && isUnresolved(issue.status) && (
+      <p className={styles.readonly}>승인자가 정해지면 확인할 수 있어요.</p>
+    )}
     <section aria-label="댓글">
       <h3>댓글 {issue.comments.length}개</h3>
       <ul className={styles.comments}>

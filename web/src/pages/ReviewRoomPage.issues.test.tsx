@@ -10,8 +10,12 @@ import {
   type IssueDetail,
   listIssues,
   removeIssuePhoto,
+  reopenIssue,
   startIssue,
+  submitResolution,
   updateIssue,
+  verifyIssue,
+  withdrawIssue,
 } from '../api/issues.ts'
 import { listMembers } from '../api/members.ts'
 import { getProject, type ProjectDetail } from '../api/projects.ts'
@@ -42,6 +46,10 @@ vi.mock('../api/issues.ts', async (importOriginal) => ({
   updateIssue: vi.fn(),
   attachIssuePhoto: vi.fn(),
   removeIssuePhoto: vi.fn(),
+  reopenIssue: vi.fn(),
+  submitResolution: vi.fn(),
+  verifyIssue: vi.fn(),
+  withdrawIssue: vi.fn(),
 }))
 
 const project: ProjectDetail = {
@@ -4437,5 +4445,370 @@ describe('ReviewRoomPage 목록 필터 유지', () => {
     expect(list().getByRole('heading', { name: '쪽지 1개' })).toBeTruthy()
     expect(list().getAllByRole('listitem')).toHaveLength(1)
     expect(list().getByRole('button', { name: new RegExp(otherIssue.title) })).toBeTruthy()
+  })
+})
+
+describe('ReviewRoomPage 고쳤어요와 확인 연결', () => {
+  const attempt: IssueDetail['attempts'][number] = {
+    id: 'resolution-attempt',
+    versionId: current.id,
+    versionNumber: 1,
+    screen: {
+      screenId: current.screens[0].screenId,
+      screenName: current.screens[0].name,
+      viewport: current.screens[0].viewport,
+      asset: current.screens[0].asset,
+    },
+    summary: '버튼 간격을 넓혔어요',
+    submittedByName: '개발자',
+    createdAt: '2026-11-12T01:00:00.000Z',
+    result: null,
+    reviewedByName: null,
+    reviewedAt: null,
+  }
+  const ready: IssueDetail = { ...productIssue, status: 'READY_FOR_REVIEW', attempts: [attempt] }
+  const verified: IssueDetail = {
+    ...ready,
+    status: 'VERIFIED',
+    canReview: true,
+    attempts: [{ ...attempt, result: 'VERIFIED', reviewedByName: '김수정', reviewedAt: '2026-11-12T02:00:00.000Z' }],
+  }
+  const sendResolution = async () => {
+    fireEvent.change(screen.getByRole('textbox', { name: '고친 내용' }), { target: { value: attempt.summary } })
+    await click('고쳤어요 보내기')
+  }
+
+  it('개발자가 연 쪽지의 고친 화면에는 보고 있는 버전의 화면들이 보이고 처음 화면이 선택된다', async () => {
+    await renderRoom(`?issue=${productIssue.id}`)
+    const select = screen.getByRole<HTMLSelectElement>('combobox', { name: '고친 화면' })
+
+    expect(
+      within(select)
+        .getAllByRole<HTMLOptionElement>('option')
+        .map((option) => [option.value, option.textContent]),
+    ).toEqual([
+      ['', '화면을 골라 주세요'],
+      [current.screens[0].screenId, '상품 상세 · PC'],
+      [current.screens[1].screenId, '장바구니 · 모바일'],
+    ])
+    expect(select.value).toBe(productIssue.origin!.screenId)
+    expect(within(select).queryByRole('option', { name: '화면 없음' })).toBeNull()
+  })
+
+  it.each([
+    ['승인자 없는 개발자의 내 쪽지', 'DEVELOPER', null, true, true],
+    ['승인자 있는 개발자의 내 쪽지', 'DEVELOPER', { memberId: 'approver', name: '승인자' }, true, false],
+    ['승인자 없는 개발자의 남의 쪽지', 'DEVELOPER', null, false, false],
+    ['승인자 없는 클라이언트의 내 쪽지', 'CLIENT', null, true, false],
+    ['승인자 있는 클라이언트의 내 쪽지', 'CLIENT', { memberId: 'approver', name: '승인자' }, true, false],
+  ] as const)('%s에만 맞게 승인자 없음 안내를 보여 준다', async (_label, myRole, approver, isMine, shown) => {
+    vi.mocked(getProject).mockResolvedValue({ ...project, myRole, approver })
+    vi.mocked(getIssue).mockResolvedValue({ ...productIssue, isMine })
+    await renderRoom(`?issue=${productIssue.id}`)
+
+    expect(
+      within(screen.getByRole('article', { name: '쪽지 #1' })).queryByText('승인자가 정해지면 확인할 수 있어요.') !==
+        null,
+    ).toBe(shown)
+  })
+
+  it('고쳤어요 응답의 확인 요청 상태와 이력 한 줄이 상세와 목록에 바로 보인다', async () => {
+    vi.mocked(submitResolution).mockResolvedValue(ready)
+    await renderRoom(`?issue=${productIssue.id}`)
+    vi.mocked(listIssues).mockResolvedValue(issues.map((item) => (item.id === ready.id ? ready : item)))
+    await sendResolution()
+
+    expect(submitResolution).toHaveBeenCalledExactlyOnceWith(productIssue.id, {
+      versionId: current.id,
+      summary: attempt.summary,
+      screenId: current.screens[0].screenId,
+    })
+    expect(getIssue).toHaveBeenCalledTimes(1)
+    expect(listIssues).toHaveBeenCalledTimes(2)
+    expect(within(screen.getByRole('article')).getByText('확인 요청')).toBeTruthy()
+    const history = within(screen.getByRole('region', { name: '고쳤어요 이력' }))
+    expect(history.getAllByRole('listitem')).toHaveLength(1)
+    expect(history.getByText(attempt.summary)).toBeTruthy()
+    expect(screen.queryByRole('form', { name: '고쳤어요 보내기' })).toBeNull()
+    const row = within(screen.getByRole('region', { name: '쪽지 목록' })).getByRole('button', {
+      name: new RegExp(productIssue.title),
+    })
+    expect(within(row).getByText('확인 요청')).toBeTruthy()
+  })
+
+  it('클라이언트가 확인 완료하면 응답의 상태·이력 결과를 바로 보이고 다시 열기만 남긴다', async () => {
+    vi.mocked(getProject).mockResolvedValue({ ...project, myRole: 'CLIENT' })
+    vi.mocked(getIssue).mockResolvedValue({ ...ready, canReview: true })
+    vi.mocked(verifyIssue).mockResolvedValue(verified)
+    await renderRoom(`?issue=${productIssue.id}`)
+    vi.mocked(listIssues).mockResolvedValue(issues.map((item) => (item.id === verified.id ? verified : item)))
+    await click('확인 완료')
+
+    expect(verifyIssue).toHaveBeenCalledExactlyOnceWith(productIssue.id, {
+      versionId: current.id,
+      attemptId: attempt.id,
+    })
+    expect(getIssue).toHaveBeenCalledTimes(1)
+    expect(within(screen.getByRole('article')).getByText('확인 완료')).toBeTruthy()
+    expect(
+      within(screen.getByRole('region', { name: '고쳤어요 이력' })).getByText(/결과: 확인 완료 · 김수정/),
+    ).toBeTruthy()
+    expect(
+      within(screen.getByRole('region', { name: '확인하기' }))
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['다시 열기'])
+    const row = within(screen.getByRole('region', { name: '쪽지 목록' })).getByRole('button', {
+      name: new RegExp(productIssue.title),
+    })
+    expect(within(row).getByText('확인 완료')).toBeTruthy()
+  })
+
+  it.each([
+    {
+      action: '재요청',
+      initial: { ...ready, canReview: true },
+      api: reopenIssue,
+      label: '재요청 사유',
+      button: '재요청 보내기',
+      status: 'OPEN',
+      statusText: '접수',
+      prefix: '재요청 사유',
+    },
+    {
+      action: '철회',
+      initial: { ...ready, canReview: true },
+      api: withdrawIssue,
+      label: '철회 사유',
+      button: '철회하기',
+      status: 'WITHDRAWN',
+      statusText: '철회',
+      prefix: '철회 사유',
+    },
+    {
+      action: '다시 열기',
+      initial: verified,
+      api: reopenIssue,
+      label: '다시 여는 사유',
+      button: '다시 열기',
+      status: 'OPEN',
+      statusText: '접수',
+      prefix: '다시 연 사유',
+    },
+  ] as const)(
+    '$action 응답의 상태와 사유 댓글을 상세에 바로 붙인다',
+    async ({ action, initial, api, label, button, status, statusText, prefix }) => {
+      vi.mocked(getProject).mockResolvedValue({ ...project, myRole: 'CLIENT' })
+      vi.mocked(getIssue).mockResolvedValue(initial)
+      const comment = { ...savedComment, body: `${prefix}: 버튼이 아직 겹쳐요` }
+      const changed = { ...initial, status, comments: [comment], commentCount: 1 }
+      vi.mocked(api).mockResolvedValue(changed)
+      await renderRoom(`?issue=${productIssue.id}`)
+      await click(action)
+      fireEvent.change(screen.getByRole('textbox', { name: label }), { target: { value: '버튼이 아직 겹쳐요' } })
+      await click(button)
+
+      expect(api).toHaveBeenCalledTimes(1)
+      expect(getIssue).toHaveBeenCalledTimes(1)
+      expect(within(screen.getByRole('article')).getByText(statusText)).toBeTruthy()
+      expect(within(screen.getByRole('region', { name: '댓글' })).getByText(comment.body)).toBeTruthy()
+      expect(screen.getByRole('heading', { name: '댓글 1개' })).toBeTruthy()
+      expect(screen.queryByRole('textbox', { name: label })).toBeNull()
+    },
+  )
+
+  it.each(['고쳤어요', '확인 완료'] as const)(
+    '%s 응답이 15초 갱신보다 늦게 오면 최신 상세를 덮지 않고 다시 조회한다',
+    async (action) => {
+      vi.useFakeTimers()
+      const pending = deferred<IssueDetail>()
+      const refreshed = deferred<IssueDetail>()
+      const api = action === '고쳤어요' ? submitResolution : verifyIssue
+      if (action === '확인 완료') {
+        vi.mocked(getProject).mockResolvedValue({ ...project, myRole: 'CLIENT' })
+        vi.mocked(getIssue).mockResolvedValue({ ...ready, canReview: true })
+      }
+      vi.mocked(api).mockReturnValueOnce(pending.promise)
+      await renderRoom(`?issue=${productIssue.id}`)
+      if (action === '고쳤어요') await sendResolution()
+      if (action === '확인 완료') await click('확인 완료')
+      expect(api).toHaveBeenCalledTimes(1)
+      const changed = action === '고쳤어요' ? ready : verified
+      const polled = { ...changed, body: '나중에 조회한 본문', comments: [savedComment], commentCount: 1 }
+      vi.mocked(getIssue).mockResolvedValueOnce(polled).mockReturnValueOnce(refreshed.promise)
+      await advance()
+      expect(screen.getByText(polled.body)).toBeTruthy()
+      await act(async () => pending.resolve({ ...changed, body: '늦게 도착한 옛 본문' }))
+
+      expect(getIssue).toHaveBeenCalledTimes(3)
+      expect(screen.queryByText('늦게 도착한 옛 본문')).toBeNull()
+      expect(screen.getByText(polled.body)).toBeTruthy()
+      expect(within(screen.getByRole('region', { name: '댓글' })).getByText(savedComment.body)).toBeTruthy()
+      await act(async () => refreshed.resolve(polled))
+      expect(screen.getByText(polled.body)).toBeTruthy()
+    },
+  )
+
+  it('다른 쪽지를 연 뒤 도착한 고쳤어요 응답은 그 쪽지와 쓰던 글을 바꾸지 않는다', async () => {
+    const pending = deferred<IssueDetail>()
+    vi.mocked(submitResolution).mockReturnValueOnce(pending.promise)
+    await renderRoom(`?issue=${productIssue.id}`)
+    await sendResolution()
+    await chooseIssue(cartIssue)
+    fireEvent.change(screen.getByRole('textbox', { name: '고친 내용' }), { target: { value: '장바구니 설명' } })
+    await act(async () => pending.resolve(ready))
+
+    expect(screen.getByRole('article', { name: '쪽지 #2' })).toBeTruthy()
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '고친 내용' }).value).toBe('장바구니 설명')
+    expect(screen.queryByRole('region', { name: '고쳤어요 이력' })).toBeNull()
+    expect(getIssue).toHaveBeenCalledTimes(2)
+    expect(queryParams().get('issue')).toBe(cartIssue.id)
+  })
+
+  it.each(['고친 내용', '재요청 사유'] as const)(
+    '%s는 15초 갱신과 지난 버전 왕복 뒤에도 남고 쪽지를 닫으면 지워진다',
+    async (field) => {
+      vi.useFakeTimers()
+      if (field === '재요청 사유') {
+        vi.mocked(getProject).mockResolvedValue({ ...project, myRole: 'CLIENT' })
+        vi.mocked(getIssue).mockResolvedValue({ ...ready, canReview: true })
+      }
+      await renderRoom(`?issue=${productIssue.id}`)
+      if (field === '재요청 사유') await click('재요청')
+      fireEvent.change(screen.getByRole('textbox', { name: field }), { target: { value: '버전을 옮겨도 남을 글' } })
+      // 실제 조회처럼 매번 새 객체를 받는다.
+      vi.mocked(getIssue).mockImplementation(async () => ({
+        ...(field === '고친 내용' ? productIssue : ready),
+        canReview: field === '재요청 사유',
+      }))
+      await advance()
+      expect(getIssue).toHaveBeenCalledTimes(2)
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: field }).value).toBe('버전을 옮겨도 남을 글')
+      await chooseVersion(initial.id)
+      expect(screen.queryByRole('textbox', { name: field })).toBeNull()
+      await chooseVersion(current.id)
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: field }).value).toBe('버전을 옮겨도 남을 글')
+      await click('쪽지 닫기')
+      await chooseIssue(productIssue)
+      if (field === '재요청 사유') await click('재요청')
+      expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: field }).value).toBe('')
+    },
+  )
+
+  it('새 버전 409 뒤 최신 버전 보기에서 화면 목록과 versionId를 바꾸고 쓰던 설명을 보낸다', async () => {
+    const newScreen = { ...current.screens[1], screenId: 'a6666666-6666-4666-8666-666666666666', name: '결제' }
+    const newVersion = { ...latest, screens: [current.screens[0], newScreen] }
+    vi.mocked(submitResolution).mockRejectedValueOnce(new ApiError(409, 'VERSION_CHANGED'))
+    await renderRoom(`?issue=${productIssue.id}`)
+    await sendResolution()
+    publishLatest()
+    vi.mocked(getVersion).mockImplementation(async (id) => {
+      const version = [newVersion, current, initial].find((item) => item.id === id)
+      if (!version) throw new ApiError(404)
+      return version
+    })
+    await click('최신 버전 보기')
+
+    const select = screen.getByRole<HTMLSelectElement>('combobox', { name: '고친 화면' })
+    expect(
+      within(select)
+        .getAllByRole<HTMLOptionElement>('option')
+        .map((option) => [option.value, option.textContent]),
+    ).toEqual([
+      ['', '화면을 골라 주세요'],
+      [current.screens[0].screenId, '상품 상세 · PC'],
+      [newScreen.screenId, '결제 · 모바일'],
+    ])
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox', { name: '고친 내용' }).value).toBe(attempt.summary)
+    fireEvent.change(select, { target: { value: newScreen.screenId } })
+    vi.mocked(submitResolution).mockResolvedValueOnce({
+      ...ready,
+      attempts: [{ ...attempt, versionId: latest.id, versionNumber: 2 }],
+    })
+    await click('고쳤어요 보내기')
+    expect(submitResolution).toHaveBeenLastCalledWith(productIssue.id, {
+      versionId: latest.id,
+      summary: attempt.summary,
+      screenId: newScreen.screenId,
+    })
+    expect(within(screen.getByRole('article')).getByText('확인 요청')).toBeTruthy()
+  })
+
+  it.each(['고쳤어요', '확인 완료'] as const)(
+    '%s 응답을 못 받으면 안내를 남기고 상세 재조회가 성공한 뒤에 걷는다',
+    async (action) => {
+      const refreshed = deferred<IssueDetail>()
+      const api = action === '고쳤어요' ? submitResolution : verifyIssue
+      if (action === '확인 완료') {
+        vi.mocked(getProject).mockResolvedValue({ ...project, myRole: 'CLIENT' })
+        vi.mocked(getIssue).mockResolvedValue({ ...ready, canReview: true })
+      }
+      vi.mocked(api).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      await renderRoom(`?issue=${productIssue.id}`)
+      vi.mocked(getIssue).mockReturnValueOnce(refreshed.promise)
+      if (action === '고쳤어요') await sendResolution()
+      if (action === '확인 완료') await click('확인 완료')
+      expect(getIssue).toHaveBeenCalledTimes(2)
+      expect(screen.getByText(/저장됐는지 확인하지 못했어요/)).toBeTruthy()
+
+      await act(async () => refreshed.resolve(action === '고쳤어요' ? ready : verified))
+      expect(screen.queryByText(/저장됐는지 확인하지 못했어요/)).toBeNull()
+      expect(
+        within(screen.getByRole('article')).getByText(action === '고쳤어요' ? '확인 요청' : '확인 완료'),
+      ).toBeTruthy()
+      expect(within(screen.getByRole('region', { name: '고쳤어요 이력' })).getAllByRole('listitem')).toHaveLength(1)
+    },
+  )
+
+  it.each(['ISSUE_STATE_CHANGED', 'ATTEMPT_CHANGED'])(
+    '확인 완료가 409 %s면 새 줄을 불러오고 다음 확인은 새 attemptId로 보낸다',
+    async (code) => {
+      const newAttempt = {
+        ...attempt,
+        id: 'new-attempt',
+        summary: '다시 고친 버튼',
+        createdAt: '2026-11-13T01:00:00.000Z',
+      }
+      const refreshed = { ...ready, canReview: true, attempts: [attempt, newAttempt] }
+      vi.mocked(getProject).mockResolvedValue({ ...project, myRole: 'CLIENT' })
+      vi.mocked(getIssue)
+        .mockResolvedValueOnce({ ...ready, canReview: true })
+        .mockResolvedValue(refreshed)
+      vi.mocked(verifyIssue)
+        .mockRejectedValueOnce(new ApiError(409, code))
+        .mockResolvedValueOnce({ ...refreshed, status: 'VERIFIED' })
+      await renderRoom(`?issue=${productIssue.id}`)
+      await click('확인 완료')
+
+      expect(screen.getByText('쪽지 상태가 바뀌었어요. 새로 불러왔어요.')).toBeTruthy()
+      expect(getIssue).toHaveBeenCalledTimes(2)
+      expect(screen.getByText(newAttempt.summary)).toBeTruthy()
+      await click('확인 완료')
+      expect(vi.mocked(verifyIssue).mock.calls).toEqual([
+        [productIssue.id, { versionId: current.id, attemptId: attempt.id }],
+        [productIssue.id, { versionId: current.id, attemptId: newAttempt.id }],
+      ])
+    },
+  )
+
+  it.each([
+    ['지난 버전', 'DEVELOPER'],
+    ['승인된 현재 버전', 'DEVELOPER'],
+    ['지난 버전', 'CLIENT'],
+    ['승인된 현재 버전', 'CLIENT'],
+  ] as const)('%s를 보는 %s는 이력만 보고 보내기와 확인 버튼은 보지 못한다', async (version, myRole) => {
+    vi.mocked(getProject).mockResolvedValue({ ...project, myRole })
+    vi.mocked(getIssue).mockResolvedValue({
+      ...ready,
+      status: myRole === 'DEVELOPER' ? 'IN_PROGRESS' : 'READY_FOR_REVIEW',
+      canReview: myRole === 'CLIENT',
+    })
+    if (version === '승인된 현재 버전') vi.mocked(getVersion).mockResolvedValue({ ...current, status: 'APPROVED' })
+    await renderRoom(`?issue=${productIssue.id}&version=${version === '지난 버전' ? initial.id : current.id}`)
+
+    expect(screen.getByRole('region', { name: '고쳤어요 이력' })).toBeTruthy()
+    expect(screen.queryByRole('form', { name: '고쳤어요 보내기' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '확인하기' })).toBeNull()
+    expect(screen.getByText('읽기 전용이에요. 쪽지와 댓글은 바꿀 수 없어요.')).toBeTruthy()
   })
 })
