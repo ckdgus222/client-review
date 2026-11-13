@@ -4889,6 +4889,62 @@ describe('ReviewRoomPage 승인 연결', () => {
     expect(screen.queryByRole('button', { name: '버전 승인' }) !== null).toBe(visible)
   })
 
+  it('승인하면 완료 창과 검수실 승인 띠 모두 그 버전의 확인서 링크를 보여 준다', async () => {
+    await renderRoom()
+    expect(screen.queryByRole('link', { name: '검수 확인서 보기' })).toBeNull()
+    await openApproval()
+    expect(modal().queryByRole('link', { name: '검수 확인서 보기' })).toBeNull()
+
+    await approve()
+
+    expect(modal().getByRole('link', { name: '검수 확인서 보기' }).getAttribute('href')).toBe(
+      `/versions/${current.id}/certificate`,
+    )
+    await act(async () => {
+      fireEvent.click(modal().getAllByRole('button', { name: '닫기' }).at(-1)!)
+    })
+    expect(banner().getByRole('link', { name: '검수 확인서 보기' }).getAttribute('href')).toBe(
+      `/versions/${current.id}/certificate`,
+    )
+  })
+
+  it.each([
+    { label: '개발자', myRole: 'DEVELOPER' as const, isApprover: false },
+    { label: '다른 클라이언트', myRole: 'CLIENT' as const, isApprover: false },
+    { label: '승인자', myRole: 'CLIENT' as const, isApprover: true },
+  ])('$label도 승인된 버전의 띠에서 확인서 링크를 본다', async ({ myRole, isApprover }) => {
+    vi.mocked(getProject).mockResolvedValue({ ...project, myRole, isApprover })
+    vi.mocked(getVersion).mockResolvedValue(approved)
+    await renderRoom()
+
+    expect(banner().getByRole('link', { name: '검수 확인서 보기' }).getAttribute('href')).toBe(
+      `/versions/${approved.id}/certificate`,
+    )
+  })
+
+  it('지난 승인 버전을 고르면 그 버전의 링크가 보이고 검수 중 버전으로 돌아오면 사라진다', async () => {
+    await renderRoom()
+    expect(screen.queryByRole('link', { name: '검수 확인서 보기' })).toBeNull()
+
+    await chooseVersion(initial.id)
+
+    expect(banner().getByRole('link', { name: '검수 확인서 보기' }).getAttribute('href')).toBe(
+      `/versions/${initial.id}/certificate`,
+    )
+    await chooseVersion(current.id)
+
+    expect(screen.getByText('검수 중')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: '검수 확인서 보기' })).toBeNull()
+  })
+
+  it('승인 없이 지나간 검수 중 버전에도 확인서 링크가 없다', async () => {
+    vi.mocked(getVersion).mockResolvedValue({ ...initial, status: 'IN_REVIEW', approval: null })
+    await renderRoom(`?version=${initial.id}`)
+
+    expect(screen.getByText('읽기 전용')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: '검수 확인서 보기' })).toBeNull()
+  })
+
   it('사진 상세가 오기 전과 실패한 뒤에는 버전 승인 버튼이 없다', async () => {
     const pending = deferred<VersionDetail>()
     vi.mocked(getVersion).mockReturnValueOnce(pending.promise)

@@ -20,6 +20,7 @@ import type { AuthenticatedRequest } from '../auth/guards/session.guard.js';
 import { projectNotFound } from '../projects/projects.service.js';
 import { screenNotFound } from '../screens/screens.service.js';
 import { ApprovalService } from './approval.service.js';
+import { certificateNotFound, CertificateService } from './certificate.service.js';
 import { DraftScreensService } from './draft-screens.service.js';
 import { ApproveVersionDto } from './dto/approve-version.dto.js';
 import { UpdateDraftDto } from './dto/update-draft.dto.js';
@@ -29,6 +30,8 @@ import { versionNotFound, VersionsService } from './versions.service.js';
 const projectIdPipe = new ParseUUIDPipe({ exceptionFactory: projectNotFound });
 const versionIdPipe = new ParseUUIDPipe({ exceptionFactory: versionNotFound });
 const screenIdPipe = new ParseUUIDPipe({ exceptionFactory: screenNotFound });
+// 확인서는 없는 버전도 "없는 확인서예요" 하나로 답한다(certificate.service.ts). 모양이 틀린 id도 같은 404다.
+const certificateIdPipe = new ParseUUIDPipe({ exceptionFactory: certificateNotFound });
 
 // 주소가 /projects/:id/versions와 /versions/:id 두 갈래라 공통 앞머리를 두지 않는다.
 @Controller()
@@ -37,6 +40,7 @@ export class VersionsController {
     private readonly versions: VersionsService,
     private readonly draftScreens: DraftScreensService,
     private readonly approval: ApprovalService,
+    private readonly certificate: CertificateService,
   ) {}
 
   @Get('projects/:id/versions')
@@ -108,5 +112,10 @@ export class VersionsController {
     @Body() body: ApproveVersionDto,
   ) {
     return this.approval.approve(versionId, request.user.id, body.seenAt);
+  }
+
+  @Get('versions/:id/certificate')
+  getCertificate(@Req() request: AuthenticatedRequest, @Param('id', certificateIdPipe) versionId: string) {
+    return this.certificate.get(versionId, request.user.id);
   }
 }
