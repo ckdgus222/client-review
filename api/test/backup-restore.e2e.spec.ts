@@ -1376,6 +1376,29 @@ describe('백업과 복원 (e2e)', () => {
     expect(await runningServices(current)).toEqual(['api', 'db', 'nginx']);
   }, 240_000);
 
+  it('점검 표시가 있어도 14일 지난 백업은 두 곳에서 지우고 새 백업은 만들지 않으며 api는 멈춘 채다', async () => {
+    const current = await prepareDeployment(deployment!);
+    expect(await runInTools(current, ['/work/deploy/maintenance.sh', 'start'])).toMatchObject({ code: 0 });
+    const marker = path.join(current.directory, '.maintenance');
+    expect((await readFile(marker, 'utf8')).trim()).toBe('manual');
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+    await seedOldBackups(current);
+
+    const backup = await runInTools(current, ['/work/deploy/backup.sh'], 120_000);
+
+    expectOperationalAlert(backup, '백업 실패: 점검 중이라 백업하지 않았어요(표시: manual)');
+    expect(`${backup.stdout}\n${backup.stderr}`).not.toContain('지우지 못했어요');
+    const retained = ['client-review-young.tar.gpg', 'client-review-almost-14-days.tar.gpg', 'other-file.txt'];
+    for (const directory of ['backups', 'remote']) {
+      expect((await readdir(path.join(current.directory, directory))).sort()).toEqual([...retained].sort());
+      for (const name of retained) {
+        expect(await readFile(path.join(current.directory, directory, name), 'utf8')).toBe(name);
+      }
+    }
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+    expect((await readFile(marker, 'utf8')).trim()).toBe('manual');
+  }, 240_000);
+
   it('점검 표시가 있으면 백업과 업데이트는 아무것도 하지 않고 api도 켜지 않는다', async () => {
     const current = await prepareDeployment(deployment!, true);
     expect(await runCompose(current, ['stop', 'api'])).toMatchObject({ code: 0 });

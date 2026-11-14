@@ -83,8 +83,13 @@ take_lock
 rm -rf "$WORK_DIR"
 marker=$(read_marker)
 if [ -n "$marker" ]; then
-    # 복원이나 손작업 중이다. api를 켜거나 반쯤 바뀐 DB를 담지 않게 아무것도 하지 않는다.
-    alert "백업 실패: 점검 중이라 백업하지 않았어요(표시: $marker)"
+    # 복원이나 손작업 중이다. api를 켜거나 반쯤 바뀐 DB를 담지 않게 백업은 하지 않는다.
+    # 14일 지난 백업 지우기만은 한다. 방침에 적은 보관 기간은 점검이 길어져도 흐른다.
+    message="백업 실패: 점검 중이라 백업하지 않았어요(표시: $marker)"
+    if ! backup_dir=$(setting BACKUP_DIR) || ! backup_remote=$(setting BACKUP_REMOTE) || ! prune_old_backups; then
+        message="$message. 14일 지난 백업도 지우지 못했어요"
+    fi
+    alert "$message"
     exit 1
 fi
 if ! backup_dir=$(setting BACKUP_DIR) || ! backup_remote=$(setting BACKUP_REMOTE) ||
