@@ -19,10 +19,6 @@ source "$(dirname "$(readlink -f "$0")")/lib.sh"
 # 이 메모가 남아서 다음 백업이 api를 켠다. restart: unless-stopped는 손으로 멈춘 컨테이너를 재부팅 때 켜지 않는다.
 API_STOPPED_NOTE=.backup-stopped-api
 
-# 암호화하기 전의 DB와 사진을 잠깐 두는 폴더. 이름을 고정해서, 백업이 강제로 끊겨(SIGKILL, 정전) 남은 것을
-# 다음 백업이 지운다. mktemp로 만들면 끊긴 백업의 폴더를 아무도 찾지 못한다.
-WORK_DIR=.backup-work
-
 # 메모가 있으면 api를 켜고, 켜진 뒤에만 메모를 지운다.
 start_noted_api() {
     if [ -f "$API_STOPPED_NOTE" ]; then

@@ -1,5 +1,5 @@
 import { execFile, type ExecFileException } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -29,12 +29,27 @@ const runGit = async (directory: string, args: string[]) => {
 };
 
 // 종료 코드 1도 검사할 수 있게 명령 실패를 결과로 돌려준다.
-const runCommand = async (args: string[], timeout = 60_000): Promise<CommandResult> => {
+const runCommand = async (args: string[], timeout = 60_000, input?: string): Promise<CommandResult> => {
   try {
-    const result = await execFileAsync('docker', args, {
-      encoding: 'utf8',
-      timeout,
-      maxBuffer: 10 * 1024 * 1024,
+    const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      const child = execFile(
+        'docker',
+        args,
+        {
+          encoding: 'utf8',
+          timeout,
+          maxBuffer: 10 * 1024 * 1024,
+        },
+        (error, stdout, stderr) => {
+          if (error) return reject(Object.assign(error, { stdout, stderr }));
+          resolve({ stdout, stderr });
+        },
+      );
+      child.stdin!.on('error', (error: NodeJS.ErrnoException) => {
+        // 잠금 충돌처럼 입력을 읽기 전에 끝나도 명령의 종료 코드를 검사한다.
+        if (error.code !== 'EPIPE') reject(error);
+      });
+      child.stdin!.end(input);
     });
     return { code: 0, ...result };
   } catch (error) {
@@ -50,11 +65,13 @@ const runInTools = (
   timeout?: number,
   environment: Record<string, string> = {},
   containerName?: string,
+  input?: string,
 ) =>
   runCommand(
     [
       'run',
       '--rm',
+      ...(input === undefined ? [] : ['-i']),
       ...(containerName ? ['--name', containerName] : []),
       '-v',
       '/var/run/docker.sock:/var/run/docker.sock',
@@ -80,6 +97,7 @@ const runInTools = (
       ...args,
     ],
     timeout,
+    input,
   );
 
 const runCompose = (deployment: Deployment, args: string[], timeout?: number) =>
@@ -231,6 +249,135 @@ const seedOldBackups = async (deployment: Deployment) => {
   }
 };
 
+const runSql = async (deployment: Deployment, sql: string) => {
+  const result = await runCompose(deployment, [
+    'exec',
+    '-T',
+    'db',
+    'psql',
+    '-U',
+    'client_review',
+    '-d',
+    'client_review',
+    '-v',
+    'ON_ERROR_STOP=1',
+    '-At',
+    '-c',
+    sql,
+  ]);
+  expect(result, '테스트 전용 DB 준비·조회').toMatchObject({ code: 0 });
+  return result.stdout.trim();
+};
+
+const createSession = async (deployment: Deployment, userId: string) => {
+  const token = randomUUID();
+  const hash = createHash('sha256').update(token).digest('hex');
+  await runSql(
+    deployment,
+    `INSERT INTO sessions (user_id, token_hash, expires_at)
+    VALUES ('${userId}', '${hash}', now() + interval '1 day')`,
+  );
+  return `sid=${token}`;
+};
+
+const requestApi = async (deployment: Deployment, url: string, cookie = '', body?: Record<string, unknown>) =>
+  runCompose(deployment, [
+    'exec',
+    '-T',
+    'nginx',
+    'wget',
+    '-S',
+    '-O',
+    '-',
+    '-T',
+    '10',
+    '--header',
+    'Origin: http://localhost',
+    '--header',
+    `Cookie: ${cookie}`,
+    ...(body === undefined ? [] : ['--header', 'Content-Type: application/json', '--post-data', JSON.stringify(body)]),
+    `http://127.0.0.1${url}`,
+  ]);
+
+const seedProjectAndPhoto = async (deployment: Deployment) => {
+  const projectId = randomUUID();
+  const developerId = randomUUID();
+  const assetId = randomUUID();
+  const storageKey = `${assetId}.png`;
+  const photo = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=';
+  await runSql(
+    deployment,
+    `
+    INSERT INTO users (id, email, name) VALUES ('${developerId}', 'developer@example.com', '개발자');
+    INSERT INTO projects (id, name) VALUES ('${projectId}', '복원할 프로젝트');
+    INSERT INTO project_members (project_id, user_id, role) VALUES ('${projectId}', '${developerId}', 'DEVELOPER');
+    INSERT INTO assets (id, project_id, storage_key, mime, bytes, width, height)
+      VALUES ('${assetId}', '${projectId}', '${storageKey}', 'image/png', ${Buffer.from(photo, 'base64').length}, 1, 1);
+  `,
+  );
+  expect(
+    await runCompose(deployment, [
+      'exec',
+      '-T',
+      'api',
+      'sh',
+      '-c',
+      'printf "%s" "$1" | base64 -d > "/data/assets/$2"',
+      'sh',
+      photo,
+      storageKey,
+    ]),
+  ).toMatchObject({ code: 0 });
+  return { projectId, developerId, storageKey, photo };
+};
+
+const readProjectAndPhotos = async (deployment: Deployment) => {
+  const rows = await runSql(
+    deployment,
+    `SELECT json_build_object(
+    'projects', (SELECT json_agg(p ORDER BY id) FROM projects p),
+    'assets', (SELECT json_agg(a ORDER BY id) FROM assets a))`,
+  );
+  const photos = await runCompose(deployment, [
+    'run',
+    '--rm',
+    '--no-deps',
+    '-T',
+    'api',
+    'sh',
+    '-c',
+    'cd /data/assets && find . -type f -exec sha256sum {} \\; | sort',
+  ]);
+  expect(photos).toMatchObject({ code: 0 });
+  return { rows: JSON.parse(rows) as unknown, photos: photos.stdout.trim() };
+};
+
+const runRestore = (deployment: Deployment, filename: string, answer = 'restore', environment = {}) =>
+  runInTools(
+    deployment,
+    ['/work/deploy/restore.sh', `/work/backups/${filename}`],
+    180_000,
+    environment,
+    undefined,
+    `${answer}\n`,
+  );
+
+const expectRestoredAndStopped = async (deployment: Deployment, result: CommandResult, snapshotTime: string) => {
+  expect(result).toMatchObject({ code: 0 });
+  expect(result.stdout).toContain(`기준 시각: ${snapshotTime}`);
+  expect((await readFile(path.join(deployment.directory, '.maintenance'), 'utf8')).trim()).toBe('restore done');
+  expect(await runningServices(deployment)).toEqual(['db', 'nginx']);
+  expect((await getHealth(deployment)).code).not.toBe(0);
+};
+
+const finishRestore = async (deployment: Deployment) => {
+  const result = await runInTools(deployment, ['/work/deploy/restore.sh', '--finish']);
+  expect(result).toMatchObject({ code: 0 });
+  expect(await getHealth(deployment)).toMatchObject({ code: 0, stdout: '{"status":"ok"}' });
+  await expect(stat(path.join(deployment.directory, '.maintenance'))).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await runningServices(deployment)).toEqual(['api', 'db', 'nginx']);
+};
+
 describe('백업과 복원 (e2e)', () => {
   let deployment: Deployment | undefined;
 
@@ -267,6 +414,599 @@ describe('백업과 복원 (e2e)', () => {
       deployment = undefined;
     }
   }, 120_000);
+
+  it('백업한 뒤 빈 묶음에 복원하면 프로젝트와 사진이 그대로다', async () => {
+    const source = await prepareDeployment(deployment!);
+    await seedProjectAndPhoto(source);
+    const before = await readProjectAndPhotos(source);
+    const container = await runCompose(source, ['ps', '-q', 'api']);
+    expect(container).toMatchObject({ code: 0 });
+    const { filename, snapshotTime } = await expectSuccessfulBackup(
+      source,
+      await runInTools(source, ['/work/deploy/backup.sh'], 120_000),
+    );
+    const state = await runCommand(['inspect', '--format', '{{json .State}}', container.stdout.trim()]);
+    expect(state).toMatchObject({ code: 0 });
+    const { FinishedAt, StartedAt } = JSON.parse(state.stdout) as { FinishedAt: string; StartedAt: string };
+    // Docker는 나노초, 백업은 마이크로초다. 자릿수를 맞춰 천분의 1초 아래도 비교한다.
+    const [stoppedAt, snapshotAt, restartedAt] = [FinishedAt, snapshotTime, StartedAt].map((value) =>
+      value.replace(/\.(\d+)Z$/, (_, digits: string) => `.${digits.padEnd(9, '0')}Z`),
+    );
+    expect(stoppedAt <= snapshotAt, 'api가 멈춘 뒤의 기준 시각').toBe(true);
+    expect(snapshotAt <= restartedAt, '기준 시각 뒤에 api를 다시 켠다').toBe(true);
+    expect(FinishedAt).not.toMatch(/^0001-/);
+
+    const target: Deployment = {
+      directory: await mkdtemp(path.join(tmpdir(), 'cr-restore-')),
+      projectName: `cr-restore-${randomUUID().slice(0, 8)}`,
+      workdir: '/work',
+      composeFile: '/repo/deploy/test/compose.e2e.yml',
+    };
+    try {
+      // 원본 DB·볼륨·설정은 옮기지 않는다. 복구용 파일과 서버 밖 암호 보관본만 옮긴다.
+      await mkdir(path.join(target.directory, 'backups'));
+      await cp(path.join(source.directory, 'backups', filename), path.join(target.directory, 'backups', filename));
+      await cp(path.join(source.directory, 'passphrase'), path.join(target.directory, 'passphrase'));
+      await cp(path.join(repositoryDirectory, 'deploy'), path.join(target.directory, 'deploy'), { recursive: true });
+      expect(await runCompose(target, ['up', '-d', '--wait', 'db'], 120_000)).toMatchObject({ code: 0 });
+      expect(await runCompose(target, ['create', '--no-recreate', 'api'])).toMatchObject({ code: 0 });
+      expect(await runCompose(target, ['up', '-d', '--no-deps', 'nginx'])).toMatchObject({ code: 0 });
+      expect(await runSql(target, "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'")).toBe(
+        '0',
+      );
+      const emptyPhotos = await runCompose(target, [
+        'run',
+        '--rm',
+        '--no-deps',
+        '-T',
+        'api',
+        'find',
+        '/data/assets',
+        '-type',
+        'f',
+      ]);
+      expect(emptyPhotos).toMatchObject({ code: 0, stdout: '' });
+
+      await expectRestoredAndStopped(target, await runRestore(target, filename), snapshotTime);
+      expect(await readProjectAndPhotos(target)).toEqual(before);
+      await finishRestore(target);
+      expect(await readProjectAndPhotos(target)).toEqual(before);
+    } finally {
+      const down = await runCompose(target, ['down', '-v', '--remove-orphans'], 90_000);
+      await rm(target.directory, { recursive: true, force: true });
+      expect(down, '복원 대상 묶음 정리').toMatchObject({ code: 0 });
+    }
+  }, 600_000);
+
+  it('다른 운영 스크립트가 잠금을 잡고 있으면 백업·업데이트·복원은 바로 실패한다', async () => {
+    const current = await prepareDeployment(deployment!);
+    await seedProjectAndPhoto(current);
+    const before = await readProjectAndPhotos(current);
+    const { filename } = await expectSuccessfulBackup(
+      current,
+      await runInTools(current, ['/work/deploy/backup.sh'], 120_000),
+    );
+    await waitForHealthyApi(current);
+    const marker = path.join(current.directory, '.maintenance');
+    await writeFile(marker, 'restore done\n');
+    const lockName = `cr-lock-${randomUUID()}`;
+    const pendingLock = runInTools(
+      current,
+      ['bash', '-c', 'exec 9>/work/.maintenance.lock; flock -n 9 || exit 1; touch /work/lock-ready; sleep 120'],
+      150_000,
+      {},
+      lockName,
+    );
+    try {
+      await expect
+        .poll(async () => (await stat(path.join(current.directory, 'lock-ready'))).isFile(), {
+          timeout: 30_000,
+        })
+        .toBe(true);
+      for (const args of [
+        ['/work/deploy/backup.sh'],
+        ['/work/deploy/update.sh'],
+        ['/work/deploy/restore.sh', `/work/backups/${filename}`],
+      ]) {
+        const result = await runInTools(current, args, 15_000, {}, undefined, 'restore\n');
+        expect(result).toMatchObject({ code: 1 });
+        expect(result.stderr).toContain('다른 운영 스크립트');
+        expect(await readFile(marker, 'utf8')).toBe('restore done\n');
+        expect(await runningServices(current)).toEqual(['api', 'db', 'nginx']);
+      }
+      expect(await readProjectAndPhotos(current)).toEqual(before);
+      expect(await readdir(path.join(current.directory, 'backups'))).toEqual([filename]);
+      expect(await getHealth(current)).toMatchObject({ code: 0, stdout: '{"status":"ok"}' });
+    } finally {
+      await runCommand(['rm', '-f', lockName]);
+      await pendingLock;
+    }
+  }, 360_000);
+
+  it('복원 뒤에는 백업 때의 쿠키와 로그인 코드로 들어갈 수 없다', async () => {
+    const current = await prepareDeployment(deployment!);
+    const { developerId } = await seedProjectAndPhoto(current);
+    const cookie = await createSession(current, developerId);
+    expect(await requestApi(current, '/api/auth/me', cookie)).toMatchObject({ code: 0 });
+    const codeRequest = await requestApi(current, '/api/auth/email-code', '', {
+      email: 'developer@example.com',
+      privacyAgreed: true,
+    });
+    expect(codeRequest.stderr).toMatch(/HTTP\/1\.1 204\b/);
+    const logs = await runCompose(current, ['logs', '--no-color', '--no-log-prefix', 'api']);
+    expect(logs).toMatchObject({ code: 0 });
+    const code = logs.stdout.match(/로그인 코드는 (\d{6})예요/)?.[1];
+    expect(code).toMatch(/^\d{6}$/);
+    expect(await runSql(current, 'SELECT count(*) FROM sessions')).toBe('1');
+    expect(await runSql(current, 'SELECT count(*) FROM login_codes WHERE used_at IS NULL')).toBe('1');
+    const { filename, snapshotTime } = await expectSuccessfulBackup(
+      current,
+      await runInTools(current, ['/work/deploy/backup.sh'], 120_000),
+    );
+    await waitForHealthyApi(current);
+    expect((await requestApi(current, '/api/auth/logout', cookie, {})).stderr).toMatch(/HTTP\/1\.1 204\b/);
+    expect(
+      (await requestApi(current, '/api/auth/verify-code', '', { email: 'developer@example.com', code })).stderr,
+    ).toMatch(/HTTP\/1\.1 200\b/);
+
+    await expectRestoredAndStopped(current, await runRestore(current, filename), snapshotTime);
+    expect(await runSql(current, 'SELECT count(*) FROM sessions')).toBe('0');
+    expect(await runSql(current, 'SELECT count(*) FROM login_codes')).toBe('0');
+    await finishRestore(current);
+    expect((await requestApi(current, '/api/auth/me', cookie)).stderr).toMatch(/HTTP\/1\.1 401\b/);
+    expect(
+      (await requestApi(current, '/api/auth/verify-code', '', { email: 'developer@example.com', code })).stderr,
+    ).toMatch(/HTTP\/1\.1 422\b/);
+    expect(await runSql(current, 'SELECT count(*) FROM sessions')).toBe('0');
+  }, 420_000);
+
+  it('백업을 올리는 동안 생긴 철회도 기준 시각 뒤라서 복원 뒤 다시 적용된다', async () => {
+    const current = await prepareDeployment(deployment!);
+    const { projectId, developerId } = await seedProjectAndPhoto(current);
+    const clientId = randomUUID();
+    const memberId = randomUUID();
+    await runSql(
+      current,
+      `
+      INSERT INTO users (id, email, name) VALUES ('${clientId}', 'client@example.com', '클라이언트');
+      INSERT INTO project_members (id, project_id, user_id, role)
+        VALUES ('${memberId}', '${projectId}', '${clientId}', 'CLIENT');
+      UPDATE projects SET approver_member_id = '${memberId}' WHERE id = '${projectId}';
+    `,
+    );
+    const cookie = await createSession(current, developerId);
+    // 압축해도 줄지 않는 파일과 전송 제한으로 HTTP 철회가 일어날 시간을 확보한다.
+    expect(
+      await runCompose(current, [
+        'exec',
+        '-T',
+        'api',
+        'sh',
+        '-c',
+        'dd if=/dev/urandom of=/data/assets/upload-window.bin bs=1048576 count=4',
+      ]),
+    ).toMatchObject({ code: 0 });
+    const backupName = `cr-slow-backup-${randomUUID()}`;
+    let finished = false;
+    const pendingBackup = runInTools(
+      current,
+      ['/work/deploy/backup.sh'],
+      300_000,
+      {
+        RCLONE_BWLIMIT: '32k',
+        // 로컬 대상 파일을 미리 전체 크기로 늘리면 업로드 중간 크기를 관찰할 수 없다.
+        RCLONE_LOCAL_NO_PREALLOCATE: 'true',
+      },
+      backupName,
+    ).finally(() => {
+      finished = true;
+    });
+    let record = '';
+    let eventTime = '';
+    let savedBackup: { filename: string; snapshotTime: string };
+    try {
+      // 원격 파일에 실제 바이트가 도착했고 아직 전체를 올리지 못한 때를 기다린다.
+      await expect
+        .poll(
+          async () => {
+            const files = await readdir(path.join(current.directory, 'remote'));
+            const sizes = await Promise.all(
+              files.map(async (name) => (await stat(path.join(current.directory, 'remote', name))).size),
+            );
+            return sizes.some((size) => size > 0 && size < 4 * 1024 * 1024);
+          },
+          { timeout: 90_000, interval: 500 },
+        )
+        .toBe(true);
+      await waitForHealthyApi(current);
+      expect(finished).toBe(false);
+      const revoke = await requestApi(current, `/api/members/${memberId}/revoke`, cookie, {});
+      expect(revoke.stderr).toMatch(/HTTP\/1\.1 204\b/);
+      expect(finished, '철회 요청이 끝났을 때도 백업 업로드 중이다').toBe(false);
+      await expect
+        .poll(
+          async () => {
+            const logs = await runCompose(current, ['logs', '--no-color', '--no-log-prefix', 'api']);
+            expect(logs).toMatchObject({ code: 0 });
+            const text = logs.stdout.replace(/\u001b\[[0-9;]*m/g, '');
+            const subject = text.indexOf('[Client Review 기록] MEMBER_REVOKED → developer@example.com');
+            if (subject < 0) return '';
+            record = text
+              .slice(text.indexOf('사건: MEMBER_REVOKED', subject))
+              .split(/\r?\n/)
+              .slice(0, 10)
+              .join('\n')
+              .trim();
+            return record;
+          },
+          { timeout: 45_000, interval: 1_000 },
+        )
+        .toContain(`대상 멤버 id: ${memberId}`);
+      eventTime = await runSql(
+        current,
+        `SELECT to_char(created_at AT TIME ZONE 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') FROM activity_events
+        WHERE type = 'MEMBER_REVOKED' AND member_id = '${memberId}'`,
+      );
+      expect(record).toContain(`시각: ${eventTime}`);
+      savedBackup = await expectSuccessfulBackup(current, await pendingBackup);
+    } finally {
+      if (!finished) await runCommand(['rm', '-f', backupName]);
+      await pendingBackup;
+    }
+    expect(savedBackup.snapshotTime < eventTime, '백업 기준 시각 뒤에 생긴 철회').toBe(true);
+    await writeFile(path.join(current.directory, 'records.txt'), `${record}\n`);
+    await expectRestoredAndStopped(current, await runRestore(current, savedBackup.filename), savedBackup.snapshotTime);
+    expect(await runSql(current, `SELECT revoked_at IS NULL FROM project_members WHERE id = '${memberId}'`)).toBe('t');
+    expect(await runSql(current, `SELECT approver_member_id FROM projects WHERE id = '${projectId}'`)).toBe(memberId);
+    const replay = await runCompose(
+      current,
+      [
+        'run',
+        '--rm',
+        '--no-deps',
+        '-T',
+        '-v',
+        `${current.directory}/records.txt:/records.txt:ro`,
+        'api',
+        'npm',
+        'run',
+        '--silent',
+        'replay-records',
+        '--',
+        '/records.txt',
+        '--since',
+        savedBackup.snapshotTime,
+      ],
+      120_000,
+    );
+    expect(replay).toMatchObject({ code: 0 });
+    expect(await runSql(current, `SELECT revoked_at IS NOT NULL FROM project_members WHERE id = '${memberId}'`)).toBe(
+      't',
+    );
+    expect(await runSql(current, `SELECT approver_member_id IS NULL FROM projects WHERE id = '${projectId}'`)).toBe(
+      't',
+    );
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+    await finishRestore(current);
+    const freshCookie = await createSession(current, clientId);
+    expect((await requestApi(current, `/api/projects/${projectId}`, freshCookie)).stderr).toMatch(/HTTP\/1\.1 404\b/);
+  }, 600_000);
+
+  it('복원 뒤에는 수락하지 않은 옛 초대가 남지 않아 그 초대로 참여할 수 없다', async () => {
+    const current = await prepareDeployment(deployment!);
+    const { developerId, projectId } = await seedProjectAndPhoto(current);
+    const clientId = randomUUID();
+    const acceptedId = randomUUID();
+    await runSql(
+      current,
+      `
+      INSERT INTO users (id, email, name) VALUES ('${clientId}', 'client@example.com', '클라이언트');
+      INSERT INTO invitations (id, project_id, email, token_hash, invited_by_id, expires_at, accepted_at)
+        VALUES ('${acceptedId}', '${projectId}', 'accepted@example.com', '${randomUUID()}',
+          '${developerId}', now() + interval '1 day', now());
+    `,
+    );
+    const developerCookie = await createSession(current, developerId);
+    const invitation = await requestApi(current, `/api/projects/${projectId}/invitations`, developerCookie, {
+      email: 'client@example.com',
+    });
+    expect(invitation.stderr).toMatch(/HTTP\/1\.1 201\b/);
+    const token = (JSON.parse(invitation.stdout) as { link: string }).link.split('/').at(-1)!;
+    const clientCookie = await createSession(current, clientId);
+    const { filename, snapshotTime } = await expectSuccessfulBackup(
+      current,
+      await runInTools(current, ['/work/deploy/backup.sh'], 120_000),
+    );
+    await waitForHealthyApi(current);
+    expect((await requestApi(current, '/api/invitations/accept', clientCookie, { token })).stderr).toMatch(
+      /HTTP\/1\.1 200\b/,
+    );
+    const memberId = await runSql(current, `SELECT id FROM project_members WHERE user_id = '${clientId}'`);
+    expect((await requestApi(current, `/api/members/${memberId}/revoke`, developerCookie, {})).stderr).toMatch(
+      /HTTP\/1\.1 204\b/,
+    );
+
+    await expectRestoredAndStopped(current, await runRestore(current, filename), snapshotTime);
+    expect(await runSql(current, 'SELECT count(*) FROM invitations WHERE accepted_at IS NULL')).toBe('0');
+    expect(await runSql(current, 'SELECT id FROM invitations')).toBe(acceptedId);
+    await finishRestore(current);
+    // 새 세션으로 묻는다. 복원이 세션을 지운 탓에 401인 것을 초대 거부로 오인하지 않는다.
+    const freshCookie = await createSession(current, clientId);
+    expect((await requestApi(current, '/api/auth/me', freshCookie)).stderr).toMatch(/HTTP\/1\.1 200\b/);
+    expect((await requestApi(current, `/api/invitations/${token}`)).stderr).toMatch(/HTTP\/1\.1 404\b/);
+    expect((await requestApi(current, '/api/invitations/accept', freshCookie, { token })).stderr).toMatch(
+      /HTTP\/1\.1 404\b/,
+    );
+    expect(await runSql(current, `SELECT count(*) FROM project_members WHERE user_id = '${clientId}'`)).toBe('0');
+  }, 420_000);
+
+  it('틀린 암호나 깨진 파일로 복원하면 DB와 사진이 그대로다', async () => {
+    const current = await prepareDeployment(deployment!);
+    const { projectId, storageKey } = await seedProjectAndPhoto(current);
+    const { filename } = await expectSuccessfulBackup(
+      current,
+      await runInTools(current, ['/work/deploy/backup.sh'], 120_000),
+    );
+    await waitForHealthyApi(current);
+    await runSql(current, `UPDATE projects SET name = '백업 뒤 수정한 프로젝트' WHERE id = '${projectId}'`);
+    expect(
+      await runCompose(current, [
+        'exec',
+        '-T',
+        'api',
+        'sh',
+        '-c',
+        'printf changed > "/data/assets/$1"',
+        'sh',
+        storageKey,
+      ]),
+    ).toMatchObject({ code: 0 });
+    const before = await readProjectAndPhotos(current);
+    const apiId = await runCompose(current, ['ps', '-q', 'api']);
+    expect(apiId).toMatchObject({ code: 0 });
+    const startedBefore = await runCommand(['inspect', '--format', '{{.State.StartedAt}}', apiId.stdout.trim()]);
+    expect(startedBefore).toMatchObject({ code: 0 });
+    await writeFile(path.join(current.directory, 'wrong-passphrase'), randomUUID(), { mode: 0o600 });
+    const encrypted = await readFile(path.join(current.directory, 'backups', filename));
+    await writeFile(path.join(current.directory, 'backups/truncated.tar.gpg'), encrypted.subarray(0, 128));
+
+    const invalidBackups = [
+      { filename: 'invalid-db.tar.gpg', damagedFile: 'db.dump', contents: 'not a PostgreSQL dump' },
+      { filename: 'invalid-assets.tar.gpg', damagedFile: 'assets.tar', contents: 'not a tar archive' },
+      // 파일이 없으면 뒤의 cat도 실패하므로, 빈 파일로 비어 있는지 확인하는 검사를 따로 검증한다.
+      { filename: 'empty-snapshot.tar.gpg', damagedFile: 'snapshot-time.txt', contents: '' },
+    ];
+    for (const backup of invalidBackups) {
+      const repacked = await runInTools(current, [
+        'bash',
+        '-e',
+        '-o',
+        'pipefail',
+        '-c',
+        `
+        mkdir /work/repack
+        gpg --batch --pinentry-mode loopback --passphrase-file /work/passphrase -d "$1" | tar -xf - -C /work/repack
+        printf '%s' "$3" > "/work/repack/$2"
+        tar -cf - -C /work/repack snapshot-time.txt db.dump assets.tar |
+          gpg --batch --pinentry-mode loopback --passphrase-file /work/passphrase --symmetric --cipher-algo AES256 \
+            -o "/work/backups/$4"
+        rm -rf /work/repack
+      `,
+        'bash',
+        `/work/backups/${filename}`,
+        backup.damagedFile,
+        backup.contents,
+        backup.filename,
+      ]);
+      expect(repacked, `${backup.damagedFile} 내용이 잘못된 백업 암호화`).toMatchObject({ code: 0 });
+    }
+
+    for (const attempt of [
+      { filename, environment: { BACKUP_PASSPHRASE_FILE: '/work/wrong-passphrase' } },
+      { filename: 'truncated.tar.gpg', environment: {} },
+      ...invalidBackups.map(({ filename }) => ({ filename, environment: {} })),
+    ]) {
+      const result = await runRestore(current, attempt.filename, 'restore', attempt.environment);
+      expect(result.code).not.toBe(0);
+      await expect(stat(path.join(current.directory, '.backup-work'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(path.join(current.directory, '.maintenance'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await readProjectAndPhotos(current)).toEqual(before);
+      expect(await runningServices(current)).toEqual(['api', 'db', 'nginx']);
+      expect(await getHealth(current)).toMatchObject({ code: 0, stdout: '{"status":"ok"}' });
+      expect(await runCommand(['inspect', '--format', '{{.State.StartedAt}}', apiId.stdout.trim()])).toEqual(
+        startedBefore,
+      );
+    }
+  }, 420_000);
+
+  it('손작업 표시 중에는 복원이 실패하고 end를 해야 api가 켜진다', async () => {
+    const current = await prepareDeployment(deployment!);
+    await seedProjectAndPhoto(current);
+    const { filename } = await expectSuccessfulBackup(
+      current,
+      await runInTools(current, ['/work/deploy/backup.sh'], 120_000),
+    );
+    await waitForHealthyApi(current);
+    const before = await readProjectAndPhotos(current);
+    expect(await runInTools(current, ['/work/deploy/maintenance.sh', 'start'])).toMatchObject({ code: 0 });
+    const marker = path.join(current.directory, '.maintenance');
+    const restore = await runRestore(current, filename);
+    expect(restore).toMatchObject({ code: 1 });
+    expect(restore.stderr).toContain('점검 중이라 복원하지 않아요');
+    expect(await runInTools(current, ['/work/deploy/restore.sh', '--finish'])).toMatchObject({ code: 1 });
+    expect((await readFile(marker, 'utf8')).trim()).toBe('manual');
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+    expect(await readProjectAndPhotos(current)).toEqual(before);
+    expect((await getHealth(current)).code).not.toBe(0);
+
+    expect(await runInTools(current, ['/work/deploy/maintenance.sh', 'end'])).toMatchObject({ code: 0 });
+    expect(await getHealth(current)).toMatchObject({ code: 0, stdout: '{"status":"ok"}' });
+    await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await runningServices(current)).toEqual(['api', 'db', 'nginx']);
+  }, 360_000);
+
+  it('복원은 api를 멈춘 채 끝나고 finish를 해야 켜진다', async () => {
+    const current = await prepareDeployment(deployment!);
+    const { projectId, storageKey } = await seedProjectAndPhoto(current);
+    const original = await readProjectAndPhotos(current);
+    const { filename, snapshotTime } = await expectSuccessfulBackup(
+      current,
+      await runInTools(current, ['/work/deploy/backup.sh'], 120_000),
+    );
+    await waitForHealthyApi(current);
+    await runSql(current, `UPDATE projects SET name = '백업 뒤 바꿈' WHERE id = '${projectId}'`);
+    expect(
+      await runCompose(current, [
+        'exec',
+        '-T',
+        'api',
+        'sh',
+        '-c',
+        'printf changed > "/data/assets/$1"; printf extra > /data/assets/extra.png',
+        'sh',
+        storageKey,
+      ]),
+    ).toMatchObject({ code: 0 });
+    const changed = await readProjectAndPhotos(current);
+    expect(changed).not.toEqual(original);
+    const cancelled = await runRestore(current, filename, 'yes');
+    expect(cancelled).toMatchObject({ code: 1 });
+    expect(cancelled.stderr).toContain('복원하지 않았어요');
+    await expect(stat(path.join(current.directory, '.backup-work'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readProjectAndPhotos(current)).toEqual(changed);
+    await expect(stat(path.join(current.directory, '.maintenance'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await getHealth(current)).toMatchObject({ code: 0, stdout: '{"status":"ok"}' });
+
+    await expectRestoredAndStopped(current, await runRestore(current, filename), snapshotTime);
+    await expect(stat(path.join(current.directory, '.backup-work'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readProjectAndPhotos(current)).toEqual(original);
+    expect(await runInTools(current, ['/work/deploy/maintenance.sh', 'end'])).toMatchObject({ code: 1 });
+    expect((await readFile(path.join(current.directory, '.maintenance'), 'utf8')).trim()).toBe('restore done');
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+    await finishRestore(current);
+    expect(await readProjectAndPhotos(current)).toEqual(original);
+    expect(await runCompose(current, ['stop', 'api'])).toMatchObject({ code: 0 });
+    expect(await runInTools(current, ['/work/deploy/restore.sh', '--finish'])).toMatchObject({ code: 1 });
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+    await expect(stat(path.join(current.directory, '.maintenance'))).rejects.toMatchObject({ code: 'ENOENT' });
+  }, 420_000);
+
+  it('옛 DB 구조의 백업을 복원하면 api를 켜지 않은 채 지금 구조로 맞춘다', async () => {
+    const current = await prepareDeployment(deployment!);
+    await seedProjectAndPhoto(current);
+    const before = await readProjectAndPhotos(current);
+    expect(await runCompose(current, ['stop', 'api'])).toMatchObject({ code: 0 });
+    const migration = '20261114130000_add_privacy_consent';
+    await runSql(
+      current,
+      `
+      ALTER TABLE login_codes DROP COLUMN privacy_agreed;
+      ALTER TABLE users DROP COLUMN privacy_agreed_at;
+      DELETE FROM _prisma_migrations WHERE migration_name = '${migration}';
+    `,
+    );
+    const columns = `SELECT table_name || '.' || column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND
+        ((table_name = 'login_codes' AND column_name = 'privacy_agreed') OR
+         (table_name = 'users' AND column_name = 'privacy_agreed_at')) ORDER BY table_name`;
+    expect(await runSql(current, columns)).toBe('');
+    const apiId = await runCompose(current, ['ps', '-aq', 'api']);
+    expect(apiId).toMatchObject({ code: 0 });
+    const startedBefore = await runCommand(['inspect', '--format', '{{.State.StartedAt}}', apiId.stdout.trim()]);
+    expect(startedBefore).toMatchObject({ code: 0 });
+    const { filename, snapshotTime } = await expectSuccessfulBackup(
+      current,
+      await runInTools(current, ['/work/deploy/backup.sh'], 120_000),
+    );
+
+    await expectRestoredAndStopped(current, await runRestore(current, filename), snapshotTime);
+    expect(await runSql(current, columns)).toBe('login_codes.privacy_agreed\nusers.privacy_agreed_at');
+    expect(
+      await runSql(
+        current,
+        `SELECT count(*) FROM _prisma_migrations WHERE migration_name = '${migration}'
+      AND finished_at IS NOT NULL AND rolled_back_at IS NULL`,
+      ),
+    ).toBe('1');
+    expect(await runCommand(['inspect', '--format', '{{.State.StartedAt}}', apiId.stdout.trim()])).toEqual(
+      startedBefore,
+    );
+    expect(await readProjectAndPhotos(current)).toEqual(before);
+  }, 420_000);
+
+  it('DB를 지운 뒤 복원이 실패하면 표시가 남고 api는 멈춰 있고 finish가 거부되며 다시 복원할 수 있다', async () => {
+    const current = await prepareDeployment(deployment!);
+    const { projectId } = await seedProjectAndPhoto(current);
+    const before = await readProjectAndPhotos(current);
+    const { filename, snapshotTime } = await expectSuccessfulBackup(
+      current,
+      await runInTools(current, ['/work/deploy/backup.sh'], 120_000),
+    );
+    // 일반 파일 x 뒤에 x/y가 오는 tar: 목록 검사는 되지만 실제 디스크에는 풀 수 없다.
+    const corrupt = await runInTools(current, [
+      'bash',
+      '-e',
+      '-o',
+      'pipefail',
+      '-c',
+      `
+      mkdir /work/repack /work/tar-file /work/tar-child
+      gpg --batch --pinentry-mode loopback --passphrase-file /work/passphrase -d "$1" | tar -xf - -C /work/repack
+      printf x > /work/tar-file/x
+      mkdir /work/tar-child/x
+      printf y > /work/tar-child/x/y
+      tar -cf /work/repack/assets.tar -C /work/tar-file x
+      tar -rf /work/repack/assets.tar -C /work/tar-child x/y
+      tar -tf /work/repack/assets.tar
+      tar -cf - -C /work/repack snapshot-time.txt db.dump assets.tar |
+        gpg --batch --pinentry-mode loopback --passphrase-file /work/passphrase --symmetric --cipher-algo AES256 \
+          -o /work/backups/bad-assets.tar.gpg
+    `,
+      'bash',
+      `/work/backups/${filename}`,
+    ]);
+    expect(corrupt).toMatchObject({ code: 0 });
+    expect(corrupt.stdout.trim().split('\n')).toEqual(['x', 'x/y']);
+    await runSql(current, `UPDATE projects SET name = '복원 전에 바꾼 이름' WHERE id = '${projectId}'`);
+
+    const failedRestore = await runRestore(current, 'bad-assets.tar.gpg');
+    expect(failedRestore.code).not.toBe(0);
+    expect(failedRestore.stdout).not.toContain('복원을 마쳤어요');
+    // DB가 실제로 이전 값으로 바뀌었다. 사전 검사에서 실패한 것을 중간 실패로 오인하지 않는다.
+    expect(await runSql(current, `SELECT name FROM projects WHERE id = '${projectId}'`)).toBe('복원할 프로젝트');
+    const marker = path.join(current.directory, '.maintenance');
+    expect((await readFile(marker, 'utf8')).trim()).toBe('restore in-progress');
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+    expect((await getHealth(current)).code).not.toBe(0);
+    expect(await runInTools(current, ['/work/deploy/restore.sh', '--finish'])).toMatchObject({ code: 1 });
+    expect((await readFile(marker, 'utf8')).trim()).toBe('restore in-progress');
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+
+    await expectRestoredAndStopped(current, await runRestore(current, filename), snapshotTime);
+    expect(await readProjectAndPhotos(current)).toEqual(before);
+    await finishRestore(current);
+  }, 480_000);
+
+  it('finish가 api를 켜지 못하면 표시가 남고 다시 finish하면 켜진다', async () => {
+    const current = await prepareDeployment(deployment!);
+    await seedProjectAndPhoto(current);
+    const { filename, snapshotTime } = await expectSuccessfulBackup(
+      current,
+      await runInTools(current, ['/work/deploy/backup.sh'], 120_000),
+    );
+    await expectRestoredAndStopped(current, await runRestore(current, filename), snapshotTime);
+    await runSql(current, "ALTER USER client_review PASSWORD 'broken'");
+    const failedFinish = await runInTools(current, ['/work/deploy/restore.sh', '--finish']);
+    expect(failedFinish).toMatchObject({ code: 1 });
+    expect(failedFinish.stderr).toContain('api가 응답하지 않아요');
+    expect((await readFile(path.join(current.directory, '.maintenance'), 'utf8')).trim()).toBe('restore done');
+    expect((await getHealth(current)).code).not.toBe(0);
+    await expect.poll(() => runningServices(current), { timeout: 30_000, interval: 1_000 }).toEqual(['db', 'nginx']);
+    await runSql(current, "ALTER USER client_review PASSWORD 'e2e'");
+
+    await finishRestore(current);
+  }, 420_000);
 
   it('백업이 중간에 실패하면 api가 다시 켜지고 알림 메일이 간다', async () => {
     const current = await prepareDeployment(deployment!);
