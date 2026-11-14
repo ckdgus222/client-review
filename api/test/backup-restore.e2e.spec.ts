@@ -1274,6 +1274,66 @@ describe('백업과 복원 (e2e)', () => {
     expect(wrongPassphrase.stdout).toBe('');
   }, 240_000);
 
+  it('다시 시작을 되풀이하던 api도 백업이 멈춘 뒤 뜨고 끝에 다시 켠다', async () => {
+    const current = deployment!;
+    await writeFile(
+      path.join(current.directory, 'restarting.yml'),
+      'services:\n  api:\n    restart: unless-stopped\n    command: ["sh", "-c", "exit 1"]\n',
+    );
+    current.composeFile += ':/work/restarting.yml';
+    expect(await runCompose(current, ['up', '-d', '--wait', 'db'], 120_000)).toMatchObject({ code: 0 });
+    expect(await runCompose(current, ['up', '-d', '--build', 'api'], 480_000)).toMatchObject({ code: 0 });
+    const container = await runCompose(current, ['ps', '-a', '-q', 'api']);
+    expect(container).toMatchObject({ code: 0 });
+    const containerId = container.stdout.trim();
+    expect(containerId).not.toBe('');
+
+    // 다시 시작 간격이 길어질 때까지 기다려 백업이 restarting 상태를 보게 한다.
+    await expect
+      .poll(
+        async () => {
+          const state = await runCommand(['inspect', '--format', '{{.State.Status}} {{.RestartCount}}', containerId]);
+          expect(state).toMatchObject({ code: 0 });
+          const [status, restartCount] = state.stdout.trim().split(/\s+/);
+          return status === 'restarting' && Number(restartCount) >= 6;
+        },
+        { timeout: 60_000, interval: 200 },
+      )
+      .toBe(true);
+    expect(await runCompose(current, ['ps', '-q', '--status', 'running', 'api'])).toMatchObject({
+      code: 0,
+      stdout: '',
+    });
+    const restarting = await runCompose(current, ['ps', '-q', '--status', 'restarting', 'api']);
+    expect(restarting).toMatchObject({ code: 0 });
+    expect(restarting.stdout.trim()).toBe(containerId);
+
+    const backupStartedAt = Math.floor(Date.now() / 1_000);
+    const backup = await runInTools(current, ['/work/deploy/backup.sh'], 120_000);
+    const backupFinishedAt = Math.ceil(Date.now() / 1_000);
+
+    await expectSuccessfulBackup(current, backup);
+    // 자동 재시작의 die·start와 구별한다. stop은 백업이 실제로 멈췄을 때만 남는다.
+    const stopped = await runCommand([
+      'events',
+      '--since',
+      String(backupStartedAt),
+      '--until',
+      String(backupFinishedAt),
+      '--filter',
+      `container=${containerId}`,
+      '--filter',
+      'event=stop',
+      '--format',
+      '{{.Action}}',
+    ]);
+    expect(stopped).toMatchObject({ code: 0 });
+    expect(stopped.stdout.trim().split(/\r?\n/)).toContain('stop');
+    const state = await runCommand(['inspect', '--format', '{{.State.Status}}', containerId]);
+    expect(state).toMatchObject({ code: 0 });
+    expect(['running', 'restarting']).toContain(state.stdout.trim());
+  }, 600_000);
+
   it('14일 지난 백업은 서버와 바깥 보관 곳에서 지우고 그 안의 것은 남긴다', async () => {
     const current = await prepareDeployment(deployment!);
     await seedOldBackups(current);

@@ -103,7 +103,9 @@ if [ -f "$API_STOPPED_NOTE" ]; then
 fi
 
 # 쓰는 곳이 api 하나라서, api를 멈추면 DB와 사진이 같은 시점으로 굳는다. 시작할 때 멈춰 있던 api는 끝에도 켜지 않는다.
-if [ -n "$(docker compose ps -q --status running api)" ]; then
+# restarting도 돌고 있는 것으로 본다. 서버가 막 켜졌을 때 api는 db를 기다리며 다시 시작을 되풀이하는데,
+# 그 사이(restarting)에는 running으로 잡히지 않아서, 멈추지 않으면 뜨는 도중에 api가 켜진다.
+if [ -n "$(docker compose ps -q --status running --status restarting api)" ]; then
     touch "$API_STOPPED_NOTE"
     docker compose stop api
 fi
