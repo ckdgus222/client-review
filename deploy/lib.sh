@@ -37,3 +37,27 @@ wait_for_api() {
         sleep 5
     done
 }
+
+# 서버 설정 값 하나를 찍는다. 환경 변수가 먼저고, 없으면 저장소의 .env, 그것도 없으면 기본값($2)이다. 끝내 없으면 실패다.
+# .env를 통째로 source하지 않는다. MAIL_FROM처럼 셸 문법이 아닌 값이 들어 있다.
+setting() {
+    local name=$1 value=${!1:-}
+    if [ -z "$value" ] && [ -f .env ]; then
+        value=$(grep -E "^$name=" .env | tail -n 1 | cut -d= -f2-) || true
+    fi
+    value=${value:-${2:-}}
+    if [ -z "$value" ]; then
+        echo "$name 설정이 없어요(.env에 적어 주세요)" >&2
+        return 1
+    fi
+    echo "$value"
+}
+
+# 개발자에게 알림 메일을 보낸다(docs/deploy.md 정할 것 5). api가 꺼져 있어도 가게 api 이미지로 따로 실행한다.
+# 알림이 실패해도 부른 스크립트는 이어 간다.
+alert() {
+    echo "$1" >&2
+    if ! docker compose run --rm --no-deps -T api npm run --silent send-alert -- "$1"; then
+        echo "알림 메일을 보내지 못했어요" >&2
+    fi
+}
