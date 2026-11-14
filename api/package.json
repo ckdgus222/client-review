@@ -20,6 +20,7 @@
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
     "withdraw-user": "node --env-file-if-exists=../.env dist/scripts/withdraw-user.js",
     "send-alert": "node --env-file-if-exists=../.env dist/scripts/send-alert.js",
+    "replay-records": "node --env-file-if-exists=../.env dist/scripts/replay-records.js",
     "postinstall": "prisma generate"
   },
   "dependencies": {
