@@ -2,7 +2,7 @@ import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import { ActivityType, type Prisma, ProjectRole } from '../generated/prisma/client.js';
 import { MailService } from '../mail/mail.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { buildNotificationMessage, RECORD_TYPES } from './notification-message.js';
+import { buildNotificationMessage, type NotificationEvent, RECORD_TYPES } from './notification-message.js';
 
 // 우편함에 넣을 때 필요한 사건 칸. ActivityService.record가 사건 줄을 쓴 직후 넘긴다.
 export type EnqueuedEvent = {
@@ -170,21 +170,47 @@ export class NotificationsService implements OnModuleDestroy {
     await this.recordSent(delivery);
   }
 
-  private async loadEvent(eventId: string) {
+  private async loadEvent(eventId: string): Promise<NotificationEvent> {
     const event = await this.prisma.activityEvent.findUniqueOrThrow({
       where: { id: eventId },
       select: {
+        id: true,
         type: true,
-        createdAt: true,
         projectId: true,
-        memberId: true,
         project: { select: { name: true } },
         version: { select: { id: true, number: true } },
         issue: { select: { id: true, number: true, title: true } },
       },
     });
+    // 시각은 DB에서 글자로 만든다. Prisma가 주는 Date는 천분의 1초까지만 알아서 기록 메일의 순서가 뒤집힐 수 있다.
+    // 대상 멤버도 같은 조회에서 읽는다. 대상이 없는 사건은 memberId가 null이고 나머지 멤버 칸은 쓰지 않는다.
+    const [row] = await this.prisma.$queryRaw<
+      {
+        occurredAt: string;
+        memberId: string | null;
+        role: ProjectRole;
+        userId: string;
+        email: string;
+        name: string;
+        joinedAt: string;
+      }[]
+    >`
+      SELECT to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "occurredAt",
+             m.id AS "memberId", m.role, m.user_id AS "userId", u.email, u.name,
+             to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "joinedAt"
+      FROM activity_events e
+      LEFT JOIN project_members m ON m.id = e.member_id
+      LEFT JOIN users u ON u.id = m.user_id
+      WHERE e.id = ${eventId}::uuid
+    `;
+    const { occurredAt, memberId, ...member } = row;
     const { project, ...rest } = event;
-    return { ...rest, projectName: project.name };
+    return {
+      ...rest,
+      occurredAt,
+      projectName: project.name,
+      member: memberId ? { id: memberId, ...member } : null,
+    };
   }
 
   // 결과는 내가 잡은 임대가 그대로일 때만 적는다. 임대가 끝나 다른 작업자가 다시 잡았으면 늦게 끝난 결과는 버린다.

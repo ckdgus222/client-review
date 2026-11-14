@@ -3,12 +3,21 @@ import { buildNotificationMessage, type NotificationEvent } from './notification
 
 describe('buildNotificationMessage', () => {
   const appUrl = 'https://review.example.com';
+  const member = {
+    id: '20000000-0000-4000-8000-000000000002',
+    role: 'CLIENT' as const,
+    userId: '50000000-0000-4000-8000-000000000005',
+    email: 'client@example.com',
+    name: '고객\n"사건: MEMBER_REVOKED"',
+    joinedAt: '2026-11-13T03:04:05.987654Z',
+  };
   const event: NotificationEvent = {
+    id: '60000000-0000-4000-8000-000000000006',
     type: ActivityType.VERSION_PUBLISHED,
-    createdAt: new Date('2026-11-14T12:34:56.789+09:00'),
+    occurredAt: '2026-11-14T03:04:05.123456Z',
     projectId: '10000000-0000-4000-8000-000000000001',
     projectName: '꽃집 홈페이지',
-    memberId: '20000000-0000-4000-8000-000000000002',
+    member,
     version: null,
     issue: null,
   };
@@ -66,18 +75,29 @@ describe('buildNotificationMessage', () => {
     ActivityType.INVITATION_ACCEPTED,
     ActivityType.PROJECT_DELETE_REQUESTED,
     ActivityType.PROJECT_RESTORED,
-  ])('%s 기록 메일은 사건 시각을 UTC ISO로 바꾸고 복원에 필요한 네 줄만 담는다', (type) => {
+    ActivityType.PROJECT_ARCHIVED,
+    ActivityType.PROJECT_UNARCHIVED,
+    ActivityType.APPROVER_CHANGED,
+  ])('%s 기록 메일은 사건 id·대상 사람과 소수점 6자리 시각을 그대로 담는다', (type) => {
     const message = buildNotificationMessage({ ...event, type }, appUrl);
 
     expect(message).toEqual({
       subject: `[Client Review 기록] ${type}`,
       text: [
         `사건: ${type}`,
-        '시각: 2026-11-14T03:34:56.789Z',
+        `사건 id: ${event.id}`,
+        '시각: 2026-11-14T03:04:05.123456Z',
         `프로젝트 id: ${event.projectId}`,
-        `대상 멤버 id: ${event.memberId}`,
+        `대상 멤버 id: ${member.id}`,
+        '대상 역할: CLIENT',
+        `대상 사용자 id: ${member.userId}`,
+        '대상 이메일: "client@example.com"',
+        `대상 이름: ${JSON.stringify(member.name)}`,
+        '대상 참여 시각: 2026-11-13T03:04:05.987654Z',
       ].join('\n'),
     });
+    expect(message.text.split('\n')).toHaveLength(10);
+    expect(JSON.parse(message.text.split('\n')[8].slice('대상 이름: '.length))).toBe(member.name);
   });
 
   it.each([
@@ -85,15 +105,42 @@ describe('buildNotificationMessage', () => {
     ActivityType.INVITATION_ACCEPTED,
     ActivityType.PROJECT_DELETE_REQUESTED,
     ActivityType.PROJECT_RESTORED,
+    ActivityType.PROJECT_ARCHIVED,
+    ActivityType.PROJECT_UNARCHIVED,
   ])('%s 기록 메일의 대상 멤버가 없으면 마지막 줄에 -를 적는다', (type) => {
-    const message = buildNotificationMessage({ ...event, type, memberId: null }, appUrl);
+    const message = buildNotificationMessage({ ...event, type, member: null }, appUrl);
 
     expect(message.text.split('\n')).toEqual([
       `사건: ${type}`,
-      '시각: 2026-11-14T03:34:56.789Z',
+      `사건 id: ${event.id}`,
+      '시각: 2026-11-14T03:04:05.123456Z',
       `프로젝트 id: ${event.projectId}`,
       '대상 멤버 id: -',
     ]);
+  });
+
+  it('승인자를 비운 기록은 대상 멤버 id에 지정하지 않음을 적는다', () => {
+    const message = buildNotificationMessage({ ...event, type: ActivityType.APPROVER_CHANGED, member: null }, appUrl);
+
+    expect(message).toEqual({
+      subject: '[Client Review 기록] APPROVER_CHANGED',
+      text: [
+        '사건: APPROVER_CHANGED',
+        `사건 id: ${event.id}`,
+        `시각: ${event.occurredAt}`,
+        `프로젝트 id: ${event.projectId}`,
+        '대상 멤버 id: 지정하지 않음',
+      ].join('\n'),
+    });
+  });
+
+  it('대상 멤버가 개발자이면 역할을 DEVELOPER로 적는다', () => {
+    const message = buildNotificationMessage(
+      { ...event, type: ActivityType.MEMBER_REVOKED, member: { ...member, role: 'DEVELOPER' } },
+      appUrl,
+    );
+
+    expect(message.text.split('\n')[5]).toBe('대상 역할: DEVELOPER');
   });
 
   it.each(
@@ -130,7 +177,10 @@ describe('buildNotificationMessage', () => {
     ActivityType.INVITATION_ACCEPTED,
     ActivityType.PROJECT_DELETE_REQUESTED,
     ActivityType.PROJECT_RESTORED,
-  ])('%s 메일에 쪽지 본문·댓글·이메일·로그인 코드·초대 토큰을 넣지 않는다', (type) => {
+    ActivityType.PROJECT_ARCHIVED,
+    ActivityType.PROJECT_UNARCHIVED,
+    ActivityType.APPROVER_CHANGED,
+  ])('%s 메일에 쪽지 본문·댓글·대상 외 이메일·로그인 코드·초대 토큰을 넣지 않는다', (type) => {
     // 실제 비밀값이 아닌 누출 확인용 표식이다. 조회 결과에 칸이 더 있어도 메일에 복사하면 안 된다.
     const privateFields = {
       body: 'fake-private-issue-body',
@@ -158,14 +208,11 @@ describe('buildNotificationMessage', () => {
 
   it.each([
     ActivityType.INVITATION_CREATED,
-    ActivityType.APPROVER_CHANGED,
     ActivityType.ISSUE_CREATED,
     ActivityType.ISSUE_STARTED,
     ActivityType.ISSUE_VERIFIED,
     ActivityType.ISSUE_REOPENED,
     ActivityType.ISSUE_WITHDRAWN,
-    ActivityType.PROJECT_ARCHIVED,
-    ActivityType.PROJECT_UNARCHIVED,
   ])('메일 대상이 아닌 %s 사건은 버전과 쪽지가 있어도 오류를 던진다', (type) => {
     expect(() => buildNotificationMessage({ ...event, type, version, issue }, appUrl)).toThrow();
   });
