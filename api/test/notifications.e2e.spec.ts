@@ -185,7 +185,13 @@ describe('알림 우편함 (e2e)', () => {
       await post(`/api/versions/${versionId}/publish`).expect(500);
       expect(await readState()).toEqual(before);
       await worker.processDue();
-      expect(send).not.toHaveBeenCalled();
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith({
+        to: process.env.DEVELOPER_EMAIL,
+        subject: '[Client Review 알림] 서버 오류 500',
+        text: expect.stringContaining('요청: POST /api/versions/:id/publish'),
+      });
+      expect(mails.filter(({ subject }) => subject.startsWith('[Client Review]'))).toEqual([]);
     } finally {
       try {
         await prisma.$executeRaw`DROP TRIGGER IF EXISTS notifications_e2e_fail_insert ON notification_deliveries`;

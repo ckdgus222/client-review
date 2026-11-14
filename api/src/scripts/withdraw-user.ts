@@ -1,4 +1,4 @@
-import { isDeveloper } from '../auth/developer.js';
+import { developerEmail, isDeveloper } from '../auth/developer.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 const WITHDRAWN_NAME = '탈퇴한 사용자';
@@ -10,7 +10,7 @@ const WITHDRAWN_NAME = '탈퇴한 사용자';
 export const withdrawUser = async (prisma: PrismaService, rawEmail: string) => {
   const email = rawEmail.trim().toLowerCase();
   // 설정이 비어 있으면 isDeveloper가 늘 false라 개발자 계정을 지킬 수 없다. 그래서 아예 시작하지 않는다.
-  if (!process.env.DEVELOPER_EMAIL?.trim()) throw new Error('DEVELOPER_EMAIL이 없어요');
+  if (!developerEmail()) throw new Error('DEVELOPER_EMAIL이 없어요');
   if (isDeveloper(email)) throw new Error('개발자 계정은 탈퇴 처리하지 않아요');
 
   return prisma.$transaction(async (tx) => {
