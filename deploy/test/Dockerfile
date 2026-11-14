@@ -3,3 +3,5 @@
 # 운영 서버(Ubuntu)와 같은 GNU 도구를 쓰게 coreutils, findutils, tar, util-linux(flock)를 넣는다.
 FROM docker:27-cli
 RUN apk add --no-cache bash coreutils findutils tar util-linux gnupg rclone git
+# 업데이트 e2e는 맥에서 만든 임시 저장소를 꽂아 쓴다. 주인이 달라도 git이 그 폴더를 믿게 한다(이 이미지 안에서만).
+RUN git config --system --add safe.directory '*'

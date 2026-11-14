@@ -11,7 +11,22 @@ const toolsImage = 'client-review-deploy-tools';
 const execFileAsync = promisify(execFile);
 
 type CommandResult = { code: number; stdout: string; stderr: string };
-type Deployment = { directory: string; projectName: string };
+type Deployment = {
+  directory: string;
+  projectName: string;
+  workdir: string;
+  composeFile: string;
+};
+
+// git 쓰기는 테스트가 만든 임시 저장소에서만 한다. 사용자의 커밋 훅은 실행하지 않는다.
+const runGit = async (directory: string, args: string[]) => {
+  const result = await execFileAsync('git', ['-c', 'core.hooksPath=/dev/null', ...args], {
+    cwd: directory,
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  return result.stdout.trim();
+};
 
 // 종료 코드 1도 검사할 수 있게 명령 실패를 결과로 돌려준다.
 const runCommand = async (args: string[], timeout = 60_000): Promise<CommandResult> => {
@@ -48,11 +63,11 @@ const runInTools = (
       '-v',
       `${deployment.directory}:/work`,
       '-w',
-      '/work',
+      deployment.workdir,
       '-e',
       `COMPOSE_PROJECT_NAME=${deployment.projectName}`,
       '-e',
-      'COMPOSE_FILE=/repo/deploy/test/compose.e2e.yml',
+      `COMPOSE_FILE=${deployment.composeFile}`,
       '-e',
       'HEALTH_WAIT_SECONDS=10',
       ...Object.entries({
@@ -90,7 +105,85 @@ const runningServices = async (deployment: Deployment) => {
   return result.stdout.trim().split(/\s+/).filter(Boolean).sort();
 };
 
-const expectBackupAlert = (result: CommandResult, message: string) => {
+const prepareDeployment = async (deployment: Deployment, cloneRepository = false) => {
+  if (cloneRepository) {
+    const clone = path.join(deployment.directory, 'clone');
+    // 같은 디스크의 저장소를 복제하면 git이 개체 파일을 하드링크로 나눠 쓴다. 테스트가 프로젝트 저장소의 개체 파일을
+    // 건드리지 않고, 도구 컨테이너가 그 파일을 못 열어 pull이 실패하지 않게 모두 복사한다.
+    await runGit(deployment.directory, ['clone', '-q', '--no-hardlinks', repositoryDirectory, 'clone']);
+    await cp(path.join(repositoryDirectory, 'deploy'), path.join(clone, 'deploy'), { recursive: true });
+    await runGit(clone, ['add', '-A']);
+    const changes = await runGit(clone, ['diff', '--cached', '--name-only']);
+    if (changes) {
+      await runGit(clone, [
+        '-c',
+        'user.name=test',
+        '-c',
+        'user.email=test@example.com',
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '-qm',
+        'overlay',
+      ]);
+    }
+    await runGit(deployment.directory, ['clone', '-q', '--no-hardlinks', '--bare', 'clone', 'remote.git']);
+    await runGit(clone, ['remote', 'set-url', 'origin', '/work/remote.git']);
+    await runGit(deployment.directory, [
+      'clone',
+      '-q',
+      '--no-hardlinks',
+      path.join(deployment.directory, 'remote.git'),
+      'pusher',
+    ]);
+    deployment.workdir = '/work/clone';
+    deployment.composeFile = '/work/clone/deploy/test/compose.e2e.yml';
+  }
+  const up = await runCompose(deployment, ['up', '-d', '--build'], 480_000);
+  expect(up, '테스트 전용 db·api·nginx 시작').toMatchObject({ code: 0 });
+  await waitForHealthyApi(deployment);
+  return deployment;
+};
+
+const pushUpdate = async (deployment: Deployment, files: Record<string, string>) => {
+  const pusher = path.join(deployment.directory, 'pusher');
+  for (const [filename, contents] of Object.entries(files)) {
+    await writeFile(path.join(pusher, filename), contents);
+  }
+  await runGit(pusher, ['add', '-A']);
+  await runGit(pusher, [
+    '-c',
+    'user.name=test',
+    '-c',
+    'user.email=test@example.com',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-qm',
+    'update fixture',
+  ]);
+  await runGit(pusher, ['push', '-q', 'origin', 'HEAD']);
+};
+
+const runUpdate = (deployment: Deployment, retry = false) =>
+  runInTools(deployment, ['/work/clone/deploy/update.sh', ...(retry ? ['--retry'] : [])], 180_000);
+
+const expectSuccessfulUpdate = async (deployment: Deployment, result: CommandResult) => {
+  expect(result).toMatchObject({ code: 0 });
+  expect(result.stdout.trim().endsWith('업데이트를 마쳤어요')).toBe(true);
+  expect(`${result.stdout}\n${result.stderr}`).not.toContain('[Client Review 알림]');
+  await expect(stat(path.join(deployment.directory, 'clone/.maintenance'))).rejects.toMatchObject({ code: 'ENOENT' });
+  expect(await runningServices(deployment)).toEqual(['api', 'db', 'nginx']);
+  expect(await getHealth(deployment)).toMatchObject({ code: 0, stdout: '{"status":"ok"}' });
+  const landing = await runCompose(deployment, ['exec', '-T', 'nginx', 'wget', '-qO-', 'http://127.0.0.1/']);
+  expect(landing).toMatchObject({ code: 0 });
+  expect(landing.stdout).toContain('<html');
+  expect(await runGit(path.join(deployment.directory, 'clone'), ['rev-parse', 'HEAD'])).toBe(
+    await runGit(path.join(deployment.directory, 'remote.git'), ['rev-parse', 'HEAD']),
+  );
+};
+
+const expectOperationalAlert = (result: CommandResult, message: string) => {
   expect(result).toMatchObject({ code: 1 });
   // stderr의 실패 안내만으로는 메일 발송을 확인할 수 없다. log 발송기의 본문까지 본다.
   const lines = `${result.stdout}\n${result.stderr}`.split(/\r?\n/);
@@ -153,6 +246,8 @@ describe('백업과 복원 (e2e)', () => {
     deployment = {
       directory: await mkdtemp(path.join(tmpdir(), 'cr-ops-')),
       projectName: `cr-ops-${randomUUID().slice(0, 8)}`,
+      workdir: '/work',
+      composeFile: '/repo/deploy/test/compose.e2e.yml',
     };
     await cp(path.join(repositoryDirectory, 'deploy'), path.join(deployment.directory, 'deploy'), {
       recursive: true,
@@ -160,9 +255,6 @@ describe('백업과 복원 (e2e)', () => {
     await mkdir(path.join(deployment.directory, 'backups'));
     await mkdir(path.join(deployment.directory, 'remote'));
     await writeFile(path.join(deployment.directory, 'passphrase'), randomUUID(), { mode: 0o600 });
-    const up = await runCompose(deployment, ['up', '-d', '--build'], 480_000);
-    expect(up, '테스트 전용 db·api·nginx 시작').toMatchObject({ code: 0 });
-    await waitForHealthyApi(deployment);
   }, 600_000);
 
   afterEach(async () => {
@@ -177,13 +269,13 @@ describe('백업과 복원 (e2e)', () => {
   }, 120_000);
 
   it('백업이 중간에 실패하면 api가 다시 켜지고 알림 메일이 간다', async () => {
-    const current = deployment!;
+    const current = await prepareDeployment(deployment!);
     expect(await runCompose(current, ['stop', 'db'])).toMatchObject({ code: 0 });
     expect(await runningServices(current)).toEqual(['api', 'nginx']);
 
     const backup = await runInTools(current, ['/work/deploy/backup.sh'], 120_000);
 
-    expectBackupAlert(backup, '백업 실패: 서버에서 deploy/backup.sh 를 돌려 원인을 확인해 주세요');
+    expectOperationalAlert(backup, '백업 실패: 서버에서 deploy/backup.sh 를 돌려 원인을 확인해 주세요');
     expect(await readdir(path.join(current.directory, 'backups'))).toEqual([]);
     expect(await readdir(path.join(current.directory, 'remote'))).toEqual([]);
     await expect(stat(path.join(current.directory, '.backup-stopped-api'))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -192,7 +284,7 @@ describe('백업과 복원 (e2e)', () => {
   }, 240_000);
 
   it('켤 때 백업은 db가 늦게 준비돼도 기다렸다가 백업한다', async () => {
-    const current = deployment!;
+    const current = await prepareDeployment(deployment!);
     expect(await runCompose(current, ['stop', 'db', 'api'])).toMatchObject({ code: 0 });
     let finished = false;
     const pendingBackup = runInTools(current, ['/work/deploy/backup.sh', '--wait-ready'], 120_000, {
@@ -216,7 +308,7 @@ describe('백업과 복원 (e2e)', () => {
   }, 240_000);
 
   it('켤 때 백업은 db가 끝내 준비되지 않으면 실패하고 알림 메일이 간다', async () => {
-    const current = deployment!;
+    const current = await prepareDeployment(deployment!);
     expect(await runCompose(current, ['stop', 'db', 'api'])).toMatchObject({ code: 0 });
     const startedAt = Date.now();
 
@@ -225,7 +317,7 @@ describe('백업과 복원 (e2e)', () => {
     });
 
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(8_000);
-    expectBackupAlert(backup, '백업 실패: db가 준비되지 않았어요');
+    expectOperationalAlert(backup, '백업 실패: db가 준비되지 않았어요');
     expect(await readdir(path.join(current.directory, 'backups'))).toEqual([]);
     expect(await readdir(path.join(current.directory, 'remote'))).toEqual([]);
     expect(await runningServices(current)).toEqual(['nginx']);
@@ -235,7 +327,7 @@ describe('백업과 복원 (e2e)', () => {
   }, 120_000);
 
   it('백업이 api를 멈춘 채 끊기면 다음 백업이 api를 켜고 백업한다', async () => {
-    const current = deployment!;
+    const current = await prepareDeployment(deployment!);
     expect(await runCompose(current, ['stop', 'api'])).toMatchObject({ code: 0 });
     await writeFile(path.join(current.directory, '.backup-stopped-api'), '');
 
@@ -248,7 +340,7 @@ describe('백업과 복원 (e2e)', () => {
   }, 240_000);
 
   it('백업이 강제로 끊겨 남은 암호화 전 재료는 다음 백업이 지운다', async () => {
-    const current = deployment!;
+    const current = await prepareDeployment(deployment!);
     const containerName = `cr-backup-${randomUUID()}`;
     const workDirectory = path.join(current.directory, '.backup-work');
     const dumpFile = path.join(workDirectory, 'db.dump');
@@ -290,7 +382,7 @@ describe('백업과 복원 (e2e)', () => {
 
       const maintenanceBackup = await runInTools(current, ['/work/deploy/backup.sh'], 60_000);
 
-      expectBackupAlert(maintenanceBackup, '백업 실패: 점검 중이라 백업하지 않았어요');
+      expectOperationalAlert(maintenanceBackup, '백업 실패: 점검 중이라 백업하지 않았어요');
       await expect(stat(workDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
       expect(await readFile(marker, 'utf8')).toBe('manual');
     } finally {
@@ -301,7 +393,7 @@ describe('백업과 복원 (e2e)', () => {
   }, 300_000);
 
   it('시작할 때 멈춰 있던 api는 백업 뒤에도 멈춰 있다', async () => {
-    const current = deployment!;
+    const current = await prepareDeployment(deployment!);
     expect(await runCompose(current, ['stop', 'api'])).toMatchObject({ code: 0 });
 
     const backup = await runInTools(current, ['/work/deploy/backup.sh'], 120_000);
@@ -350,7 +442,7 @@ describe('백업과 복원 (e2e)', () => {
   }, 240_000);
 
   it('14일 지난 백업은 서버와 바깥 보관 곳에서 지우고 그 안의 것은 남긴다', async () => {
-    const current = deployment!;
+    const current = await prepareDeployment(deployment!);
     await seedOldBackups(current);
 
     const backup = await runInTools(current, ['/work/deploy/backup.sh'], 120_000);
@@ -368,14 +460,14 @@ describe('백업과 복원 (e2e)', () => {
   }, 240_000);
 
   it('올리기가 실패해도 14일 지난 서버 백업은 지우고 그 안의 것은 남기며 알림 메일이 간다', async () => {
-    const current = deployment!;
+    const current = await prepareDeployment(deployment!);
     await seedOldBackups(current);
 
     const backup = await runInTools(current, ['/work/deploy/backup.sh'], 120_000, {
       BACKUP_REMOTE: 'nosuchremote:dir',
     });
 
-    expectBackupAlert(backup, '백업 실패: 서버에서 deploy/backup.sh 를 돌려 원인을 확인해 주세요');
+    expectOperationalAlert(backup, '백업 실패: 서버에서 deploy/backup.sh 를 돌려 원인을 확인해 주세요');
     expect(`${backup.stdout}\n${backup.stderr}`).toContain('서버 밖의 14일 지난 백업을 지우지 못했어요');
     const retained = ['client-review-young.tar.gpg', 'client-review-almost-14-days.tar.gpg', 'other-file.txt'];
     const files = await readdir(path.join(current.directory, 'backups'));
@@ -392,20 +484,20 @@ describe('백업과 복원 (e2e)', () => {
   }, 240_000);
 
   it('점검 표시가 있으면 백업과 업데이트는 아무것도 하지 않고 api도 켜지 않는다', async () => {
-    const current = deployment!;
+    const current = await prepareDeployment(deployment!, true);
     expect(await runCompose(current, ['stop', 'api'])).toMatchObject({ code: 0 });
-    const marker = path.join(current.directory, '.maintenance');
-    const stoppedNote = path.join(current.directory, '.backup-stopped-api');
+    const marker = path.join(current.directory, 'clone/.maintenance');
+    const stoppedNote = path.join(current.directory, 'clone/.backup-stopped-api');
     // 지난 백업의 메모가 있어도 점검 표시가 우선이다.
     await writeFile(stoppedNote, '');
 
     for (const reason of ['manual', 'restore in-progress', 'restore done', 'update']) {
       await writeFile(marker, reason);
       for (const args of [[], ['--wait-ready']]) {
-        const backup = await runInTools(current, ['/work/deploy/backup.sh', ...args], 60_000, {
+        const backup = await runInTools(current, ['/work/clone/deploy/backup.sh', ...args], 60_000, {
           BACKUP_WAIT_SECONDS: '8',
         });
-        expectBackupAlert(backup, '백업 실패: 점검 중이라 백업하지 않았어요');
+        expectOperationalAlert(backup, '백업 실패: 점검 중이라 백업하지 않았어요');
         expect(`${backup.stdout}\n${backup.stderr}`).toContain(
           `백업 실패: 점검 중이라 백업하지 않았어요(표시: ${reason})`,
         );
@@ -416,11 +508,188 @@ describe('백업과 복원 (e2e)', () => {
         expect(await runningServices(current)).toEqual(['db', 'nginx']);
       }
     }
-    // 업데이트 쪽은 조각 5에서 이 테스트에 더한다.
-  }, 300_000);
+    const clone = path.join(current.directory, 'clone');
+    const originalHead = await runGit(clone, ['rev-parse', 'HEAD']);
+    await pushUpdate(current, { 'landing/update-check.txt': randomUUID() });
+    for (const reason of ['manual', 'restore in-progress', 'restore done', 'update']) {
+      await writeFile(marker, reason);
+      for (const retry of reason === 'update' ? [false] : [false, true]) {
+        const update = await runUpdate(current, retry);
+        expect(update).toMatchObject({ code: 1 });
+        expect(update.stderr).toContain(
+          retry ? `실패한 업데이트가 없어요(표시: ${reason})` : `점검 중이라 업데이트하지 않아요(표시: ${reason})`,
+        );
+        expect(`${update.stdout}\n${update.stderr}`).not.toContain('[Client Review 알림]');
+        expect(await readFile(marker, 'utf8')).toBe(reason);
+        expect(await readFile(stoppedNote, 'utf8')).toBe('');
+        expect(await runningServices(current)).toEqual(['db', 'nginx']);
+        expect(await runGit(clone, ['rev-parse', 'HEAD'])).toBe(originalHead);
+      }
+    }
+  }, 420_000);
+
+  it('api가 멈춰 있으면 업데이트는 아무것도 하지 않고 실패한다', async () => {
+    const current = await prepareDeployment(deployment!, true);
+    const clone = path.join(current.directory, 'clone');
+    const originalHead = await runGit(clone, ['rev-parse', 'HEAD']);
+    await pushUpdate(current, { 'landing/update-check.txt': randomUUID() });
+
+    for (const service of ['api', 'db', 'nginx']) {
+      expect(await runCompose(current, ['stop', service])).toMatchObject({ code: 0 });
+      const servicesBefore = await runningServices(current);
+
+      const update = await runUpdate(current);
+
+      expect(update).toMatchObject({ code: 1 });
+      expect(update.stderr).toContain(`꺼진 서비스가 있어 업데이트하지 않아요: ${service}`);
+      expect(`${update.stdout}\n${update.stderr}`).not.toContain('[Client Review 알림]');
+      await expect(stat(path.join(clone, '.maintenance'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await runGit(clone, ['rev-parse', 'HEAD'])).toBe(originalHead);
+      expect(await runningServices(current)).toEqual(servicesBefore);
+      expect(servicesBefore).not.toContain(service);
+      expect(await runCompose(current, ['start', service])).toMatchObject({ code: 0 });
+      await waitForHealthyApi(current);
+    }
+  }, 420_000);
+
+  it('업데이트는 새 커밋을 받아 다시 만들고 nginx를 거친 응답을 확인한다', async () => {
+    const current = await prepareDeployment(deployment!, true);
+    const content = randomUUID();
+    const script = await readFile(path.join(current.directory, 'pusher/deploy/update.sh'), 'utf8');
+    const comments = Array.from({ length: 200 }, (_, index) => `# update fixture ${index}`).join('\n');
+    const updatedScript = script.replace('\n', `\n${comments}\n`);
+    await pushUpdate(current, {
+      'landing/update-check.txt': content,
+      'deploy/update.sh': updatedScript,
+    });
+
+    const update = await runUpdate(current);
+
+    await expectSuccessfulUpdate(current, update);
+    expect(await readFile(path.join(current.directory, 'clone/deploy/update.sh'), 'utf8')).toBe(updatedScript);
+    const page = await runCompose(current, [
+      'exec',
+      '-T',
+      'nginx',
+      'wget',
+      '-qO-',
+      'http://127.0.0.1/update-check.txt',
+    ]);
+    expect(page).toMatchObject({ code: 0, stdout: content });
+  }, 420_000);
+
+  it('업데이트 뒤 api가 뜨지 않으면 실패하고 알림 메일이 간다', async () => {
+    const current = await prepareDeployment(deployment!, true);
+    const compose = await readFile(path.join(current.directory, 'pusher/deploy/test/compose.e2e.yml'), 'utf8');
+    await pushUpdate(current, {
+      'deploy/test/compose.e2e.yml': compose.replace('  api:\n', '  api:\n    command: ["sh", "-c", "exit 1"]\n'),
+    });
+
+    const update = await runUpdate(current);
+
+    expectOperationalAlert(update, '업데이트 실패: 원인을 고친 커밋을 올린 뒤 deploy/update.sh --retry 를 돌려 주세요');
+    expect(update.stderr).toContain('응답 확인에 실패했어요');
+    expect((await readFile(path.join(current.directory, 'clone/.maintenance'), 'utf8')).trim()).toBe('update');
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+    expect((await getHealth(current)).code).not.toBe(0);
+    expect(update.stdout).not.toContain('업데이트를 마쳤어요');
+  }, 420_000);
+
+  it('업데이트 뒤 소개 페이지가 응답하지 않으면 실패하고 알림 메일이 간다', async () => {
+    const current = await prepareDeployment(deployment!, true);
+    const landing = await readFile(path.join(current.directory, 'pusher/nginx/landing.conf'), 'utf8');
+    await pushUpdate(current, {
+      'nginx/landing.conf': landing.replace('try_files /index.html =404;', 'return 503;'),
+    });
+
+    const update = await runUpdate(current);
+
+    expectOperationalAlert(update, '업데이트 실패: 원인을 고친 커밋을 올린 뒤 deploy/update.sh --retry 를 돌려 주세요');
+    expect(update.stderr).toContain('응답 확인에 실패했어요');
+    expect((await readFile(path.join(current.directory, 'clone/.maintenance'), 'utf8')).trim()).toBe('update');
+    expect(await runningServices(current)).toEqual(['api', 'db', 'nginx']);
+    expect(await getHealth(current)).toMatchObject({ code: 0, stdout: '{"status":"ok"}' });
+    const page = await runCompose(current, ['exec', '-T', 'nginx', 'wget', '-qO-', 'http://127.0.0.1/']);
+    expect(page.code).not.toBe(0);
+    expect(update.stdout).not.toContain('업데이트를 마쳤어요');
+  }, 420_000);
+
+  it('실패한 업데이트는 고친 커밋을 올리고 retry하면 서비스가 돌아오고 표시가 지워진다', async () => {
+    const current = await prepareDeployment(deployment!, true);
+    const clone = path.join(current.directory, 'clone');
+    const marker = path.join(clone, '.maintenance');
+    const compose = await readFile(path.join(current.directory, 'pusher/deploy/test/compose.e2e.yml'), 'utf8');
+    await pushUpdate(current, {
+      'deploy/test/compose.e2e.yml': compose.replace('  api:\n', '  api:\n    command: ["sh", "-c", "exit 1"]\n'),
+    });
+    const failedUpdate = await runUpdate(current);
+    expectOperationalAlert(
+      failedUpdate,
+      '업데이트 실패: 원인을 고친 커밋을 올린 뒤 deploy/update.sh --retry 를 돌려 주세요',
+    );
+    expect(failedUpdate.stderr).toContain('응답 확인에 실패했어요');
+    const failedMarker = await readFile(marker, 'utf8');
+    expect(failedMarker.trim()).toBe('update');
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+    const failedHead = await runGit(clone, ['rev-parse', 'HEAD']);
+    await pushUpdate(current, { 'deploy/test/compose.e2e.yml': compose });
+
+    const withoutRetry = await runUpdate(current);
+
+    expect(withoutRetry).toMatchObject({ code: 1 });
+    expect(withoutRetry.stderr).toContain('점검 중이라 업데이트하지 않아요(표시: update)');
+    expect(`${withoutRetry.stdout}\n${withoutRetry.stderr}`).not.toContain('[Client Review 알림]');
+    expect(await readFile(marker, 'utf8')).toBe(failedMarker);
+    expect(await runGit(clone, ['rev-parse', 'HEAD'])).toBe(failedHead);
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+
+    await expectSuccessfulUpdate(current, await runUpdate(current, true));
+  }, 420_000);
+
+  it('컨테이너를 다시 만들다 실패한 업데이트도 고친 커밋을 올리고 retry하면 서비스가 돌아온다', async () => {
+    const current = await prepareDeployment(deployment!, true);
+    const dockerfile = await readFile(path.join(current.directory, 'pusher/api/Dockerfile'), 'utf8');
+    await pushUpdate(current, { 'api/Dockerfile': `${dockerfile}\nRUN false\n` });
+
+    const failedUpdate = await runUpdate(current);
+
+    expectOperationalAlert(
+      failedUpdate,
+      '업데이트 실패: 원인을 고친 커밋을 올린 뒤 deploy/update.sh --retry 를 돌려 주세요',
+    );
+    expect(`${failedUpdate.stdout}\n${failedUpdate.stderr}`).toMatch(/(?:RUN false|\/bin\/sh -c false)/);
+    expect(failedUpdate.stderr).not.toContain('응답 확인에 실패했어요');
+    expect(failedUpdate.stdout).not.toContain('업데이트를 마쳤어요');
+    expect((await readFile(path.join(current.directory, 'clone/.maintenance'), 'utf8')).trim()).toBe('update');
+    await pushUpdate(current, { 'api/Dockerfile': dockerfile });
+
+    await expectSuccessfulUpdate(current, await runUpdate(current, true));
+  }, 420_000);
+
+  it('업데이트 표시가 없으면 retry는 거부된다', async () => {
+    const current = await prepareDeployment(deployment!, true);
+    const clone = path.join(current.directory, 'clone');
+    const originalHead = await runGit(clone, ['rev-parse', 'HEAD']);
+    await pushUpdate(current, { 'landing/update-check.txt': randomUUID() });
+
+    // 서비스 실행 여부와 관계없이 update 표시가 없으면 재시도를 허용하지 않는다.
+    for (const stopApi of [false, true]) {
+      if (stopApi) expect(await runCompose(current, ['stop', 'api'])).toMatchObject({ code: 0 });
+      const servicesBefore = await runningServices(current);
+
+      const retry = await runUpdate(current, true);
+
+      expect(retry).toMatchObject({ code: 1 });
+      expect(retry.stderr).toContain('실패한 업데이트가 없어요(표시: 없음)');
+      expect(`${retry.stdout}\n${retry.stderr}`).not.toContain('[Client Review 알림]');
+      await expect(stat(path.join(clone, '.maintenance'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await runGit(clone, ['rev-parse', 'HEAD'])).toBe(originalHead);
+      expect(await runningServices(current)).toEqual(servicesBefore);
+    }
+  }, 420_000);
 
   it('손작업 end가 api를 켜지 못하면 표시가 남고 다시 end하면 켜진다', async () => {
-    const current = deployment!;
+    const current = await prepareDeployment(deployment!);
     const marker = path.join(current.directory, '.maintenance');
     expect(await runningServices(current)).toEqual(['api', 'db', 'nginx']);
 
