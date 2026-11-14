@@ -788,6 +788,24 @@ describe('기록 다시 적용 (e2e)', () => {
     await approve(newApprover.cookie);
   });
 
+  it('사건 이름이 constructor나 __proto__인 기록이 섞여 있으면 아무것도 바꾸지 않고 실패한다', async () => {
+    const person = await inviteNew();
+    const [accepted] = await collectRecords(1);
+    await revoke();
+    const [revoked] = await collectRecords(1);
+    await restoreMembership();
+    await removeNewMember(person);
+    const before = await readState();
+
+    for (const event of ['constructor', '__proto__', 'toString']) {
+      const invalid = accepted.replace('사건: INVITATION_ACCEPTED', `사건: ${event}`);
+
+      await expect(replay([revoked, invalid])).rejects.toThrow(`모르는 사건이에요: ${event}`);
+
+      expect(await readState()).toEqual(before);
+    }
+  });
+
   it('형식이 틀린 기록이 하나라도 있으면 아무것도 바꾸지 않고 실패한다', async () => {
     const person = await inviteNew();
     const [accepted] = await collectRecords(1);

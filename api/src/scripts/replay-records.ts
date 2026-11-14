@@ -38,7 +38,8 @@ type ReplayRecord = ProjectRecord | WithdrawalRecord | RedactionRecord;
 
 export type ReplayResult = { applied: number; skippedBeforeSince: number; skipped: string[] };
 
-const isProjectEvent = (event: string): event is ProjectEvent => event in PROJECT_EVENTS;
+// in은 물려받은 속성(constructor, __proto__)도 찾아서, 직접 적은 사건만 받는다.
+const isProjectEvent = (event: string): event is ProjectEvent => Object.hasOwn(PROJECT_EVENTS, event);
 const isProjectRecord = (record: ReplayRecord): record is ProjectRecord => isProjectEvent(record.event);
 
 const parseFields = (block: string) => {
