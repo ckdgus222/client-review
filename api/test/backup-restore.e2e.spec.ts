@@ -1023,6 +1023,42 @@ describe('백업과 복원 (e2e)', () => {
     expect(await runningServices(current)).toEqual(['api', 'db', 'nginx']);
   }, 240_000);
 
+  it('api가 돌고 있는지 묻는 명령이 실패하면 백업을 만들지 않고 실패하며 알림 메일이 간다', async () => {
+    const current = await prepareDeployment(deployment!);
+    expect(await runningServices(current)).toEqual(['api', 'db', 'nginx']);
+    const toolsPath = await runInTools(current, ['sh', '-c', 'echo $PATH']);
+    const realDocker = await runInTools(current, ['sh', '-c', 'command -v docker']);
+    expect(toolsPath).toMatchObject({ code: 0 });
+    expect(realDocker).toMatchObject({ code: 0 });
+    expect(toolsPath.stdout.trim()).not.toBe('');
+    expect(realDocker.stdout.trim()).toMatch(/^\/[\w/.-]+$/);
+    await mkdir(path.join(current.directory, 'bin'));
+    await writeFile(
+      path.join(current.directory, 'bin/docker'),
+      [
+        '#!/usr/bin/env bash',
+        'if [ "$#" -eq 8 ] && [ "$*" = "compose ps -q --status running --status restarting api" ]; then',
+        '    exit 1',
+        'fi',
+        `exec "${realDocker.stdout.trim()}" "$@"`,
+        '',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+
+    const backup = await runInTools(current, ['/work/deploy/backup.sh'], 120_000, {
+      PATH: `/work/bin:${toolsPath.stdout.trim()}`,
+    });
+
+    expectOperationalAlert(backup, '백업 실패: 서버에서 deploy/backup.sh 를 돌려 원인을 확인해 주세요');
+    expect(await readdir(path.join(current.directory, 'backups'))).toEqual([]);
+    expect(await readdir(path.join(current.directory, 'remote'))).toEqual([]);
+    await expect(stat(path.join(current.directory, '.backup-stopped-api'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(path.join(current.directory, '.backup-work'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await runningServices(current)).toEqual(['api', 'db', 'nginx']);
+    expect(await getHealth(current)).toMatchObject({ code: 0, stdout: '{"status":"ok"}' });
+  }, 600_000);
+
   it('켤 때 백업은 db가 늦게 준비돼도 기다렸다가 백업한다', async () => {
     const current = await prepareDeployment(deployment!);
     expect(await runCompose(current, ['stop', 'db', 'api'])).toMatchObject({ code: 0 });
