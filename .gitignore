@@ -10,3 +10,7 @@ api/.assets/
 e2e/.assets/
 e2e/test-results/
 e2e/playwright-report/
+# 운영 스크립트(deploy/)가 저장소 폴더에 남기는 잠금·점검 표시·백업 메모
+.maintenance
+.maintenance.lock
+.backup-stopped-api
