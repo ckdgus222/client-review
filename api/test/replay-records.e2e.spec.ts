@@ -819,6 +819,17 @@ describe('기록 다시 적용 (e2e)', () => {
       await expect(replay([revoked, record])).rejects.toThrow();
       expect(await readState()).toEqual(before);
     }
+    for (const event of ['MEMBER_REVOKED', 'INVITATION_ACCEPTED']) {
+      // 대상이 없다는 기록에는 사람 정보도 없다. 다른 열쇠 오류로 우연히 거부되지 않게 한다.
+      const withoutMember = accepted
+        .replace('사건: INVITATION_ACCEPTED', `사건: ${event}`)
+        .replace(/^대상 멤버 id: .+$/m, '대상 멤버 id: -')
+        .split('\n')
+        .filter((line) => !/^대상 (역할|사용자 id|이메일|이름|참여 시각):/.test(line))
+        .join('\n');
+      await expect(replay([revoked, withoutMember])).rejects.toThrow(`${event} 기록에 대상 멤버가 없어요`);
+      expect(await readState()).toEqual(before);
+    }
     await get(`/api/projects/${projectId}`, oldApprover.cookie).expect(200);
   });
 });

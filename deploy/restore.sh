@@ -34,8 +34,9 @@ if [ "$1" = --finish ]; then
     exit 0
 fi
 
-# 손작업이나 실패한 업데이트 중에는 덮어쓰지 않는다. 실패한 복원(표시가 restore …)만 다시 돌릴 수 있다.
-if [ -n "$marker" ] && [[ "$marker" != restore\ * ]]; then
+# 손작업 중에는 덮어쓰지 않는다. 실패한 복원(표시가 restore …)은 다시 돌릴 수 있고, 실패한 업데이트(update) 뒤에도
+# 복원한다. 업데이트가 데이터를 망가뜨려 --retry로 살릴 수 없을 때 되돌릴 길이 이것뿐이다(docs/deploy.md 정할 것 9).
+if [ "$marker" = manual ]; then
     echo "점검 중이라 복원하지 않아요(표시: $marker)" >&2
     exit 1
 fi

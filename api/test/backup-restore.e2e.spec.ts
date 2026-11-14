@@ -1132,6 +1132,99 @@ describe('백업과 복원 (e2e)', () => {
     }
   }, 300_000);
 
+  it('백업 파일과 강제로 끊겨 남은 재료는 주인만 읽을 수 있다', async () => {
+    const current = await prepareDeployment(deployment!);
+    await seedProjectAndPhoto(current);
+    const backup = await runInTools(current, ['/work/deploy/backup.sh'], 120_000);
+    const { filename } = await expectSuccessfulBackup(current, backup);
+    const backupModes = await runInTools(current, [
+      'stat',
+      '-c',
+      '%a',
+      `/work/backups/${filename}`,
+      `/work/remote/${filename}`,
+    ]);
+    expect(backupModes).toMatchObject({ code: 0, stdout: '600\n600\n' });
+
+    const workDirectory = path.join(current.directory, '.backup-work');
+    const expectPrivateWork = async () => {
+      const directoryMode = await runInTools(current, ['stat', '-c', '%a', '/work/.backup-work']);
+      expect(directoryMode).toMatchObject({ code: 0, stdout: '700\n' });
+      const fileModes = await runInTools(current, [
+        'find',
+        '/work/.backup-work',
+        '-type',
+        'f',
+        '-exec',
+        'stat',
+        '-c',
+        '%a %n',
+        '{}',
+        ';',
+      ]);
+      expect(fileModes).toMatchObject({ code: 0 });
+      const lines = fileModes.stdout.trim().split('\n');
+      expect(lines).toContain('600 /work/.backup-work/db.dump');
+      expect(lines).toContain('600 /work/.backup-work/snapshot-time.txt');
+      for (const line of lines) expect(line).toMatch(/^600 /);
+    };
+
+    const backupContainer = `cr-backup-${randomUUID()}`;
+    const pendingBackup = runInTools(current, ['/work/deploy/backup.sh'], 120_000, {}, backupContainer);
+    try {
+      await expect
+        .poll(async () => (await stat(path.join(workDirectory, 'db.dump'))).size, {
+          timeout: 60_000,
+          interval: 20,
+        })
+        .toBeGreaterThan(0);
+      expect(await runCommand(['kill', backupContainer])).toMatchObject({ code: 0 });
+      expect(await pendingBackup).toMatchObject({ code: 137 });
+      await expectPrivateWork();
+    } finally {
+      await runCommand(['rm', '-f', backupContainer]);
+      await pendingBackup;
+    }
+
+    const restoreContainer = `cr-restore-${randomUUID()}`;
+    // 이름 있는 파이프를 읽기·쓰기로 열어 입력도 EOF도 보내지 않고 확인 질문에서 기다린다.
+    const pendingRestore = runInTools(
+      current,
+      [
+        'bash',
+        '-c',
+        'mkfifo /work/restore-input; exec 3<>/work/restore-input; exec /work/deploy/restore.sh "$1" <&3',
+        'bash',
+        `/work/backups/${filename}`,
+      ],
+      120_000,
+      {},
+      restoreContainer,
+    );
+    try {
+      await expect
+        .poll(
+          async () => {
+            const logs = await runCommand(['logs', restoreContainer]);
+            return logs.stdout;
+          },
+          { timeout: 60_000, interval: 200 },
+        )
+        .toContain('의 백업으로 DB와 사진을 모두 바꿔요');
+      for (const name of ['snapshot-time.txt', 'db.dump', 'assets.tar']) {
+        expect((await stat(path.join(workDirectory, name))).size).toBeGreaterThan(0);
+      }
+      expect(await runCommand(['kill', restoreContainer])).toMatchObject({ code: 0 });
+      expect(await pendingRestore).toMatchObject({ code: 137 });
+      await expectPrivateWork();
+      const assetsMode = await runInTools(current, ['stat', '-c', '%a', '/work/.backup-work/assets.tar']);
+      expect(assetsMode).toMatchObject({ code: 0, stdout: '600\n' });
+    } finally {
+      await runCommand(['rm', '-f', restoreContainer]);
+      await pendingRestore;
+    }
+  }, 420_000);
+
   it('시작할 때 멈춰 있던 api는 백업 뒤에도 멈춰 있다', async () => {
     const current = await prepareDeployment(deployment!);
     expect(await runCompose(current, ['stop', 'api'])).toMatchObject({ code: 0 });
@@ -1334,6 +1427,109 @@ describe('백업과 복원 (e2e)', () => {
     expect((await getHealth(current)).code).not.toBe(0);
     expect(update.stdout).not.toContain('업데이트를 마쳤어요');
   }, 420_000);
+
+  it('실패한 업데이트 표시가 있어도 복원할 수 있고 고친 코드로 다시 만든 뒤 finish하면 켜진다', async () => {
+    const current = await prepareDeployment(deployment!, true);
+    const clone = path.join(current.directory, 'clone');
+    const marker = path.join(clone, '.maintenance');
+    const { projectId } = await seedProjectAndPhoto(current);
+    const before = await readProjectAndPhotos(current);
+    const backup = await runInTools(current, ['/work/clone/deploy/backup.sh'], 120_000);
+    const { filename, snapshotTime } = await expectSuccessfulBackup(current, backup);
+    await waitForHealthyApi(current);
+    await runSql(current, `UPDATE projects SET name = '백업 뒤 바뀐 이름' WHERE id = '${projectId}'`);
+    const compose = await readFile(path.join(current.directory, 'pusher/deploy/test/compose.e2e.yml'), 'utf8');
+    await pushUpdate(current, {
+      'deploy/test/compose.e2e.yml': compose.replace('  api:\n', '  api:\n    command: ["sh", "-c", "exit 1"]\n'),
+    });
+    const failedUpdate = await runUpdate(current);
+    expectOperationalAlert(
+      failedUpdate,
+      '업데이트 실패: 원인을 고친 커밋을 올린 뒤 deploy/update.sh --retry 를 돌려 주세요',
+    );
+    expect(failedUpdate.stderr).toContain('응답 확인에 실패했어요');
+    expect((await readFile(marker, 'utf8')).trim()).toBe('update');
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+
+    // 운영 문서처럼 고친 이미지를 먼저 만들되, 복원과 다시 적용 전에는 api를 켜지 않는다.
+    await pushUpdate(current, { 'deploy/test/compose.e2e.yml': compose });
+    expect(await runInTools(current, ['git', 'pull', '--ff-only'])).toMatchObject({ code: 0 });
+    expect(await runCompose(current, ['build', 'api', 'nginx'], 480_000)).toMatchObject({ code: 0 });
+    expect((await readFile(marker, 'utf8')).trim()).toBe('update');
+    expect(await runSql(current, `SELECT name FROM projects WHERE id = '${projectId}'`)).toBe('백업 뒤 바뀐 이름');
+
+    const restore = await runInTools(
+      current,
+      ['/work/clone/deploy/restore.sh', `/work/backups/${filename}`],
+      180_000,
+      {},
+      undefined,
+      'restore\n',
+    );
+    expect(restore).toMatchObject({ code: 0 });
+    expect(restore.stdout).toContain(`기준 시각: ${snapshotTime}`);
+    expect((await readFile(marker, 'utf8')).trim()).toBe('restore done');
+    expect(await readProjectAndPhotos(current)).toEqual(before);
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+    expect((await getHealth(current)).code).not.toBe(0);
+
+    // restore 표시를 update 재시도로 덮어써서 다시 적용 전에 열 수 없어야 한다.
+    const retryBeforeFinish = await runUpdate(current, true);
+    expect(retryBeforeFinish).toMatchObject({ code: 1 });
+    expect(retryBeforeFinish.stderr).toContain('실패한 업데이트가 없어요(표시: restore done)');
+    expect((await readFile(marker, 'utf8')).trim()).toBe('restore done');
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+
+    expect(await runCompose(current, ['create', '--force-recreate', 'api'])).toMatchObject({ code: 0 });
+    expect(await runCompose(current, ['up', '-d', '--no-deps', 'nginx'])).toMatchObject({ code: 0 });
+    expect(await runningServices(current)).toEqual(['db', 'nginx']);
+    const finish = await runInTools(current, ['/work/clone/deploy/restore.sh', '--finish']);
+    expect(finish).toMatchObject({ code: 0 });
+    expect(await getHealth(current)).toMatchObject({ code: 0, stdout: '{"status":"ok"}' });
+    await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await runningServices(current)).toEqual(['api', 'db', 'nginx']);
+
+    const retry = await runUpdate(current, true);
+    expect(retry).toMatchObject({ code: 1 });
+    expect(retry.stderr).toContain('실패한 업데이트가 없어요(표시: 없음)');
+    await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+  }, 600_000);
+
+  it('운영 nginx 설정은 믿는 앞단이 아닌 곳에서 온 X-Forwarded-For를 믿지 않는다', async () => {
+    const current = await prepareDeployment(deployment!);
+    // 맥의 게시 포트를 거치지 않고 같은 망의 api에서 운영 nginx로 직접 보낸다.
+    const requests = await runCompose(current, [
+      'exec',
+      '-T',
+      'api',
+      'node',
+      '--input-type=module',
+      '-e',
+      `const results = [];
+      const startedAt = Date.now();
+      for (let index = 1; index <= 7; index++) {
+        const response = await fetch('http://nginx/api/auth/email-code', {
+          method: 'POST',
+          headers: {
+            Origin: 'http://localhost',
+            'Content-Type': 'application/json',
+            'X-Forwarded-For': '10.0.0.' + index,
+          },
+          body: JSON.stringify({ email: 'untrusted' + index + '@example.com', privacyAgreed: true }),
+        });
+        results.push({ status: response.status, body: await response.text() });
+      }
+      console.log(JSON.stringify({ results, elapsed: Date.now() - startedAt }));`,
+    ]);
+    expect(requests).toMatchObject({ code: 0 });
+    const { results, elapsed } = JSON.parse(requests.stdout) as {
+      results: { status: number; body: string }[];
+      elapsed: number;
+    };
+    expect(elapsed, '요청 제한이 한 번 채워지는 6초 안에 일곱 번 보낸다').toBeLessThan(6_000);
+    expect(results.map((result) => result.status)).toEqual([204, 204, 204, 204, 204, 204, 429]);
+    expect(JSON.parse(results[6].body)).toMatchObject({ code: 'IP_RATE_LIMITED' });
+  }, 240_000);
 
   it('업데이트 뒤 소개 페이지가 응답하지 않으면 실패하고 알림 메일이 간다', async () => {
     const current = await prepareDeployment(deployment!, true);
