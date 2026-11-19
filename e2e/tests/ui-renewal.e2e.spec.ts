@@ -179,6 +179,70 @@ test('클라이언트의 프로젝트 목록에는 생성 폼과 삭제 대기 �
   }
 })
 
+test('관리 메뉴는 화면 폭에 맞게 이동하고 권한이 있는 목적지로 연결된다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareRoom()
+  const projectPath = `/app/projects/${room.project.id}`
+  const activityTitle = `${room.project.name} 활동 일지`
+  const menu = page.getByRole('navigation', { name: '프로젝트 메뉴', exact: true })
+  const destinations = [
+    { link: '내 프로젝트', path: '/app', heading: '내 프로젝트', active: '내 프로젝트' },
+    { link: room.project.name, path: projectPath, heading: room.project.name },
+    { link: '활동 일지', path: `${projectPath}/activity`, heading: activityTitle, active: '활동 일지' },
+    { link: '버전 준비', path: `${projectPath}/draft`, heading: room.project.name, active: '버전 준비' },
+    { link: '프로젝트 설정', path: `${projectPath}/settings`, heading: room.project.name, active: '프로젝트 설정' },
+    { link: '검수실', path: projectPath, heading: room.project.name },
+  ]
+
+  await loginAs(room.developer.id)
+  // 목록의 전체 폭·390px 검사는 위 사례에서 다루고, 여기서는 실제 이동과 배치 경계를 확인한다.
+  for (const width of [960, 959]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto(`${projectPath}/activity`)
+    await expect(page.getByRole('heading', { level: 1, name: activityTitle, exact: true })).toBeVisible()
+    await expect(menu.getByRole('link')).toHaveText(['내 프로젝트', '검수실', '버전 준비', '프로젝트 설정', '활동 일지'])
+
+    for (const destination of destinations) {
+      const link = page.getByRole('link', { name: destination.link, exact: true })
+      await expect(link).toHaveCount(1)
+      await expect(link).toHaveAttribute('href', destination.path)
+      await link.click()
+      await expect(page).toHaveURL(destination.path)
+      const heading = page.getByRole('heading', { level: 1, name: destination.heading, exact: true })
+      await expect(heading).toBeVisible()
+      if (!destination.active) continue
+
+      await expect(menu).toHaveCount(1)
+      await expect(menu).toBeVisible()
+      await expect(menu.locator('[aria-current="page"]')).toHaveText(destination.active)
+      await page.evaluate(() => document.fonts.ready.then(() => undefined))
+      const menuBox = await menu.boundingBox()
+      const headingBox = await heading.boundingBox()
+      expect(menuBox).not.toBeNull()
+      expect(headingBox).not.toBeNull()
+      // 넓으면 제목 왼쪽에서 같은 높이를 차지하고, 좁으면 제목 위에 놓인다.
+      expect(width >= 960
+        ? menuBox!.x + menuBox!.width <= headingBox!.x
+          && menuBox!.y <= headingBox!.y
+          && menuBox!.y + menuBox!.height > headingBox!.y
+        : menuBox!.y + menuBox!.height <= headingBox!.y,
+      ).toBe(true)
+    }
+  }
+
+  await loginAs(room.client.id)
+  await page.goto(`${projectPath}/activity`)
+  await expect(page.getByRole('heading', { level: 1, name: activityTitle, exact: true })).toBeVisible()
+  for (const width of [960, 959]) {
+    await page.setViewportSize({ width, height: 900 })
+    await expect(menu).toBeVisible()
+    await expect(menu.getByRole('link')).toHaveText(['내 프로젝트', '검수실', '활동 일지'])
+    await expect(menu.getByRole('link', { name: '활동 일지', exact: true })).toHaveAttribute('aria-current', 'page')
+    await expect(page.getByRole('link', { name: '버전 준비', exact: true, includeHidden: true })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: '프로젝트 설정', exact: true, includeHidden: true })).toHaveCount(0)
+  }
+})
+
 test('보관과 삭제 대기 안내가 설정과 검수실 상단에 보인다', async ({ page, baseURL, loginAs }) => {
   await resetDatabase()
   const room = await prepareRoom()
