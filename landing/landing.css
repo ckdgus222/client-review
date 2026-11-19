@@ -101,22 +101,26 @@ a:hover { color: var(--color-accent-soft-text); }
 .start { background: var(--color-accent); color: white; }
 .start:hover { color: white; background: var(--color-accent-hover); }
 .quiet-link { border-color: var(--color-border-strong); background: var(--color-surface); }
-.home { padding: clamp(28px, 5vw, 80px) clamp(16px, 6vw, 100px); background: radial-gradient(ellipse at 77% 15%, #f2dfc8 0, transparent 50%); }
-.hero, .steps { max-width: 1240px; margin-inline: auto; }
-.hero { min-height: min(62vh, 640px); display: grid; grid-template-columns: minmax(0,.9fr) minmax(0,1.16fr); align-items: center; gap: clamp(22px,4vw,68px); }
-.hero-copy { display: grid; gap: 22px; }
-.hero h2 { font-size: clamp(2.25rem, 4.5vw, 4.7rem); }
+.home { display: flex; flex-direction: column; gap: 36px; min-height: calc(100svh - 60px); padding: 32px; background: radial-gradient(circle at 75% 15%, #f4e2d0 0%, var(--color-bg) 55%); }
+.hero, .steps { width: 100%; max-width: 1136px; margin-inline: auto; }
+.hero { display: grid; grid-template-columns: minmax(0, .84fr) minmax(0, 1.16fr); align-items: center; gap: 36px; }
+.hero-copy { display: grid; gap: 16px; }
+.hero h2 { font-size: clamp(2rem, 4.2vw, 2.5rem); line-height: 1.22; }
 .lead { color: var(--color-text-secondary); max-width: 38em; }
-.review-example { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(110px, .8fr); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: white; box-shadow: 0 22px 50px #412d1b26; overflow: hidden; }
-.demo-stage { display: grid; align-items: center; padding: clamp(8px, 1.2vw, 18px); background: var(--color-canvas-dark); }
+.review-example { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(110px, 1fr); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: white; box-shadow: 0 22px 50px #412d1b26; overflow: hidden; }
+.demo-stage { display: grid; align-items: center; padding: 14px; background: var(--color-canvas-dark); }
 .demo-stage img { width: 100%; height: auto; border-radius: 5px; }
 .review-example figcaption { padding: 12px 10px; font-size: .82rem; }
 .demo-count { display: block; padding: 5px 0; color: var(--color-ok); font: 600 .75rem var(--font-family); }
+.demo-progress { display: block; width: 100%; height: 6px; margin-bottom: 8px; border: 0; border-radius: var(--radius-pill); background: var(--color-surface-subtle); overflow: hidden; }
+.demo-progress::-webkit-progress-bar { background: var(--color-surface-subtle); }
+.demo-progress::-webkit-progress-value { background: var(--color-accent); }
+.demo-progress::-moz-progress-bar { background: var(--color-accent); }
 .demo-note { margin-top: 7px; padding: 9px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface-note); }
 .demo-note.done { background: var(--color-ok-soft); color: var(--color-ok); }
 .demo-strip { grid-column: 1/-1; display: flex; align-items: center; gap: 10px; padding: 7px 12px; background: var(--color-surface-subtle); font-size: .75rem; }
 .demo-strip img { border: 2px solid var(--color-accent); border-radius: 5px; object-fit: cover; }
-.steps { list-style: none; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; padding: 0; margin-top: clamp(36px,7vw,100px); }
+.steps { list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 0; margin-top: auto; }
 .steps li, .document, .contents, .not-found, .page { padding: clamp(18px,2.4vw,32px); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
 .steps p, .highlights p { margin-top: 5px; color: var(--color-text-muted); font-size: .9rem; }
 .footer { justify-content: center; flex-wrap: wrap; border-top: 1px solid var(--color-border); color: var(--color-text-muted); }
@@ -136,12 +140,13 @@ mark { background: var(--color-warn-soft); color: var(--color-text); }
 .not-found h1 { font-size: 1.65rem; }
 @media (max-width: 959px) {
   .hero, .legal-layout { grid-template-columns: minmax(0,1fr); }
-  .hero { min-height: 0; }
+  .home { min-height: 0; }
   .contents { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; }
   .contents a { min-height: 36px; border: 0; }
 }
 @media (max-width: 620px) {
-  .home { padding-inline: 16px; }
+  .home { padding: 28px 16px; }
+  .demo-stage { padding: 8px; }
   .steps,.highlights { grid-template-columns: minmax(0,1fr); }
   .hero { gap: 28px; }
   .site-header { gap: 8px; }

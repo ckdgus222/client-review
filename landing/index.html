@@ -8,7 +8,7 @@
     <meta property="og:title" content="client-review: 외주 작업 검수" />
     <meta property="og:description" content="외주 개발자가 화면 사진을 버전별로 올리면, 고객이 사진 위에 수정 요청을 남기고 승인합니다." />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/landing.css?v=ea8d3135a25e" />
+    <link rel="stylesheet" href="/landing.css?v=512ea9bf6b7e" />
   </head>
   <body>
     <header class="site-header">
@@ -23,8 +23,17 @@
           <div class="hero-actions"><a class="start" href="/app/login">시작하기</a><a class="quiet-link" href="#review-example">검수실 예시 보기</a></div>
         </div>
         <figure class="review-example" id="review-example" aria-label="상품 상세 화면을 검수하는 예시">
-          <div class="demo-stage"><img src="/shop-screen.webp" width="880" height="650" alt="핀으로 수정할 위치를 표시한 쇼핑몰 상품 화면"></div>
-          <figcaption><strong>검수 체크리스트</strong><span class="demo-count">확인 완료 1 / 3</span><div class="demo-note">구매 버튼 간격 조정</div><div class="demo-note">상품명 줄바꿈 확인</div><div class="demo-note done">배송 안내 문구 확인</div></figcaption>
+          <div class="demo-stage">
+            <img src="/shop-preview-dee0c144e1f2.webp" width="758" height="762" alt="핀으로 수정할 위치를 표시한 쇼핑몰 상품 화면">
+          </div>
+          <figcaption>
+            <strong>검수 체크리스트</strong>
+            <span class="demo-count">확인 완료 1 / 3</span>
+            <progress class="demo-progress" aria-label="예시 검수 진행률" value="1" max="3"></progress>
+            <div class="demo-note">구매 버튼 간격 조정</div>
+            <div class="demo-note">상품명 줄바꿈 확인</div>
+            <div class="demo-note done">배송 안내 문구 확인</div>
+          </figcaption>
           <div class="demo-strip"><img src="/shop-screen.webp" width="48" height="30" alt=""><span>상품 상세 · PC</span></div>
         </figure>
       </div>

@@ -1155,12 +1155,24 @@ test('이전 스타일을 저장한 브라우저에서도 공개 페이지가 �
   const example = page.getByRole('figure', { name: '상품 상세 화면을 검수하는 예시', exact: true })
   const photo = example.getByRole('img', { name: '핀으로 수정할 위치를 표시한 쇼핑몰 상품 화면', exact: true })
   const checklist = example.locator('figcaption')
+  const progress = checklist.getByRole('progressbar', { name: '예시 검수 진행률', exact: true })
   const steps = page.getByRole('list', { name: '진행 방식', exact: true }).getByRole('listitem')
   await expect(steps).toHaveCount(3)
   await expect(checklist).toContainText('검수 체크리스트')
+  await expect(checklist).toContainText('확인 완료 1 / 3')
+  await expect(progress).toHaveAttribute('value', '1')
+  await expect(progress).toHaveAttribute('max', '3')
+  expect(await progress.evaluate((element: HTMLProgressElement) => element.position)).toBeCloseTo(1 / 3, 5)
   await expect.poll(() => photo.evaluate((image: HTMLImageElement) =>
     image.complete && image.naturalWidth > 0,
   )).toBe(true)
+  const naturalRatio = await photo.evaluate(async (image: HTMLImageElement) => {
+    await image.decode()
+    return image.naturalWidth / image.naturalHeight
+  })
+  // 파일명·고정 해상도 대신 디코딩된 이미지가 정사각형에서 10% 이내인지 확인한다.
+  expect(naturalRatio).toBeGreaterThanOrEqual(0.9)
+  expect(naturalRatio).toBeLessThanOrEqual(1.1)
 
   for (const viewport of [
     { width: 1728, height: 997 },
@@ -1168,7 +1180,7 @@ test('이전 스타일을 저장한 브라우저에서도 공개 페이지가 �
     { width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport)
-    for (const element of [title, example, photo, checklist, ...await steps.all()]) {
+    for (const element of [title, example, photo, checklist, progress, ...await steps.all()]) {
       await expect(element).toBeVisible()
     }
     const titleBox = (await title.boundingBox())!
@@ -1181,6 +1193,15 @@ test('이전 스타일을 저장한 브라우저에서도 공개 페이지가 �
       return { x, y, width, height }
     }))
     await expectNoHorizontalOverflow(page, viewport.width)
+    const displayedRatio = photoBox.width / photoBox.height
+    expect(displayedRatio).toBeGreaterThanOrEqual(0.9)
+    expect(displayedRatio).toBeLessThanOrEqual(1.1)
+    expect(Math.abs(photoBox.height - photoBox.width / naturalRatio), '원본 비율을 유지하며 표시한다')
+      .toBeLessThanOrEqual(1)
+    expect(photoBox.x).toBeGreaterThanOrEqual(exampleBox.x)
+    expect(photoBox.x + photoBox.width).toBeLessThanOrEqual(exampleBox.x + exampleBox.width)
+    expect(photoBox.y).toBeGreaterThanOrEqual(exampleBox.y)
+    expect(photoBox.y + photoBox.height).toBeLessThanOrEqual(exampleBox.y + exampleBox.height)
 
     if (viewport.width === 390) {
       expect(copyBox.y + copyBox.height).toBeLessThanOrEqual(exampleBox.y)
@@ -1189,6 +1210,22 @@ test('이전 스타일을 저장한 브라우저에서도 공개 페이지가 �
       expect(stepBoxes[1].y + stepBoxes[1].height).toBeLessThanOrEqual(stepBoxes[2].y)
       continue
     }
+    // 높이/line-height나 <br> 개수가 아니라 실제 한글 텍스트 조각의 줄 위치를 센다.
+    await expect.poll(() => title.evaluate((heading) => {
+      const walker = document.createTreeWalker(heading, NodeFilter.SHOW_TEXT)
+      const lineTops: number[] = []
+      let node = walker.nextNode()
+      while (node) {
+        const range = document.createRange()
+        range.selectNodeContents(node)
+        const textRects = node.textContent?.trim() ? Array.from(range.getClientRects()) : []
+        for (const rect of textRects) {
+          if (rect.width > 0 && !lineTops.some((top) => Math.abs(top - rect.top) <= 1)) lineTops.push(rect.top)
+        }
+        node = walker.nextNode()
+      }
+      return lineTops.length
+    }), { message: `${viewport.width}px에서 한글 제목은 실제 두 줄로 보인다` }).toBe(2)
     expect(titleBox.x + titleBox.width).toBeLessThanOrEqual(exampleBox.x)
     expect(copyBox.y).toBeLessThan(exampleBox.y + exampleBox.height)
     expect(exampleBox.y).toBeLessThan(copyBox.y + copyBox.height)
