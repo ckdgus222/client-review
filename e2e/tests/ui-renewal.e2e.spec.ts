@@ -148,3 +148,51 @@ test('앱 로그인은 폰트 실패 뒤에도 대체 글꼴로 폼을 읽고 �
   await expect(submit).toBeVisible()
   await expect(submit).toBeEnabled()
 })
+
+test('로그인 제목은 자체 Gowun Batang과 시스템 대체 글꼴을 쓰고 Tab 포커스가 보인다', async ({ page }) => {
+  const fontResponse = page.waitForResponse('http://localhost:4103/app/fonts/gowun-batang-korean-400-normal.woff2')
+  await page.goto('http://localhost:4103/app/login')
+  expect((await fontResponse).status()).toBe(200)
+  const heading = page.getByRole('heading', { level: 1, name: '로그인', exact: true })
+  const session = await page.context().newCDPSession(page)
+  await session.send('DOM.enable')
+  await session.send('CSS.enable')
+
+  for (const fontBlocked of [false, true]) {
+    if (fontBlocked) {
+      await page.route('**/fonts/gowun-batang-*.woff2', (route) => route.abort('failed'))
+      await page.reload()
+    }
+    await expect(heading).toBeVisible()
+    await expect(heading).toHaveCSS('font-family', /^"?Gowun Batang"?,\s*"?AppleMyungjo"?,\s*Georgia,\s*serif$/)
+    await page.evaluate(() => document.fonts.ready.then(() => undefined))
+
+    // CSS 선언뿐 아니라 제목의 글자를 실제로 그린 글꼴을 확인한다.
+    const { root } = await session.send('DOM.getDocument')
+    const { nodeId } = await session.send('DOM.querySelector', { nodeId: root.nodeId, selector: 'h1' })
+    const { fonts } = await session.send('CSS.getPlatformFontsForNode', { nodeId })
+    const renderedFonts = fonts.filter((font) => font.glyphCount > 0)
+    expect(renderedFonts.length).toBeGreaterThan(0)
+    if (fontBlocked) {
+      expect(renderedFonts.every((font) => !font.isCustomFont)).toBe(true)
+      continue
+    }
+    expect(renderedFonts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ familyName: 'Gowun Batang', isCustomFont: true }),
+    ]))
+  }
+  await session.detach()
+
+  // 첫 Tab의 목적지를 고정하지 않아 폼과 링크 순서가 조금 바뀌어도 검사한다.
+  const focused = page.locator('input:focus-visible, a[href]:focus-visible')
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await page.keyboard.press('Tab')
+    if (await focused.count()) break
+  }
+  await expect(focused).toHaveCount(1)
+  await expect(focused).toBeFocused()
+  await expect(focused).toHaveCSS('outline-style', 'solid')
+  await expect(focused).toHaveCSS('outline-width', '2px')
+  await expect(focused).toHaveCSS('outline-offset', '2px')
+  await expect(focused).toHaveCSS('outline-color', 'rgb(200, 78, 44)')
+})
