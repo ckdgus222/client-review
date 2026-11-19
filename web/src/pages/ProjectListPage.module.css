@@ -1,92 +1,65 @@
-/* 로그인 화면과 같은 흰 판이다. 목록은 이름이 길어서 로그인 칸보다 넓게 둔다. */
 .panel {
+  display: grid;
+  gap: 20px;
+  max-width: 1240px;
+  margin: 0 auto;
+}
+
+.panel :where(h1,h2,p,ul) { margin: 0; }
+
+.top, .account, .create, .deleted {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  max-width: 40rem;
-  margin: var(--space-4) auto 0;
-  padding: var(--space-4);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.top { justify-content: space-between; }
+.overview, .user, .role, .row time { color: var(--color-text-muted); font-size: var(--font-size-sm); }
+.overview { margin-top: 6px; }
+
+.create {
+  justify-content: flex-end;
+  align-items: end;
+}
+
+.create > :first-child { flex: 1 1 200px; max-width: 340px; }
+.create input { width: 100%; min-width: 0; }
+
+.group {
+  min-width: 0;
+  overflow: hidden;
+  scroll-margin-top: 1rem;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--color-surface);
 }
 
-/* 기본 바깥 여백이 gap에 더해지지 않게 지운다. */
-.panel p,
-.panel h1 {
-  margin: 0;
-}
+.group h2 { font-size: 0.95rem; padding: 12px 20px; background: var(--color-surface-note); }
+.list { list-style: none; padding: 0; }
+.list li { padding: 13px 20px; border-top: 1px solid var(--color-border); }
 
-/* 좁은 화면에서는 이름과 로그아웃이 함께 다음 줄로 내려간다. */
-.top {
-  display: flex;
-  flex-wrap: wrap;
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(70px, .25fr) minmax(96px, .3fr) auto;
   align-items: center;
-  gap: var(--space-2) var(--space-3);
+  gap: 12px;
 }
 
-/* 제목은 왼쪽, 이름과 로그아웃은 한 묶음으로 오른쪽으로 민다. */
-.account {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-left: auto;
-}
+.list a { color: var(--color-text); font-weight: 600; text-decoration: none; }
+.list a:hover { color: var(--color-accent-soft-text); text-decoration: underline; }
+.row a { text-decoration: underline; text-decoration-color: var(--color-border-strong); }
+.state { padding: 3px 10px; border-radius: var(--radius-pill); background: var(--color-ok-soft); color: var(--color-ok); font-size: .78rem; }
+.group[id$='ARCHIVED'] .state { background: var(--color-surface-subtle); color: var(--color-text-muted); }
+.group[id$='DELETE_PENDING'], .group[id$='DELETE_PENDING'] h2 { background: var(--color-danger-soft); border-color: var(--color-danger-border); }
+.purge { color: var(--color-danger); font-size: var(--font-size-sm); }
+.deleted a { margin-right: auto; }
 
-.user {
-  color: var(--color-text-muted);
-  overflow-wrap: anywhere;
-}
-
-/* 입력칸이 남는 폭을 차지하고, 버튼은 입력칸 아래 끝에 맞춘다. */
-.create {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-2);
-}
-
-.create > :first-child {
-  flex: 1 1 16rem;
-}
-
-.list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border-top: 1px solid var(--color-border);
-}
-
-.list li {
-  border-bottom: 1px solid var(--color-border);
-}
-
-/* 줄 전체를 눌러 들어갈 수 있게 링크를 줄 폭으로 넓힌다. */
-.list a {
-  display: block;
-  padding: var(--space-3) 0;
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-
-.list a:hover {
-  text-decoration: underline;
-}
-
-/* 묶음 제목과 목록 사이를 붙이고, 묶음끼리는 panel의 gap으로 띄운다. */
-.group h2 {
-  margin: 0 0 var(--space-2);
-  font-size: 1rem;
-}
-
-/* 삭제 대기 줄: 이름, 남은 날, 되살리기 버튼을 한 줄에, 좁으면 다음 줄로. */
-.deleted {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 var(--space-3);
-}
-
-.purge {
-  color: var(--color-text-muted);
+@media (max-width: 640px) {
+  .row { grid-template-columns: minmax(0,1fr) auto; gap: 4px 12px; }
+  .row a { grid-column: 1; }
+  .row .state { grid-column: 2; grid-row: 1; }
+  .row time { grid-column: 2; grid-row: 2; }
+  .row .role { grid-column: 1; grid-row: 2; }
+  .list li, .group h2 { padding-inline: 14px; }
 }
