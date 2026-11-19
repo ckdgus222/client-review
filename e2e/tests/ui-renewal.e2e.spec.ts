@@ -405,6 +405,86 @@ test('확인서 인쇄는 흰 종이에 본문만 남긴다', async ({ page, log
   }
 })
 
+test('진행률은 전체 쪽지 기준이며 필터와 무관하고 상태 변경을 반영한다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareRoom()
+  const issues = []
+  for (const { status } of issueStates) issues.push(await seedIssue(room, status))
+  const openIssue = issues[0]
+  await loginAs(room.client.id)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(`/app/projects/${room.project.id}`)
+
+  const list = page.getByRole('region', { name: '쪽지 목록', exact: true })
+  const progress = list.getByRole('progressbar', { name: /검수 진행률/ })
+  const statusFilter = list.getByRole('combobox', { name: '상태', exact: true })
+  await expect(list.getByRole('listitem')).toHaveCount(5)
+  await expect(progress).toBeVisible()
+  await expect(progress).toHaveAttribute('max', '5')
+  await expect(progress).toHaveAttribute('value', '2')
+  await expect(list.getByText('2 / 5', { exact: true })).toBeVisible()
+
+  for (const { status } of issueStates) {
+    await statusFilter.selectOption(status)
+    await expect(list.getByRole('listitem')).toHaveCount(1)
+    await expect(list.getByRole('listitem')).toContainText(`${status} 상태 쪽지`)
+    await expect(progress).toHaveAttribute('max', '5')
+    await expect(progress).toHaveAttribute('value', '2')
+    await expect(list.getByText('2 / 5', { exact: true })).toBeVisible()
+  }
+
+  // 필터 결과가 0개여도 프로젝트 전체 쪽지가 없는 것은 아니다.
+  await list.getByRole('checkbox', { name: '마감 지남만', exact: true }).check()
+  await expect(list.getByRole('listitem')).toHaveCount(0)
+  await expect(list.getByText('조건에 맞는 쪽지가 없어요', { exact: true })).toBeVisible()
+  await expect(progress).toBeVisible()
+  await expect(progress).toHaveAttribute('max', '5')
+  await expect(progress).toHaveAttribute('value', '2')
+  await expect(list.getByText('2 / 5', { exact: true })).toBeVisible()
+  await expect(list.getByText('쪽지 없음', { exact: true })).toHaveCount(0)
+  await list.getByRole('button', { name: '필터 지우기', exact: true }).click()
+  await expect(list.getByRole('listitem')).toHaveCount(5)
+
+  await statusFilter.selectOption('OPEN')
+  await list.getByRole('listitem').getByRole('button').click()
+  const review = page.getByRole('region', { name: '확인하기', exact: true })
+  await review.getByRole('button', { name: '철회', exact: true }).click()
+  await review.getByLabel('철회 사유', { exact: true }).fill('이 요청은 필요 없어졌어요')
+  const withdrawn = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === `/api/issues/${openIssue.id}/withdraw`
+    && response.request().method() === 'POST',
+  )
+  await review.getByRole('button', { name: '철회하기', exact: true }).click()
+  const response = await withdrawn
+  expect(response.status()).toBe(200)
+  expect(await response.json()).toMatchObject({ id: openIssue.id, status: 'WITHDRAWN' })
+
+  // 페이지를 다시 열거나 주기 갱신을 기다리지 않고 상태 변경 응답을 반영한다.
+  await expect(progress).toHaveAttribute('value', '3')
+  await expect(progress).toHaveAttribute('max', '5')
+  await expect(list.getByText('3 / 5', { exact: true })).toBeVisible()
+  await expect(statusFilter).toHaveValue('OPEN')
+  await expect(list.getByRole('listitem')).toHaveCount(0)
+  await expect(list.getByText('조건에 맞는 쪽지가 없어요', { exact: true })).toBeVisible()
+  await expect(list.getByText('쪽지 없음', { exact: true })).toHaveCount(0)
+  expect(await db.issue.findUniqueOrThrow({ where: { id: openIssue.id } })).toMatchObject({ status: 'WITHDRAWN' })
+})
+
+test('빈 프로젝트는 진행률 대신 쪽지 없음을 표시한다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareRoom()
+  await loginAs(room.client.id)
+  await page.goto(`/app/projects/${room.project.id}`)
+
+  const list = page.getByRole('region', { name: '쪽지 목록', exact: true })
+  await expect(list.getByRole('heading', { name: '쪽지 0개', exact: true })).toBeVisible()
+  await expect(list.getByText('쪽지 없음', { exact: true })).toBeVisible()
+  await expect(list.getByRole('listitem')).toHaveCount(0)
+  await expect(list.getByRole('progressbar', { includeHidden: true })).toHaveCount(0)
+  await expect(list).not.toContainText(/NaN|Infinity|%|\d+\s*\/\s*0/)
+  await expect(list.getByRole('button', { name: '쪽지 쓰기', exact: true })).toBeVisible()
+})
+
 test('상태는 글자와 다섯 도형으로 구분되고 키보드 포커스가 보인다', async ({ page, loginAs }) => {
   await resetDatabase()
   const room = await prepareRoom()
