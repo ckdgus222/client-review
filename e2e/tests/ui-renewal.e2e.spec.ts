@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import type { Locator, Page, Response } from '@playwright/test'
@@ -1103,6 +1103,105 @@ const expectNoHorizontalOverflow = async (page: Page, width: number) => {
     document.body.scrollWidth,
   ))).toBeLessThanOrEqual(width)
 }
+
+test('이전 스타일을 저장한 브라우저에서도 공개 페이지가 새 배치로 열린다', {
+  annotation: {
+    type: '재현 방식',
+    description: '실제 HTTP 캐시를 데우는 대신 기존 /landing.css URL만 구버전 구별용 CSS로 대체한다. 버전 쿼리가 있는 새 URL과 HTML은 실제 테스트 nginx(4103) 응답을 사용한다.',
+  },
+}, async ({ page }) => {
+  const nginxOrigin = 'http://localhost:4103'
+  let oldStylesheetRequests = 0
+  // route는 HTTP 캐시를 끈다. 캐시 저장 자체가 아니라 예전 URL만 오래된 응답을 주는 상황을 재현한다.
+  await page.route((url) => url.href === `${nginxOrigin}/landing.css`, async (route) => {
+    oldStylesheetRequests += 1
+    await route.fulfill({
+      contentType: 'text/css',
+      body: 'body { background: rgb(255, 0, 255); } .hero, .review-example, .steps { display: block; }',
+    })
+  })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  for (const { path, status, heading } of [
+    { path: '/', status: 200, heading: 'client-review' },
+    { path: '/privacy', status: 200, heading: '개인정보처리방침' },
+    { path: '/terms', status: 200, heading: '이용약관' },
+    { path: '/404', status: 404, heading: '찾을 수 없는 주소예요' },
+  ]) {
+    const stylesheetResponse = page.waitForResponse((response) =>
+      new URL(response.url()).pathname === '/landing.css'
+      && response.request().resourceType() === 'stylesheet',
+    )
+    expect((await page.goto(`${nginxOrigin}${path}`))?.status(), path).toBe(status)
+    const response = await stylesheetResponse
+    expect(response.status(), path).toBe(200)
+    expect(response.headers()['content-type'], path).toContain('text/css')
+    // 로컬 파일이나 고정 해시가 아니라 브라우저에 전송된 CSS 바이트로 버전을 계산한다.
+    const version = createHash('sha256').update(await response.body()).digest('hex').slice(0, 12)
+    const stylesheet = page.locator('link[rel="stylesheet"]')
+    await expect(stylesheet).toHaveCount(1)
+    await expect(stylesheet).toHaveAttribute('href', `/landing.css?v=${version}`)
+    expect(response.url(), path).toBe(`${nginxOrigin}/landing.css?v=${version}`)
+    await expect(page.getByRole('heading', { level: 1, name: heading, exact: true })).toBeVisible()
+    await page.evaluate(() => document.fonts.ready.then(() => undefined))
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(251, 247, 242)')
+    await expectNoHorizontalOverflow(page, 390)
+  }
+
+  await page.goto(`${nginxOrigin}/`)
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+  const title = page.getByRole('heading', { level: 2, name: '화면을 크게 펼치고, 깔끔하게 승인해요.', exact: true })
+  const copy = page.locator('.hero-copy')
+  const example = page.getByRole('figure', { name: '상품 상세 화면을 검수하는 예시', exact: true })
+  const photo = example.getByRole('img', { name: '핀으로 수정할 위치를 표시한 쇼핑몰 상품 화면', exact: true })
+  const checklist = example.locator('figcaption')
+  const steps = page.getByRole('list', { name: '진행 방식', exact: true }).getByRole('listitem')
+  await expect(steps).toHaveCount(3)
+  await expect(checklist).toContainText('검수 체크리스트')
+  await expect.poll(() => photo.evaluate((image: HTMLImageElement) =>
+    image.complete && image.naturalWidth > 0,
+  )).toBe(true)
+
+  for (const viewport of [
+    { width: 1728, height: 997 },
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport)
+    for (const element of [title, example, photo, checklist, ...await steps.all()]) {
+      await expect(element).toBeVisible()
+    }
+    const titleBox = (await title.boundingBox())!
+    const copyBox = (await copy.boundingBox())!
+    const exampleBox = (await example.boundingBox())!
+    const photoBox = (await photo.boundingBox())!
+    const checklistBox = (await checklist.boundingBox())!
+    const stepBoxes = await steps.evaluateAll((items) => items.map((item) => {
+      const { x, y, width, height } = item.getBoundingClientRect()
+      return { x, y, width, height }
+    }))
+    await expectNoHorizontalOverflow(page, viewport.width)
+
+    if (viewport.width === 390) {
+      expect(copyBox.y + copyBox.height).toBeLessThanOrEqual(exampleBox.y)
+      expect(exampleBox.y + exampleBox.height).toBeLessThanOrEqual(stepBoxes[0].y)
+      expect(stepBoxes[0].y + stepBoxes[0].height).toBeLessThanOrEqual(stepBoxes[1].y)
+      expect(stepBoxes[1].y + stepBoxes[1].height).toBeLessThanOrEqual(stepBoxes[2].y)
+      continue
+    }
+    expect(titleBox.x + titleBox.width).toBeLessThanOrEqual(exampleBox.x)
+    expect(copyBox.y).toBeLessThan(exampleBox.y + exampleBox.height)
+    expect(exampleBox.y).toBeLessThan(copyBox.y + copyBox.height)
+    expect(photoBox.x + photoBox.width).toBeLessThanOrEqual(checklistBox.x)
+    expect(photoBox.y).toBeLessThan(checklistBox.y + checklistBox.height)
+    expect(checklistBox.y).toBeLessThan(photoBox.y + photoBox.height)
+    expect(stepBoxes[0].x + stepBoxes[0].width).toBeLessThanOrEqual(stepBoxes[1].x)
+    expect(stepBoxes[1].x + stepBoxes[1].width).toBeLessThanOrEqual(stepBoxes[2].x)
+    expect(Math.abs(stepBoxes[0].y - stepBoxes[1].y)).toBeLessThanOrEqual(1)
+    expect(Math.abs(stepBoxes[1].y - stepBoxes[2].y)).toBeLessThanOrEqual(1)
+  }
+  expect(oldStylesheetRequests, '공개 페이지는 이전 CSS URL을 다시 사용하지 않는다').toBe(0)
+})
 
 test('매트는 기본이 어둡고 밝은 선택이 다시 열어도 유지된다', async ({ page, loginAs }) => {
   await resetDatabase()
