@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import type { Response } from '@playwright/test'
+import type { Locator, Page, Response } from '@playwright/test'
 import { test, expect, db, resetDatabase, createUser, createProject, KNOWN_LOGIN_CODE, useKnownLoginCode } from './fixtures.ts'
 
 const sharp = createRequire(new URL('../../api/package.json', import.meta.url))('sharp')
@@ -800,4 +800,251 @@ test('로그인 제목은 자체 Gowun Batang과 시스템 대체 글꼴을 쓰�
   await expect(focused).toHaveCSS('outline-width', '2px')
   await expect(focused).toHaveCSS('outline-offset', '2px')
   await expect(focused).toHaveCSS('outline-color', 'rgb(200, 78, 44)')
+})
+
+// 기존 참여자·실제 PNG 준비를 재사용한다. 생성 시각을 달리해 마지막 화면의 순서를 고정한다.
+const prepareFilmstrip = async (count: number) => {
+  const room = await prepareRoom()
+  const screens = [room.main]
+  for (let index = 1; index < count; index += 1) {
+    screens.push(await db.screen.create({
+      data: {
+        projectId: room.project.id,
+        name: `화면 ${index + 1}`,
+        viewport: 'PC',
+        createdAt: new Date(room.main.createdAt.getTime() + index * 1000),
+      },
+    }))
+  }
+  const version = await publishVersion(room.project.id, screens.map(({ id }) => id), 1)
+  return { ...room, version, screens }
+}
+
+const expectLoadedPhoto = async (photo: Locator) => {
+  await expect(photo).toBeVisible()
+  await expect.poll(() => photo.evaluate((image: HTMLImageElement) =>
+    image.complete && image.naturalWidth === 1200 && image.naturalHeight === 800,
+  )).toBe(true)
+}
+
+const expectMat = async (page: Page, selected: '어두운 매트' | '밝은 매트') => {
+  const picker = page.getByRole('group', { name: '사진 배경', exact: true })
+  await expect(picker.getByRole('button', { name: '어두운 매트', exact: true }))
+    .toHaveAttribute('aria-pressed', String(selected === '어두운 매트'))
+  await expect(picker.getByRole('button', { name: '밝은 매트', exact: true }))
+    .toHaveAttribute('aria-pressed', String(selected === '밝은 매트'))
+  const photo = page.getByRole('img', { name: '메인 · PC', exact: true })
+  await expectLoadedPhoto(photo)
+  // 클래스·저장 키 대신 사진을 감싼 첫 불투명 배경의 실제 색을 읽는다.
+  await expect.poll(() => photo.evaluate((image) => {
+    let parent = image.parentElement
+    while (parent) {
+      const color = getComputedStyle(parent).backgroundColor
+      if (color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') return color
+      parent = parent.parentElement
+    }
+    return null
+  })).toBe(selected === '어두운 매트' ? 'rgb(35, 30, 27)' : 'rgb(234, 226, 215)')
+}
+
+const expectNoHorizontalOverflow = async (page: Page, width: number) => {
+  await expect.poll(() => page.evaluate(() => Math.max(
+    document.documentElement.scrollWidth,
+    document.body.scrollWidth,
+  ))).toBeLessThanOrEqual(width)
+}
+
+test('매트는 기본이 어둡고 밝은 선택이 다시 열어도 유지된다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareRoom()
+  await loginAs(room.client.id)
+  const roomPath = `/app/projects/${room.project.id}`
+  await page.goto(roomPath)
+  await expectMat(page, '어두운 매트')
+
+  await page.getByRole('button', { name: '밝은 매트', exact: true }).click()
+  await expectMat(page, '밝은 매트')
+  await page.reload()
+  await expectMat(page, '밝은 매트')
+  await page.getByRole('link', { name: '프로젝트 목록', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '내 프로젝트', exact: true })).toBeVisible()
+  await page.getByRole('link', { name: room.project.name, exact: true }).click()
+  await expect(page).toHaveURL(roomPath)
+  await expectMat(page, '밝은 매트')
+
+  await page.getByRole('button', { name: '어두운 매트', exact: true }).click()
+  await expectMat(page, '어두운 매트')
+  await page.reload()
+  await expectMat(page, '어두운 매트')
+})
+
+test('저장소를 사용할 수 없어도 매트를 바꿀 수 있다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareRoom()
+  await loginAs(room.client.id)
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.addInitScript(() => {
+    for (const method of ['getItem', 'setItem']) {
+      Object.defineProperty(Storage.prototype, method, {
+        configurable: true,
+        value: () => { throw new DOMException('저장소 접근 차단', 'SecurityError') },
+      })
+    }
+  })
+  await page.goto(`/app/projects/${room.project.id}`)
+  await expectMat(page, '어두운 매트')
+  await page.getByRole('button', { name: '밝은 매트', exact: true }).click()
+  await expectMat(page, '밝은 매트')
+  await page.getByRole('button', { name: '어두운 매트', exact: true }).click()
+  await expectMat(page, '어두운 매트')
+  await page.getByRole('button', { name: '밝은 매트', exact: true }).click()
+  await expectMat(page, '밝은 매트')
+  // 저장하지 못한 값은 새로 열 때 기본값으로 돌아가며 화면은 계속 사용할 수 있다.
+  await page.reload()
+  await expectMat(page, '어두운 매트')
+  await page.getByRole('button', { name: '밝은 매트', exact: true }).click()
+  await expectMat(page, '밝은 매트')
+  expect(errors).toEqual([])
+})
+
+test('필름스트립을 접고 펼쳐도 고른 화면과 사진이 유지된다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareFilmstrip(2)
+  await loginAs(room.client.id)
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await page.goto(`/app/projects/${room.project.id}`)
+  const selected = page.getByRole('button', { name: '화면 2 · PC', exact: true })
+  await selected.click()
+  const photo = page.getByRole('img', { name: '화면 2 · PC', exact: true })
+  await expectLoadedPhoto(photo)
+  const photoUrl = `/api/assets/${room.version.screens[1].assetId}`
+  await expect(photo).toHaveAttribute('src', photoUrl)
+  await expect(selected).toHaveAttribute('aria-pressed', 'true')
+
+  const toggle = page.getByRole('button', { name: /^(접기|펼치기)$/ })
+  const strip = toggle.locator('..')
+  await expect(toggle).toHaveText('접기')
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await expect.poll(async () => (await strip.boundingBox())?.height).toBe(82)
+  await toggle.click()
+  await expect(toggle).toHaveText('펼치기')
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect.poll(async () => (await strip.boundingBox())?.height).toBe(42)
+  await expect(strip.getByRole('list', { includeHidden: true })).toBeHidden()
+  await expect(strip.getByText('화면 2개', { exact: true })).toBeVisible()
+  await expectLoadedPhoto(photo)
+  await expect(photo).toHaveAttribute('src', photoUrl)
+  await expect(page.getByText('사진 2 / 2', { exact: true })).toBeVisible()
+
+  await toggle.click()
+  await expect(toggle).toHaveText('접기')
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await expect.poll(async () => (await strip.boundingBox())?.height).toBe(82)
+  await expect(selected).toBeVisible()
+  await expect(selected).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: '메인 · PC', exact: true })).toHaveAttribute('aria-pressed', 'false')
+  await expectLoadedPhoto(photo)
+  await expect(photo).toHaveAttribute('src', photoUrl)
+  await expect(page.getByText('사진 2 / 2', { exact: true })).toBeVisible()
+})
+
+test('화면 20개를 필름스트립 안에서 가로로 탐색하고 마지막 사진을 고른다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareFilmstrip(20)
+  await loginAs(room.client.id)
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto(`/app/projects/${room.project.id}`)
+  await expectLoadedPhoto(page.getByRole('img', { name: '메인 · PC', exact: true }))
+  const strip = page.getByRole('button', { name: '접기', exact: true }).locator('..')
+  const list = strip.getByRole('list')
+  const buttons = list.getByRole('button')
+  await expect(buttons).toHaveCount(20)
+  await expect(buttons.nth(19)).toHaveAccessibleName('화면 20 · PC')
+  await expect.poll(() => list.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true)
+  await expect(list).toHaveCSS('overflow-x', 'auto')
+  await expect(list).toHaveCSS('min-width', '0px')
+  await expectNoHorizontalOverflow(page, 1280)
+  expect(await list.evaluate((element) => element.scrollLeft)).toBe(0)
+  const firstBox = (await buttons.first().boundingBox())!
+  const lastBox = (await buttons.nth(19).boundingBox())!
+  const listBox = (await list.boundingBox())!
+  expect(lastBox.x).toBeGreaterThanOrEqual(listBox.x + listBox.width)
+  expect(Math.abs(lastBox.y - firstBox.y)).toBeLessThanOrEqual(1)
+
+  // 실제 화면 선택 버튼을 스크롤해서 누르고, 서버에서 받은 마지막 사진인지 확인한다.
+  await buttons.nth(19).scrollIntoViewIfNeeded()
+  await buttons.nth(19).click()
+  await expect.poll(() => list.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0)
+  await expect(buttons.nth(19)).toHaveAttribute('aria-pressed', 'true')
+  await expect(buttons.first()).toHaveAttribute('aria-pressed', 'false')
+  const lastPhoto = page.getByRole('img', { name: '화면 20 · PC', exact: true })
+  await expectLoadedPhoto(lastPhoto)
+  await expect(lastPhoto).toHaveAttribute('src', `/api/assets/${room.version.screens[19].assetId}`)
+  await expect(page.getByText('사진 20 / 20', { exact: true })).toBeVisible()
+  const visibleLastBox = (await buttons.nth(19).boundingBox())!
+  const scrolledListBox = (await list.boundingBox())!
+  expect(visibleLastBox.x).toBeGreaterThanOrEqual(scrolledListBox.x)
+  expect(visibleLastBox.x + visibleLastBox.width).toBeLessThanOrEqual(scrolledListBox.x + scrolledListBox.width)
+  await expectNoHorizontalOverflow(page, 1280)
+})
+
+test('390px에서 검수실과 비교 화면은 가로로 넘치지 않는다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareRoom()
+  const issue = await seedIssue(room, 'READY_FOR_REVIEW')
+  const latest = await publishVersion(room.project.id, [room.main.id], 1)
+  await db.resolutionAttempt.create({
+    data: {
+      issueId: issue.id,
+      versionId: latest.id,
+      versionScreenId: latest.screens[0].id,
+      summary: '사진의 여백을 고쳤어요.',
+      submittedById: room.developer.id,
+    },
+  })
+  await loginAs(room.client.id)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(`/app/projects/${room.project.id}`)
+  const photo = page.getByRole('img', { name: '메인 · PC', exact: true })
+  const strip = page.getByRole('button', { name: '접기', exact: true }).locator('..')
+  const panel = page.getByRole('complementary', { name: '쪽지', exact: true })
+  await expectLoadedPhoto(photo)
+  await expect(panel.getByRole('region', { name: '쪽지 목록', exact: true })).toBeVisible()
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+  const photoBox = (await photo.boundingBox())!
+  const stripBox = (await strip.boundingBox())!
+  const panelBox = (await panel.boundingBox())!
+  expect(photoBox.y + photoBox.height).toBeLessThanOrEqual(stripBox.y)
+  expect(stripBox.y + stripBox.height).toBeLessThanOrEqual(panelBox.y)
+  await expectNoHorizontalOverflow(page, 390)
+
+  // 실제 쪽지 이력의 링크로 이동해 비교 경로와 양쪽 사진을 함께 확인한다.
+  await panel.getByRole('region', { name: '쪽지 목록', exact: true }).getByRole('button', { name: /READY_FOR_REVIEW 상태 쪽지/ }).click()
+  await page.getByRole('link', { name: '비교해서 보기', exact: true }).click()
+  await expect(page).toHaveURL(`/app/issues/${issue.id}/compare`)
+  const before = page.getByRole('img', { name: '처음 사진 메인 · PC', exact: true })
+  const after = page.getByRole('img', { name: '고친 사진 메인 · PC', exact: true })
+  await expectLoadedPhoto(before)
+  await expectLoadedPhoto(after)
+  await expect(before).toHaveAttribute('src', `/api/assets/${room.version.screens[0].assetId}`)
+  await expect(after).toHaveAttribute('src', `/api/assets/${latest.screens[0].assetId}`)
+  await expect(page.getByRole('button', { name: `쪽지 #${issue.number} ${issue.title}`, exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '재요청', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '확인 완료', exact: true })).toBeVisible()
+
+  for (const width of [390, 959, 960, 1440]) {
+    await page.setViewportSize({ width, height: 844 })
+    const beforeBox = (await before.boundingBox())!
+    const afterBox = (await after.boundingBox())!
+    if (width < 960) {
+      expect(beforeBox.y + beforeBox.height).toBeLessThanOrEqual(afterBox.y)
+      expect(Math.abs(beforeBox.x - afterBox.x)).toBeLessThanOrEqual(1)
+    }
+    if (width >= 960) {
+      expect(beforeBox.x + beforeBox.width).toBeLessThanOrEqual(afterBox.x)
+      expect(Math.abs(beforeBox.y - afterBox.y)).toBeLessThanOrEqual(1)
+    }
+    await expectNoHorizontalOverflow(page, width)
+  }
 })
