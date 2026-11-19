@@ -462,6 +462,32 @@ describe('LoginPage', () => {
   })
 
   describe('이메일 오류', () => {
+    it.each([
+      {
+        code: 'IP_RATE_LIMITED',
+        message: '요청이 너무 많아요. 잠시 뒤 다시 시도해 주세요',
+        otherMessage: '코드는 1분에 한 번만 받을 수 있어요',
+      },
+      {
+        code: undefined,
+        message: '코드는 1분에 한 번만 받을 수 있어요',
+        otherMessage: '요청이 너무 많아요. 잠시 뒤 다시 시도해 주세요',
+      },
+    ])('429의 code가 $code이면 $message를 표시한다', async ({ code, message, otherMessage }) => {
+      vi.mocked(requestCode).mockRejectedValueOnce(new ApiError(429, code))
+      renderLogin()
+      fireEvent.change(screen.getByLabelText('이메일'), { target: { value: email } })
+      fireEvent.click(screen.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)' }))
+      fireEvent.click(screen.getByRole('button', { name: '코드 받기' }))
+
+      expect(await screen.findByText(message)).toBeDefined()
+      expect(screen.queryByText(otherMessage)).toBeNull()
+      expect(requestCode).toHaveBeenCalledExactlyOnceWith(email)
+      expect(screen.getByLabelText<HTMLInputElement>('이메일').value).toBe(email)
+      expect(screen.queryByLabelText('로그인 코드')).toBeNull()
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: '코드 받기' }).disabled).toBe(false)
+    })
+
     it('422에 모르는 code가 있으면 일반 오류를 표시하고 보존한 이메일로 다시 요청할 수 있다', async () => {
       vi.mocked(requestCode).mockRejectedValueOnce(new ApiError(422, 'SOMETHING_NEW'))
       renderLogin()

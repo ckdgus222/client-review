@@ -12,7 +12,8 @@ import { createSessionToken, hashSessionToken } from '../src/auth/token.js';
 import { MailService } from '../src/mail/mail.service.js';
 import { NotificationsService } from '../src/notifications/notifications.service.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
-import { withdrawUser } from '../src/scripts/withdraw-user.js';
+import { replayRecords } from '../src/scripts/replay-records.js';
+import { withdrawalRecord, withdrawUser } from '../src/scripts/withdraw-user.js';
 import { setupApp } from '../src/setup-app.js';
 import { resetDatabase } from './reset-database.js';
 
@@ -212,6 +213,7 @@ describe('탈퇴 처리 (e2e)', () => {
 
     expect(result).toEqual({
       userId,
+      time: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/),
       approverCleared: 1,
       membershipsRevoked: 1,
       sessions: 2,
@@ -231,6 +233,35 @@ describe('탈퇴 처리 (e2e)', () => {
     expect(await prisma.loginCode.count({ where: { email } })).toBe(0);
     expect(await prisma.invitation.count({ where: { email } })).toBe(0);
     expect(await prisma.notificationDelivery.count({ where: { toEmail: email } })).toBe(0);
+  });
+
+  it('탈퇴 결과의 시각은 저장된 철회 시각과 같고 그 시각의 탈퇴 기록을 다시 적용해도 철회 시각이 그대로다', async () => {
+    const { time } = await withdrawUser(prisma, email);
+
+    expect(time).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
+    const revoked = await prisma.$queryRaw<{ time: string }[]>`
+      SELECT to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS time
+      FROM project_members WHERE id = ${memberId}::uuid
+    `;
+    expect(revoked).toEqual([{ time }]);
+
+    // 탈퇴 전 백업을 복원한 상태를 만들어, 기록의 시각이 그대로 다시 저장되는지 본다.
+    await prisma.$executeRaw`
+      UPDATE project_members SET revoked_at = NULL WHERE id = ${memberId}::uuid
+    `;
+    await prisma.$executeRaw`
+      UPDATE users SET email = ${email}, name = ${name} WHERE id = ${userId}::uuid
+    `;
+
+    const record = withdrawalRecord(userId, time);
+    const since = '2000-01-01T00:00:00.000000Z';
+    await replayRecords(prisma, record, since);
+
+    const replayed = await prisma.$queryRaw<{ time: string }[]>`
+      SELECT to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS time
+      FROM project_members WHERE id = ${memberId}::uuid
+    `;
+    expect(replayed).toEqual([{ time }]);
   });
 
   it('탈퇴하면 그 사람의 기존 쿠키로 요청해도 401이다', async () => {

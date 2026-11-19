@@ -99,6 +99,21 @@ describe('알림 우편함 (e2e)', () => {
       where: { event: { projectId, type, ...(issueId ? { issueId } : {}) } },
       orderBy: { toEmail: 'asc' },
     });
+  const readRecord = async (eventId: string) => {
+    const event = await prisma.activityEvent.findUniqueOrThrow({
+      where: { id: eventId },
+      include: { member: { include: { user: true } } },
+    });
+    // Date로 읽으면 밀리초 아래가 잘린다. 기대값도 DB에 저장된 여섯 자리를 글자로 읽는다.
+    const [times] = await prisma.$queryRaw<{ occurredAt: string; joinedAt: string | null }[]>`
+      SELECT to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "occurredAt",
+        to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "joinedAt"
+      FROM activity_events e
+      LEFT JOIN project_members m ON m.id = e.member_id
+      WHERE e.id = ${eventId}::uuid
+    `;
+    return { ...event, ...times };
+  };
   const makeDue = () => prisma.$executeRaw`
     UPDATE notification_deliveries SET next_attempt_at = clock_timestamp() - interval '1 second'
   `;
@@ -185,7 +200,13 @@ describe('알림 우편함 (e2e)', () => {
       await post(`/api/versions/${versionId}/publish`).expect(500);
       expect(await readState()).toEqual(before);
       await worker.processDue();
-      expect(send).not.toHaveBeenCalled();
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith({
+        to: process.env.DEVELOPER_EMAIL,
+        subject: '[Client Review 알림] 서버 오류 500',
+        text: expect.stringContaining('요청: POST /api/versions/:id/publish'),
+      });
+      expect(mails.filter(({ subject }) => subject.startsWith('[Client Review]'))).toEqual([]);
     } finally {
       try {
         await prisma.$executeRaw`DROP TRIGGER IF EXISTS notifications_e2e_fail_insert ON notification_deliveries`;
@@ -310,25 +331,185 @@ describe('알림 우편함 (e2e)', () => {
       ['MEMBER_REVOKED', client.memberId],
       ['INVITATION_ACCEPTED', accepted.id],
     ] as const) {
-      const event = await prisma.activityEvent.findFirstOrThrow({ where: { projectId, type } });
+      const { id } = await prisma.activityEvent.findFirstOrThrow({ where: { projectId, type } });
+      const event = await readRecord(id);
+      const member = event.member!;
       expect(event.memberId).toBe(memberId);
       expect(await deliveriesFor(type)).toEqual([
         expect.objectContaining({ toEmail: developer.email, status: 'SENT', sentAt: expect.any(Date) }),
       ]);
-      expect(mails.find(({ text }) => text.includes(`사건: ${type}`))).toMatchObject({
+      expect(mails.find(({ text }) => text.includes(`사건: ${type}`))).toEqual({
         to: developer.email,
+        subject: `[Client Review 기록] ${type}`,
         text: [
           `사건: ${type}`,
-          `시각: ${event.createdAt.toISOString()}`,
+          `사건 id: ${event.id}`,
+          `시각: ${event.occurredAt}`,
           `프로젝트 id: ${projectId}`,
           `대상 멤버 id: ${memberId}`,
+          `대상 역할: ${member.role}`,
+          `대상 사용자 id: ${member.userId}`,
+          `대상 이메일: ${JSON.stringify(member.user.email)}`,
+          `대상 이름: ${JSON.stringify(member.user.name)}`,
+          `대상 참여 시각: ${event.joinedAt}`,
         ].join('\n'),
       });
     }
     expect(JSON.stringify(mails)).not.toContain(token);
   });
 
-  it('쪽지 작성·초대·승인자 변경 같은 사건은 우편함에 줄을 만들지 않는다', async () => {
+  it('기록 메일에는 사건 id와 대상 멤버의 역할·사용자 id·이메일·이름·참여 시각이 있다', async () => {
+    const name = '고객\n"사건: MEMBER_REVOKED"\r\n다음 줄';
+    const invited = await prisma.user.create({ data: { email: 'record-client@example.com', name } });
+    const invitation = await post(`/api/projects/${projectId}/invitations`).send({ email: invited.email }).expect(201);
+    const token = new URL(invitation.body.link).pathname.split('/').at(-1)!;
+    await post('/api/invitations/accept', await login(invited.id))
+      .send({ token })
+      .expect(200);
+    const member = await prisma.projectMember.findUniqueOrThrow({
+      where: { projectId_userId: { projectId, userId: invited.id } },
+    });
+    await post(`/api/members/${member.id}/revoke`).expect(204);
+
+    // 밀리초로 자른 뒤 000을 붙이는 구현도 반드시 잡도록 DB 시각의 끝 세 자리를 고정한다.
+    await prisma.$executeRaw`
+      UPDATE project_members SET created_at = '2026-11-13T03:04:05.987654Z'::timestamptz
+      WHERE id = ${member.id}::uuid
+    `;
+    await prisma.$executeRaw`
+      UPDATE activity_events SET created_at = '2026-11-14T03:04:05.123456Z'::timestamptz
+      WHERE project_id = ${projectId}::uuid AND type = 'INVITATION_ACCEPTED'
+    `;
+    await prisma.$executeRaw`
+      UPDATE activity_events SET created_at = '2026-11-14T03:04:05.123457Z'::timestamptz
+      WHERE project_id = ${projectId}::uuid AND type = 'MEMBER_REVOKED'
+    `;
+    mails.length = 0;
+    send.mockClear();
+    await worker.processDue();
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(mails).toHaveLength(2);
+    for (const type of ['INVITATION_ACCEPTED', 'MEMBER_REVOKED'] as const) {
+      const { id } = await prisma.activityEvent.findFirstOrThrow({ where: { projectId, type } });
+      const event = await readRecord(id);
+      const target = event.member!;
+      expect(target).toMatchObject({ id: member.id, role: 'CLIENT', userId: invited.id });
+      expect(event.occurredAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
+      expect(event.joinedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
+      const mail = mails.find(({ subject }) => subject === `[Client Review 기록] ${type}`)!;
+      expect(mail).toEqual({
+        to: developer.email,
+        subject: `[Client Review 기록] ${type}`,
+        text: [
+          `사건: ${type}`,
+          `사건 id: ${event.id}`,
+          `시각: ${event.occurredAt}`,
+          `프로젝트 id: ${event.projectId}`,
+          `대상 멤버 id: ${target.id}`,
+          `대상 역할: ${target.role}`,
+          `대상 사용자 id: ${target.userId}`,
+          `대상 이메일: ${JSON.stringify(target.user.email)}`,
+          `대상 이름: ${JSON.stringify(target.user.name)}`,
+          `대상 참여 시각: ${event.joinedAt}`,
+        ].join('\n'),
+      });
+      const lines = mail.text.split('\n');
+      expect(lines).toHaveLength(10);
+      expect(JSON.parse(lines[7].slice('대상 이메일: '.length))).toBe(invited.email);
+      expect(JSON.parse(lines[8].slice('대상 이름: '.length))).toBe(name);
+      expect(mail.text).not.toContain('\r');
+      expect(await deliveriesFor(type)).toEqual([
+        expect.objectContaining({ eventId: event.id, toEmail: developer.email, status: 'SENT' }),
+      ]);
+    }
+    expect(JSON.stringify(mails)).not.toContain(token);
+  });
+
+  it('보관과 보관 풀기도 개발자에게 기록 메일이 간다', async () => {
+    await post(`/api/projects/${projectId}/archive`).expect(204);
+    await post(`/api/projects/${projectId}/unarchive`).expect(204);
+    expect(send).not.toHaveBeenCalled();
+    await worker.processDue();
+
+    expect(mails).toHaveLength(2);
+    for (const type of ['PROJECT_ARCHIVED', 'PROJECT_UNARCHIVED'] as const) {
+      const { id } = await prisma.activityEvent.findFirstOrThrow({ where: { projectId, type } });
+      const event = await readRecord(id);
+      expect(event.member).toBeNull();
+      expect(mails.find(({ subject }) => subject === `[Client Review 기록] ${type}`)).toEqual({
+        to: developer.email,
+        subject: `[Client Review 기록] ${type}`,
+        text: [
+          `사건: ${type}`,
+          `사건 id: ${event.id}`,
+          `시각: ${event.occurredAt}`,
+          `프로젝트 id: ${projectId}`,
+          '대상 멤버 id: -',
+        ].join('\n'),
+      });
+      expect(await deliveriesFor(type)).toEqual([
+        expect.objectContaining({ eventId: event.id, toEmail: developer.email, status: 'SENT' }),
+      ]);
+    }
+  });
+
+  it('승인자를 바꾸거나 비우면 개발자에게 기록 메일이 간다', async () => {
+    await post(`/api/projects/${projectId}/approver`).send({ memberId: client.memberId }).expect(200);
+    await post(`/api/projects/${projectId}/approver`).send({ memberId: null }).expect(200);
+    expect(send).not.toHaveBeenCalled();
+    await worker.processDue();
+
+    const events = await prisma.activityEvent.findMany({
+      where: { projectId, type: 'APPROVER_CHANGED' },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(events.map(({ memberId }) => memberId)).toEqual([client.memberId, null]);
+    const assigned = await readRecord(events[0].id);
+    const cleared = await readRecord(events[1].id);
+    const member = assigned.member!;
+    // 보내기 전에 승인자를 비웠어도 지정 사건은 그때 지정했던 사람을 담는다.
+    expect(mails).toHaveLength(2);
+    expect(mails).toEqual(
+      expect.arrayContaining([
+        {
+          to: developer.email,
+          subject: '[Client Review 기록] APPROVER_CHANGED',
+          text: [
+            '사건: APPROVER_CHANGED',
+            `사건 id: ${assigned.id}`,
+            `시각: ${assigned.occurredAt}`,
+            `프로젝트 id: ${projectId}`,
+            `대상 멤버 id: ${member.id}`,
+            `대상 역할: ${member.role}`,
+            `대상 사용자 id: ${member.userId}`,
+            `대상 이메일: ${JSON.stringify(member.user.email)}`,
+            `대상 이름: ${JSON.stringify(member.user.name)}`,
+            `대상 참여 시각: ${assigned.joinedAt}`,
+          ].join('\n'),
+        },
+        {
+          to: developer.email,
+          subject: '[Client Review 기록] APPROVER_CHANGED',
+          text: [
+            '사건: APPROVER_CHANGED',
+            `사건 id: ${cleared.id}`,
+            `시각: ${cleared.occurredAt}`,
+            `프로젝트 id: ${projectId}`,
+            '대상 멤버 id: 지정하지 않음',
+          ].join('\n'),
+        },
+      ]),
+    );
+    expect(await deliveriesFor('APPROVER_CHANGED')).toEqual(
+      expect.arrayContaining(
+        events.map(({ id }) => expect.objectContaining({ eventId: id, toEmail: developer.email, status: 'SENT' })),
+      ),
+    );
+    expect(await deliveriesFor('APPROVER_CHANGED')).toHaveLength(2);
+  });
+
+  it('쪽지 작성·초대는 우편함에 줄을 만들지 않고 승인자 변경만 기록 메일을 만든다', async () => {
     await prepareReview();
     await createIssue();
     await post(`/api/projects/${projectId}/invitations`).send({ email: 'invited@example.com' }).expect(201);
@@ -338,10 +519,22 @@ describe('알림 우편함 (e2e)', () => {
       'INVITATION_CREATED',
       'ISSUE_CREATED',
     ]);
-    expect(await prisma.notificationDelivery.count()).toBe(0);
+    expect(await prisma.notificationDelivery.findMany()).toEqual([
+      expect.objectContaining({
+        eventId: (await prisma.activityEvent.findFirstOrThrow({ where: { projectId, type: 'APPROVER_CHANGED' } })).id,
+        toEmail: developer.email,
+        status: 'PENDING',
+      }),
+    ]);
     send.mockClear();
     await worker.processDue();
-    expect(send).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: developer.email,
+        subject: '[Client Review 기록] APPROVER_CHANGED',
+      }),
+    );
   });
 
   it('메일 발송이 실패해도 게시와 승인은 저장되고 줄은 다시 보낼 차례로 남는다', async () => {
@@ -917,11 +1110,12 @@ describe('알림 우편함 (e2e)', () => {
     expect(result.value.status).toBe(204);
     const event = await prisma.activityEvent.findFirstOrThrow({ where: { type: 'MEMBER_REVOKED' } });
     expect(event.createdAt.getTime()).toBeGreaterThanOrEqual(releaseTime.getTime());
+    const { occurredAt } = await readRecord(event.id);
     await worker.processDue();
     expect(mails).toEqual([
       expect.objectContaining({
         to: developer.email,
-        text: expect.stringContaining(`시각: ${event.createdAt.toISOString()}`),
+        text: expect.stringContaining(`시각: ${occurredAt}`),
       }),
     ]);
   });

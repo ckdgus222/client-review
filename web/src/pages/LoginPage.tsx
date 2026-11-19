@@ -20,6 +20,8 @@ const INPUT_ERRORS = {
 
 const toMessage = (error: unknown, step: Step) => {
   if (!(error instanceof ApiError)) return '연결을 확인하고 다시 시도해 주세요'
+  // nginx가 IP마다 거는 제한(docs/deploy.md 정할 것 4). api의 "이메일마다 60초" 429와 까닭이 달라 문구를 나눈다.
+  if (error.code === 'IP_RATE_LIMITED') return '요청이 너무 많아요. 잠시 뒤 다시 시도해 주세요'
   if (error.status === 429) return '코드는 1분에 한 번만 받을 수 있어요'
   if (error.code === 'CODE_WRONG') return '코드가 맞지 않아요'
   if (error.code === 'CODE_EXPIRED') return '코드를 쓸 수 없어요. 새 코드를 받아 주세요'

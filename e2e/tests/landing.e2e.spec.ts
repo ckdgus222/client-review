@@ -55,6 +55,7 @@ test('개인정보처리방침에 항목·보유 기간·권리·보호책임자
   for (const name of [
     '2. 모으는 항목과 모으는 때',
     '3. 보유 기간',
+    '4. 파기 절차와 방법',
     '7. 정보주체의 권리와 요청 방법',
     '10. 개인정보 보호책임자',
   ]) {
@@ -69,6 +70,12 @@ test('개인정보처리방침에 항목·보유 기간·권리·보호책임자
   await expect(items.filter({ hasText: /^초대:/ })).toContainText('수락·철회·만료로 끝난 지 30일')
   await expect(items.filter({ hasText: /^메일 발송 기록:/ })).toContainText('보내거나 마지막으로 시도한 지 30일')
   await expect(items.filter({ hasText: /^백업:/ })).toContainText('백업은 14일 동안')
+  await expect(items.filter({ hasText: /^복구용 기록\(/ })).toHaveText(
+    '복구용 기록(참여·철회 기록 메일의 이메일·이름): 30일 안에 지워요.',
+  )
+  await expect(page.locator('p').filter({ hasText: '탈퇴한 뒤에도' })).toContainText(
+    '탈퇴한 뒤에도 이름과 이메일은 백업에 14일, 복구용 기록에 30일까지 남았다가 지워져요.',
+  )
 })
 
 test('로그인 화면에서 개인정보처리방침과 이용약관 링크를 눌러 그 글로 간다', async ({ page }) => {

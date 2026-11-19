@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AlertModule } from './alert/alert.module.js';
 import { AssetsModule } from './assets/assets.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { CleanupModule } from './cleanup/cleanup.module.js';
@@ -28,6 +29,7 @@ import { VersionsModule } from './versions/versions.module.js';
     IssuesModule,
     NotificationsModule,
     CleanupModule,
+    AlertModule,
   ],
 })
 export class AppModule {}

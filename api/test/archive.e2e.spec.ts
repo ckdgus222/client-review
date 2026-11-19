@@ -924,11 +924,11 @@ describe('보관과 삭제 (e2e)', () => {
     });
   });
 
-  it('삭제와 되살리기는 개발자에게 기록 메일을 넣고 보관은 메일이 없다', async () => {
+  it('삭제·되살리기·보관·보관 풀기는 개발자에게 기록 메일을 넣는다', async () => {
     const before = await readState();
     await post(`/api/projects/${projectId}/archive`).expect(204);
     await post(`/api/projects/${projectId}/unarchive`).expect(204);
-    expect(await prisma.notificationDelivery.findMany({ orderBy: { id: 'asc' } })).toEqual(before.deliveries);
+    expect(await prisma.notificationDelivery.count()).toBe(before.deliveries.length + 2);
     await post(`/api/projects/${projectId}/delete`).send({ name: '보관 검수 프로젝트' }).expect(204);
     await post(`/api/projects/${projectId}/restore`).expect(204);
 
@@ -945,22 +945,17 @@ describe('보관과 삭제 (e2e)', () => {
     ]);
     for (const event of events) {
       expect(event).toMatchObject({ actorId: developerId, projectId, memberId: null, versionId: null, issueId: null });
-      const recorded = event.type === 'PROJECT_DELETE_REQUESTED' || event.type === 'PROJECT_RESTORED';
-      expect(event.deliveries).toEqual(
-        recorded
-          ? [
-              expect.objectContaining({
-                eventId: event.id,
-                toEmail: 'developer@example.com',
-                status: 'PENDING',
-                attempts: 0,
-                sentAt: null,
-              }),
-            ]
-          : [],
-      );
+      expect(event.deliveries).toEqual([
+        expect.objectContaining({
+          eventId: event.id,
+          toEmail: 'developer@example.com',
+          status: 'PENDING',
+          attempts: 0,
+          sentAt: null,
+        }),
+      ]);
     }
-    expect(await prisma.notificationDelivery.count()).toBe(before.deliveries.length + 2);
+    expect(await prisma.notificationDelivery.count()).toBe(before.deliveries.length + 4);
     const activity = await get(`/api/projects/${projectId}/activity`).expect(200);
     for (const event of events) {
       expect(activity.body).toContainEqual(
@@ -1037,7 +1032,7 @@ describe('보관과 삭제 (e2e)', () => {
       next: 'ARCHIVED',
       code: 'PROJECT_ARCHIVED',
       type: 'PROJECT_ARCHIVED',
-      mails: 0,
+      mails: 1,
     },
     {
       action: 'unarchive',
@@ -1045,7 +1040,7 @@ describe('보관과 삭제 (e2e)', () => {
       next: 'ACTIVE',
       code: 'PROJECT_NOT_ARCHIVED',
       type: 'PROJECT_UNARCHIVED',
-      mails: 0,
+      mails: 1,
     },
     {
       action: 'delete',
