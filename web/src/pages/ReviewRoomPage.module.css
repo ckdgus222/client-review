@@ -87,9 +87,13 @@
   font-size: var(--font-size-sm);
 }
 
-.status[data-current='true'],
+.status[data-current='true'] {
+  color: var(--color-accent-soft-text);
+}
+
 .status[data-approved='true'] {
-  color: var(--color-review-selected);
+  color: var(--color-ok);
+  background: var(--color-ok-soft);
 }
 
 .dot {
@@ -185,6 +189,11 @@
   color: var(--color-on-accent);
   font-weight: 600;
   text-decoration: none;
+}
+
+.messageAction:hover {
+  background: var(--color-accent-hover);
+  color: var(--color-on-accent);
 }
 
 /* 문장 속의 "최신 버전 보기"처럼 화면 상태를 바꾸는 버튼을 링크 모양으로 보인다. */

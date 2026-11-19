@@ -405,6 +405,72 @@ test('확인서 인쇄는 흰 종이에 본문만 남긴다', async ({ page, log
   }
 })
 
+test('검수실 준비 링크와 버전 상태 글자가 충분한 대비를 유지한다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareRoom()
+  const emptyProject = await createProject(room.developer.id, '아직 게시하지 않은 프로젝트')
+  await loginAs(room.developer.id)
+  await page.setViewportSize({ width: 1440, height: 900 })
+
+  const expectTextContrast = async (locator: Locator, label: string) => {
+    await expect(locator).toBeVisible()
+    const ratio = await locator.evaluate((element) => {
+      const foreground = getComputedStyle(element).color.match(/[\d.]+/g)!.map(Number)
+      if ((foreground[3] ?? 1) !== 1) throw new Error('반투명 글자는 합성한 색으로 대비를 검사해야 해요.')
+
+      let background: number[] | undefined
+      let current: Element | null = element
+      while (current) {
+        const style = getComputedStyle(current)
+        if (style.opacity !== '1') throw new Error('반투명 요소는 합성한 색으로 대비를 검사해야 해요.')
+        if (!background) {
+          if (style.backgroundImage !== 'none') throw new Error('배경 이미지는 글자 뒤의 색을 따로 검사해야 해요.')
+          const channels = style.backgroundColor.match(/[\d.]+/g)!.map(Number)
+          const alpha = channels[3] ?? 1
+          if (alpha !== 0 && alpha !== 1) throw new Error('반투명 배경은 합성한 색으로 대비를 검사해야 해요.')
+          if (alpha === 1) background = channels
+        }
+        current = current.parentElement
+      }
+      if (!background) throw new Error('글자 뒤의 불투명 배경을 찾지 못했어요.')
+
+      // 인쇄 대비 검사와 같은 WCAG 상대 휘도 공식에 실제 전경·배경을 모두 넣는다.
+      const luminance = (channels: number[]) => {
+        const [red, green, blue] = channels.slice(0, 3).map((channel) => {
+          const value = channel / 255
+          return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+        })
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+      }
+      const text = luminance(foreground)
+      const surface = luminance(background)
+      return (Math.max(text, surface) + 0.05) / (Math.min(text, surface) + 0.05)
+    })
+    expect(ratio, label).toBeGreaterThanOrEqual(4.5)
+  }
+
+  await page.goto(`/app/projects/${emptyProject.id}`)
+  const emptyMessage = page.getByRole('heading', { name: '아직 게시한 버전이 없어요.', exact: true }).locator('..')
+  const prepareLink = emptyMessage.getByRole('link', { name: '초안 준비', exact: true })
+  await expect(prepareLink).toHaveAttribute('href', `/app/projects/${emptyProject.id}/draft`)
+  await page.mouse.move(0, 0)
+  await expectTextContrast(prepareLink, '빈 프로젝트 초안 준비 링크: 기본')
+  await prepareLink.hover()
+  expect(await prepareLink.evaluate((link) => link.matches(':hover'))).toBe(true)
+  await expectTextContrast(prepareLink, '빈 프로젝트 초안 준비 링크: hover')
+
+  await page.goto(`/app/projects/${room.project.id}`)
+  await expectTextContrast(page.getByText('검수 중', { exact: true }), 'IN_REVIEW 버전 상태')
+  await db.$transaction([
+    db.approval.create({
+      data: { versionId: room.version.id, approverId: room.client.id, summary: { issues: [] } },
+    }),
+    db.deliveryVersion.update({ where: { id: room.version.id }, data: { status: 'APPROVED' } }),
+  ])
+  await page.reload()
+  await expectTextContrast(page.getByText('승인됨', { exact: true }), 'APPROVED 버전 상태')
+})
+
 test('진행률은 전체 쪽지 기준이며 필터와 무관하고 상태 변경을 반영한다', async ({ page, loginAs }) => {
   await resetDatabase()
   const room = await prepareRoom()
