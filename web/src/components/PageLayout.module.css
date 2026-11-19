@@ -1,28 +1,118 @@
 .header {
-  padding: var(--space-3) var(--space-4);
-  background: var(--color-surface);
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 clamp(16px, 2.4vw, 36px);
   border-bottom: 1px solid var(--color-border);
-  font-size: var(--font-size-lg);
-  font-weight: 600;
+  background: var(--color-bg);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  gap: 9px;
+  color: var(--color-text);
+  font-size: 1rem;
+  font-weight: 700;
+  text-decoration: none;
 }
 
 .main {
+  min-width: 0;
   padding: var(--space-4);
 }
 
-/* 인쇄할 때는 사이트 머리말을 찍지 않는다. 종이에는 그 화면의 내용(검수 확인서 등)만 남긴다.
-   @page는 CSS 모듈 안에 있어도 앱 전체에 걸리는 규칙이라, 모든 화면을 감싸는 이 파일에 둔다. */
+.workspace {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  margin: calc(-1 * var(--space-4));
+  min-height: calc(100dvh - 56px);
+}
+
+.menu {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 24px 14px;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+}
+
+.menu a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 13px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.menu a:hover, .menu a:focus-visible {
+  background: var(--color-surface-note);
+}
+
+.menu a[aria-current='page'] {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-accent-soft-text);
+}
+
+.menu a span {
+  color: var(--color-text-muted);
+  font: 0.8rem var(--font-mono);
+}
+
+.content {
+  min-width: 0;
+  padding: clamp(22px, 3.5vw, 56px);
+}
+
+@media (max-width: 959px) {
+  .workspace {
+    display: block;
+  }
+
+  .menu {
+    flex-flow: row wrap;
+    gap: 2px;
+    padding: 6px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .menu a {
+    padding: 6px 10px;
+  }
+
+  .content {
+    padding: 24px 16px;
+  }
+}
+
 @media print {
   @page {
     size: A4 portrait;
     margin: 18mm 15mm;
   }
 
-  .header {
+  .header, .menu {
     display: none;
   }
 
-  .main {
+  .main, .content {
     padding: 0;
+  }
+
+  .workspace {
+    display: block;
+    min-height: 0;
+    margin: 0;
   }
 }

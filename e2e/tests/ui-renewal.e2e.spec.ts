@@ -68,6 +68,103 @@ const seedIssue = async (
   },
 })
 
+test('확인서 인쇄는 흰 종이에 본문만 남긴다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareRoom()
+  const issue = await seedIssue(room, 'VERIFIED')
+  const [approval] = await db.$transaction([
+    db.approval.create({
+      data: {
+        versionId: room.version.id,
+        approverId: room.client.id,
+        approvedAt: new Date(),
+        summary: {
+          issues: [{
+            number: issue.number,
+            title: issue.title,
+            category: issue.category,
+            scope: issue.scope,
+            status: issue.status,
+          }],
+        },
+      },
+    }),
+    db.deliveryVersion.update({ where: { id: room.version.id }, data: { status: 'APPROVED' } }),
+  ])
+  await loginAs(room.developer.id)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(`/app/versions/${room.version.id}/certificate`)
+
+  const heading = page.getByRole('heading', { level: 1, name: '검수 확인서', exact: true })
+  const paper = page.getByRole('article').filter({ has: heading })
+  const banner = page.getByRole('banner', { includeHidden: true })
+  const save = page.getByRole('button', { name: 'PDF로 저장', exact: true, includeHidden: true })
+  const back = page.getByRole('link', { name: '검수실로 돌아가기', exact: true, includeHidden: true })
+  const toolbar = save.locator('..')
+  await expect(heading).toBeVisible()
+  await expect(banner).toBeVisible()
+  await expect(save).toBeVisible()
+  await expect(back).toBeVisible()
+  await expect(toolbar).toBeVisible()
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+
+  await page.emulateMedia({ media: 'print' })
+
+  await expect(banner).toBeHidden()
+  await expect(save).toBeHidden()
+  await expect(back).toBeHidden()
+  await expect(toolbar).toBeHidden()
+  await expect(page.getByText("인쇄 창에서 'PDF로 저장'을 고르면 돼요", { exact: true })).toBeHidden()
+  await expect(page.getByRole('navigation', { name: '프로젝트 메뉴', includeHidden: true })).toBeHidden()
+  await expect(page.locator(
+    'button:visible, a[href]:visible, input:visible, select:visible, textarea:visible, '
+    + '[role="button"]:visible, [role="link"]:visible, [contenteditable="true"]:visible',
+  )).toHaveCount(0)
+
+  for (const surface of [page.locator('body'), paper]) {
+    await expect(surface).toBeVisible()
+    await expect(surface).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+    await expect(surface).toHaveCSS('background-image', 'none')
+    await expect(surface).toHaveCSS('box-shadow', 'none')
+    await expect(surface).toHaveCSS('opacity', '1')
+  }
+  await expect(heading).toBeVisible()
+  await expect(paper.getByText(`확인서 번호 ${approval.id}`, { exact: true })).toBeVisible()
+  await expect(paper.getByRole('definition')).toHaveText([
+    room.project.name, '초안', /\d{4}\. \d{1,2}\. \d{1,2}\./, /\d{4}\. \d{1,2}\. \d{1,2}\./,
+    room.client.name, room.developer.name,
+  ])
+  for (const fact of await paper.getByRole('definition').all()) await expect(fact).toBeVisible()
+  await expect(paper.getByRole('listitem')).toHaveText(['메인 · PC'])
+  await expect(paper.getByRole('row', { name: `#${issue.number} ${issue.title} 버그 확인 완료`, exact: true })).toBeVisible()
+  await expect(paper.getByText('확인 완료 1건 · 철회 0건 · 범위 밖(추가 요청) 0건', { exact: true })).toBeVisible()
+
+  // 제목뿐 아니라 날짜·항목 이름·쪽지·하단 안내도 흰 종이에서 4.5:1 이상으로 읽혀야 한다.
+  const printedText = paper.locator('h1:visible, h2:visible, p:visible, dt:visible, dd:visible, li:visible, th:visible, td:visible')
+  const contrast = await printedText.evaluateAll((elements) => elements.map((element) => {
+    const style = getComputedStyle(element)
+    const channels = style.color.match(/[\d.]+/g)!.map(Number)
+    const [red, green, blue] = channels.slice(0, 3).map((channel) => {
+      const value = channel / 255
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+    })
+    return {
+      text: element.textContent,
+      ratio: 1.05 / (0.2126 * red + 0.7152 * green + 0.0722 * blue + 0.05),
+      alpha: channels[3] ?? 1,
+      opacity: style.opacity,
+      shadow: style.textShadow,
+    }
+  }))
+  expect(contrast.length).toBeGreaterThan(0)
+  for (const text of contrast) {
+    expect(text.ratio, text.text ?? '').toBeGreaterThanOrEqual(4.5)
+    expect(text.alpha, text.text ?? '').toBe(1)
+    expect(text.opacity, text.text ?? '').toBe('1')
+    expect(text.shadow, text.text ?? '').toBe('none')
+  }
+})
+
 test('상태는 글자와 다섯 도형으로 구분되고 키보드 포커스가 보인다', async ({ page, loginAs }) => {
   await resetDatabase()
   const room = await prepareRoom()
