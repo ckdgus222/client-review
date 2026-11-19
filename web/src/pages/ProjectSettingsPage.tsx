@@ -25,6 +25,7 @@ import {
   type Viewport,
 } from '../api/projects.ts'
 import { Button } from '../components/Button.tsx'
+import { ManagementLayout } from '../components/PageLayout.tsx'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { ProjectNotFound } from '../components/ProjectNotFound.tsx'
 import { TextField } from '../components/TextField.tsx'
@@ -164,7 +165,7 @@ const MembersSection = ({ projectId, approver, onApproverChange }: MembersSectio
   }
 
   return (
-    <>
+    <section className={styles.membersCard}>
       <h2>참여자와 승인자</h2>
       <p className={styles.hint}>
         클라이언트는 최대 {MAX_CLIENTS}명까지 참여해요.{' '}
@@ -232,7 +233,7 @@ const MembersSection = ({ projectId, approver, onApproverChange }: MembersSectio
           </Button>
         </div>
       )}
-    </>
+    </section>
   )
 }
 
@@ -290,7 +291,7 @@ const StatusSection = ({ project, onStatusChange }: StatusSectionProps) => {
   }
 
   return (
-    <>
+    <section className={styles.dangerCard}>
       <h2>보관과 지우기</h2>
       <p className={styles.hint}>
         보관하면 읽기만 할 수 있어요. 지우면 7일 동안 프로젝트 목록에서 되살릴 수 있고, 그 뒤 사진과 함께 완전히
@@ -313,7 +314,7 @@ const StatusSection = ({ project, onStatusChange }: StatusSectionProps) => {
         </Button>
       </form>
       {error && <ErrorText message={error} />}
-    </>
+    </section>
   )
 }
 
@@ -393,85 +394,90 @@ const ProjectSettings = ({ id }: { id: string }) => {
   const notice = statusNotice(project, openedAt)
 
   return (
-    <section className={styles.panel}>
-      <Link to="/">프로젝트 목록</Link>
-      <h1>{project.name}</h1>
-      {/* 보관·삭제 대기 띠(정할 것 18). */}
-      {notice && (
-        <p className={styles.notice} role="status">
-          {notice}
-        </p>
-      )}
-      {isDeveloper && (
-        <form className={styles.create} onSubmit={handleCreate} noValidate>
-          <TextField label="화면 이름" value={name} onChange={setName} disabled={sending} />
-          <label className={styles.viewport}>
-            기기
-            <select
-              value={viewport}
-              onChange={(event) => setViewport(event.target.value as Viewport)}
-              disabled={sending}
-            >
-              <option value="PC">{VIEWPORT_LABELS.PC}</option>
-              <option value="MOBILE">{VIEWPORT_LABELS.MOBILE}</option>
-            </select>
-          </label>
-          <Button type="submit" disabled={sending}>
-            만들기
-          </Button>
-        </form>
-      )}
-      {actionError && <ErrorText message={actionError} />}
-      {visibleScreens.length === 0 ? (
-        <p>아직 화면이 없어요.</p>
-      ) : (
-        <ul className={styles.list}>
-          {visibleScreens.map((screen, index) => (
-            <li key={screen.id}>
-              {/* 번호는 보이는 화면 안에서 만든 순서다. */}
-              <span className={styles.number}>{String(index + 1).padStart(2, '0')}</span>
-              <span className={styles.name}>{screenLabel(screen)}</span>
-              {isDeveloper && (
-                <Button variant="secondary" disabled={changing} onClick={() => toggleHidden(screen)}>
-                  숨기기
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {hiddenScreens.length > 0 && (
-        <>
-          <h2>숨긴 화면</h2>
-          <ul className={styles.list}>
-            {hiddenScreens.map((screen) => (
-              <li key={screen.id}>
-                <span className={styles.name}>{screenLabel(screen)}</span>
-                {isDeveloper && (
-                  <Button variant="secondary" disabled={changing} onClick={() => toggleHidden(screen)}>
-                    다시 보이기
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {isDeveloper && (
-        <MembersSection
-          projectId={id}
-          approver={project.approver}
-          // 응답을 기다리는 사이 다른 칸(상태·승인자)이 바뀌었을 수 있어서, 그때의 값 위에 바꾼다.
-          onApproverChange={(approver) => setProject((current) => current && { ...current, approver })}
-        />
-      )}
-      {isDeveloper && project.status !== 'DELETE_PENDING' && (
-        <StatusSection
-          project={project}
-          onStatusChange={(status) => setProject((current) => current && { ...current, status })}
-        />
-      )}
-    </section>
+    <ManagementLayout active="settings" project={project}>
+      <section className={styles.panel}>
+        <Link to="/">프로젝트 목록</Link>
+        <h1>{project.name}</h1>
+        {/* 보관·삭제 대기 띠(정할 것 18). */}
+        {notice && (
+          <p className={styles.notice} role="status">
+            {notice}
+          </p>
+        )}
+        <section className={styles.screensCard}>
+          <h2>화면 이름표</h2>
+          {isDeveloper && (
+            <form className={styles.create} onSubmit={handleCreate} noValidate>
+              <TextField label="화면 이름" value={name} onChange={setName} disabled={sending} />
+              <label className={styles.viewport}>
+                기기
+                <select
+                  value={viewport}
+                  onChange={(event) => setViewport(event.target.value as Viewport)}
+                  disabled={sending}
+                >
+                  <option value="PC">{VIEWPORT_LABELS.PC}</option>
+                  <option value="MOBILE">{VIEWPORT_LABELS.MOBILE}</option>
+                </select>
+              </label>
+              <Button type="submit" disabled={sending}>
+                만들기
+              </Button>
+            </form>
+          )}
+          {actionError && <ErrorText message={actionError} />}
+          {visibleScreens.length === 0 ? (
+            <p>아직 화면이 없어요.</p>
+          ) : (
+            <ul className={styles.list}>
+              {visibleScreens.map((screen, index) => (
+                <li key={screen.id}>
+                  {/* 번호는 보이는 화면 안에서 만든 순서다. */}
+                  <span className={styles.number}>{String(index + 1).padStart(2, '0')}</span>
+                  <span className={styles.name}>{screenLabel(screen)}</span>
+                  {isDeveloper && (
+                    <Button variant="secondary" disabled={changing} onClick={() => toggleHidden(screen)}>
+                      숨기기
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {hiddenScreens.length > 0 && (
+            <>
+              <h2>숨긴 화면</h2>
+              <ul className={styles.list}>
+                {hiddenScreens.map((screen) => (
+                  <li key={screen.id}>
+                    <span className={styles.name}>{screenLabel(screen)}</span>
+                    {isDeveloper && (
+                      <Button variant="secondary" disabled={changing} onClick={() => toggleHidden(screen)}>
+                        다시 보이기
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+        {isDeveloper && (
+          <MembersSection
+            projectId={id}
+            approver={project.approver}
+            // 응답을 기다리는 사이 다른 칸(상태·승인자)이 바뀌었을 수 있어서, 그때의 값 위에 바꾼다.
+            onApproverChange={(approver) => setProject((current) => current && { ...current, approver })}
+          />
+        )}
+        {isDeveloper && project.status !== 'DELETE_PENDING' && (
+          <StatusSection
+            project={project}
+            onStatusChange={(status) => setProject((current) => current && { ...current, status })}
+          />
+        )}
+      </section>
+    </ManagementLayout>
   )
 }
 

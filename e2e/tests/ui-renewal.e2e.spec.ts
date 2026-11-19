@@ -179,6 +179,71 @@ test('클라이언트의 프로젝트 목록에는 생성 폼과 삭제 대기 �
   }
 })
 
+test('보관과 삭제 대기 안내가 설정과 검수실 상단에 보인다', async ({ page, baseURL, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareRoom()
+  await loginAs(room.developer.id)
+  const projectPath = `/api/projects/${room.project.id}`
+  const headers = { Origin: new URL(baseURL!).origin }
+  const views = [
+    { suffix: '/settings', width: 1440, height: 900 },
+    { suffix: '', width: 1440, height: 900 },
+    { suffix: '/settings', width: 390, height: 844 },
+    { suffix: '', width: 390, height: 844 },
+  ]
+
+  for (const { status, action, message } of [
+    { status: 'ARCHIVED', action: 'archive', message: '보관한 프로젝트예요. 읽기만 할 수 있어요' },
+    { status: 'DELETE_PENDING', action: 'delete', message: '삭제 대기 중인 프로젝트예요. 7일 뒤 완전히 지워져요' },
+  ]) {
+    const changed = await page.request.post(`${projectPath}/${action}`, {
+      headers,
+      data: action === 'delete' ? { name: room.project.name } : undefined,
+    })
+    expect(changed.status()).toBe(204)
+    const response = await page.request.get(projectPath)
+    expect(response.status()).toBe(200)
+    expect(await response.json()).toMatchObject({ id: room.project.id, status, myRole: 'DEVELOPER' })
+
+    for (const { suffix, width, height } of views) {
+      await page.setViewportSize({ width, height })
+      await page.goto(`/app/projects/${room.project.id}${suffix}`)
+      const header = page.getByRole('banner')
+      const heading = page.getByRole('heading', { level: 1, name: room.project.name, exact: true })
+      const notice = page.getByRole('status').filter({ hasText: message })
+      const content = suffix
+        ? page.getByRole('heading', { level: 2, name: '화면 이름표', exact: true })
+        : page.getByRole('img', { name: '메인 · PC', exact: true })
+      await expect(heading).toBeVisible()
+      await expect(notice).toHaveCount(1)
+      await expect(notice).toHaveText(message)
+      await expect(notice).toBeVisible()
+      await expect(content).toBeVisible()
+      await page.evaluate(() => document.fonts.ready.then(() => undefined))
+
+      // 스크롤이나 자동 스크롤을 일으키는 조작 없이, 헤더·제목 다음에 안내 전체가 보여야 한다.
+      expect(await page.evaluate(() => window.scrollY)).toBe(0)
+      await expect(notice).toBeInViewport({ ratio: 1 })
+      const headerBox = await header.boundingBox()
+      const headingBox = await heading.boundingBox()
+      const noticeBox = await notice.boundingBox()
+      const contentBox = await content.boundingBox()
+      expect(headerBox).not.toBeNull()
+      expect(headingBox).not.toBeNull()
+      expect(noticeBox).not.toBeNull()
+      expect(contentBox).not.toBeNull()
+      expect(noticeBox!.y).toBeGreaterThanOrEqual(headerBox!.y + headerBox!.height)
+      expect(noticeBox!.y).toBeGreaterThanOrEqual(headingBox!.y + headingBox!.height)
+      expect(noticeBox!.y + noticeBox!.height).toBeLessThanOrEqual(contentBox!.y)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+    }
+  }
+
+  // 삭제 대기 안내를 보려고 클라이언트의 기존 접근 제한을 풀어서는 안 된다.
+  await loginAs(room.client.id)
+  expect((await page.request.get(projectPath)).status()).toBe(404)
+})
+
 test('확인서 인쇄는 흰 종이에 본문만 남긴다', async ({ page, loginAs }) => {
   await resetDatabase()
   const room = await prepareRoom()
