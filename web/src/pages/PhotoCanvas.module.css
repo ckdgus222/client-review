@@ -1,7 +1,8 @@
-/* 흰 사진이 바탕과 섞이지 않게 회색 바탕 위에 둔다. */
+/* 매트와 사진 여백은 부모의 밝기 선택을 따른다. */
 .canvas {
   padding: 0 var(--gutter) var(--gutter);
-  background: var(--color-canvas);
+  color: var(--mat-ink, var(--color-text));
+  background: transparent;
 }
 
 .caption {
@@ -14,6 +15,7 @@
 }
 
 .notice {
+  color: var(--color-text);
   margin-bottom: var(--space-3);
   padding: var(--space-3);
   border-left: 2px solid var(--color-review-selected);
@@ -22,7 +24,7 @@
 }
 
 .photo {
-  background: var(--color-surface);
+  min-width: 0;
 }
 
 /* 핀의 기준 상자다. 사진과 정확히 같은 크기라서 핀의 퍼센트 위치가 사진의 비율 위치가 된다. */
@@ -67,8 +69,8 @@
   height: 28px;
   border: 1px solid var(--color-accent);
   border-radius: 50%;
-  background: var(--color-surface);
-  color: var(--color-text);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
   font-size: var(--font-size-sm);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -76,7 +78,7 @@
 
 /* 고른 쪽지의 핀. 색만으로 구분하지 않게 바탕을 채우고 테두리를 한 겹 더 그린다. */
 .pin[aria-pressed='true'] > span {
-  background: var(--color-accent);
+  background: var(--color-canvas-dark);
   color: var(--color-on-accent);
   box-shadow:
     0 0 0 2px var(--color-surface),
@@ -90,6 +92,7 @@
 }
 
 .draft > span {
+  background: var(--color-surface);
   border-style: dashed;
   border-color: var(--color-review-selected);
   color: var(--color-review-selected);
