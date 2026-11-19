@@ -68,6 +68,117 @@ const seedIssue = async (
   },
 })
 
+test('클라이언트의 프로젝트 목록에는 생성 폼과 삭제 대기 탐색이 없다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const developer = await createUser('developer@example.com', '개발자')
+  const client = await createUser('client@example.com', '목록 확인 고객')
+  const active = await createProject(developer.id, '진행하는 웹사이트')
+  const archived = await createProject(developer.id, '보관한 웹사이트')
+  const deleted = await createProject(developer.id, '삭제 대기 웹사이트')
+  await db.projectMember.createMany({
+    data: [active, archived, deleted].map(({ id }) => ({ projectId: id, userId: client.id, role: 'CLIENT' })),
+  })
+  const activeCreatedAt = new Date('2026-11-01T03:00:00.000Z')
+  const archivedCreatedAt = new Date('2026-10-15T03:00:00.000Z')
+  await db.$transaction([
+    db.project.update({ where: { id: active.id }, data: { createdAt: activeCreatedAt } }),
+    db.project.update({
+      where: { id: archived.id },
+      data: { status: 'ARCHIVED', createdAt: archivedCreatedAt },
+    }),
+    db.project.update({
+      where: { id: deleted.id },
+      data: { status: 'DELETE_PENDING', statusBeforeDelete: 'ACTIVE', deleteRequestedAt: new Date() },
+    }),
+  ])
+  await loginAs(client.id)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/app/')
+
+  const heading = page.getByRole('heading', { level: 1, name: '내 프로젝트', exact: true })
+  const menu = page.getByRole('navigation', { name: '프로젝트 메뉴', exact: true, includeHidden: true })
+  const groups = [
+    { project: active, title: '진행 중', createdAt: activeCreatedAt, date: '2026. 11. 1.' },
+    { project: archived, title: '보관함', createdAt: archivedCreatedAt, date: '2026. 10. 15.' },
+  ]
+  await expect(heading).toBeVisible()
+  await expect(page.getByText('목록 확인 고객님', { exact: true })).toBeVisible()
+  await expect(page.getByText('참여하고 있는 프로젝트 2개', { exact: true })).toBeVisible()
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+
+  for (const width of [1440, 960, 959, 390]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await expect(menu).toBeVisible()
+    await expect(menu.getByRole('link')).toHaveText(['내 프로젝트', '진행 중 1', '보관함 1'])
+    const home = menu.getByRole('link', { name: '내 프로젝트', exact: true })
+    await expect(home).toHaveAttribute('href', '/app')
+    await expect(home).toHaveAttribute('aria-current', 'page')
+    await expect(page.locator('form')).toHaveCount(0)
+    await expect(page.getByRole('textbox', { name: '프로젝트 이름', exact: true, includeHidden: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '만들기', exact: true, includeHidden: true })).toHaveCount(0)
+    await expect(page.getByRole('region', { name: '삭제 대기', exact: true, includeHidden: true })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: '삭제 대기', exact: true, includeHidden: true })).toHaveCount(0)
+    await expect(page.getByRole('link', { name: /삭제 대기/, includeHidden: true })).toHaveCount(0)
+    await expect(page.getByText(deleted.name, { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '되살리기', exact: true, includeHidden: true })).toHaveCount(0)
+
+    const menuBox = await menu.boundingBox()
+    const headingBox = await heading.boundingBox()
+    expect(menuBox).not.toBeNull()
+    expect(headingBox).not.toBeNull()
+    if (width >= 960) {
+      expect(menuBox!.width).toBe(220)
+      expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(headingBox!.x)
+      expect(menuBox!.y).toBeLessThanOrEqual(headingBox!.y)
+      expect(menuBox!.y + menuBox!.height).toBeGreaterThan(headingBox!.y)
+    }
+    if (width < 960) expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(headingBox!.y)
+
+    for (const { project, title, createdAt, date } of groups) {
+      const group = page.getByRole('region', { name: title, exact: true })
+      const row = group.getByRole('listitem')
+      await expect(group.getByRole('heading', { level: 2, name: title, exact: true })).toBeVisible()
+      await expect(row).toHaveCount(1)
+      await expect(row.getByText('클라이언트', { exact: true })).toBeVisible()
+      await expect(row.getByText('개발자', { exact: true })).toHaveCount(0)
+      await expect(row.locator('time')).toHaveAttribute('datetime', createdAt.toISOString())
+      await expect(row.locator('time')).toHaveText(date)
+      await expect(row.locator('time')).toBeVisible()
+      await expect(row.getByText(title, { exact: true })).toBeVisible()
+      const projectLink = row.getByRole('link', { name: project.name, exact: true })
+      await expect(projectLink).toBeVisible()
+      await expect(page.getByRole('link', { name: project.name, exact: true })).toHaveCount(1)
+      await expect(projectLink).toHaveAttribute('href', `/app/projects/${project.id}`)
+      await projectLink.click({ trial: true })
+
+      const groupLink = menu.getByRole('link', { name: `${title} 1`, exact: true })
+      await expect(groupLink).toHaveAttribute('href', `#${await group.getAttribute('id')}`)
+      await groupLink.click()
+      expect(new URL(page.url()).hash).toBe(`#${await group.getAttribute('id')}`)
+      await expect(group.getByRole('heading', { name: title, exact: true })).toBeInViewport()
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+  }
+
+  await page.emulateMedia({ media: 'print' })
+  await expect(menu).toBeHidden()
+  await expect(page.getByRole('banner', { includeHidden: true })).toBeHidden()
+  await expect(heading).toBeVisible()
+  await expect(page.getByRole('link', { name: active.name, exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: archived.name, exact: true })).toBeVisible()
+  await page.emulateMedia({ media: 'screen' })
+  await expect(menu).toBeVisible()
+
+  for (const { project } of groups) {
+    await page.getByRole('link', { name: project.name, exact: true }).click()
+    await expect(page).toHaveURL(`/app/projects/${project.id}`)
+    await expect(page.getByRole('heading', { level: 1, name: project.name, exact: true })).toBeVisible()
+    await page.getByRole('link', { name: '프로젝트 목록', exact: true }).click()
+    await expect(heading).toBeVisible()
+  }
+})
+
 test('확인서 인쇄는 흰 종이에 본문만 남긴다', async ({ page, loginAs }) => {
   await resetDatabase()
   const room = await prepareRoom()

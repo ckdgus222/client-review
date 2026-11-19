@@ -46,6 +46,7 @@
   gap: 12px;
 }
 
+.columns { padding: 7px 20px; border-top: 1px solid var(--color-border); color: var(--color-text-muted); font-size: .78rem; }
 .list a { color: var(--color-text); font-weight: 600; text-decoration: none; }
 .list a:hover { color: var(--color-accent-soft-text); text-decoration: underline; }
 .row a { text-decoration: underline; text-decoration-color: var(--color-border-strong); }
@@ -57,6 +58,7 @@
 
 @media (max-width: 640px) {
   .row { grid-template-columns: minmax(0,1fr) auto; gap: 4px 12px; }
+  .columns { display: none; }
   .row a { grid-column: 1; }
   .row .state { grid-column: 2; grid-row: 1; }
   .row time { grid-column: 2; grid-row: 2; }

@@ -11,6 +11,7 @@ import {
   purgeText,
   restoreProject,
 } from '../api/projects.ts'
+import { ManagementLayout } from '../components/PageLayout.tsx'
 import { Button } from '../components/Button.tsx'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { TextField } from '../components/TextField.tsx'
@@ -67,6 +68,8 @@ const DeletedRow = ({ project, onRestored }: { project: MyProject; onRestored: (
   )
 }
 
+const createdDate = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' })
+
 const GROUPS: { status: ProjectStatus; title: string }[] = [
   { status: 'ACTIVE', title: '진행 중' },
   { status: 'ARCHIVED', title: '보관함' },
@@ -91,15 +94,23 @@ const ProjectList = ({
     const inGroup = projects.filter((project) => project.status === status)
     if (inGroup.length === 0) return null
     return (
-      <section key={status} className={styles.group} aria-label={title}>
+      <section key={status} id={`projects-${status}`} className={styles.group} aria-label={title}>
         <h2>{title}</h2>
+        {status !== 'DELETE_PENDING' && (
+          <div className={`${styles.row} ${styles.columns}`} aria-hidden="true">
+            <span>프로젝트 이름</span><span>내 역할</span><span>생성일</span><span>상태</span>
+          </div>
+        )}
         <ul className={styles.list}>
           {inGroup.map((project) =>
             status === 'DELETE_PENDING' ? (
               <DeletedRow key={project.id} project={project} onRestored={onRestored} />
             ) : (
-              <li key={project.id}>
+              <li key={project.id} className={styles.row}>
                 <ProjectLink project={project} />
+                <span className={styles.role}>{project.myRole === 'DEVELOPER' ? '개발자' : '클라이언트'}</span>
+                <time dateTime={project.createdAt}>{createdDate.format(new Date(project.createdAt))}</time>
+                <span className={styles.state}>{title}</span>
               </li>
             ),
           )}
@@ -179,28 +190,39 @@ export const ProjectListPage = () => {
   // 확인 중 오류여도 로그인 화면으로 보내지 않는다. 서버가 잠깐 멈춘 것일 수 있다.
   if (user === undefined) return <p>{meError ?? '확인하는 중이에요.'}</p>
 
+  const sections = GROUPS.map(({ status, title }) => ({
+    id: `projects-${status}`,
+    title,
+    count: projects?.filter((project) => project.status === status).length ?? 0,
+  }))
+
   return (
-    <section className={styles.panel}>
-      <div className={styles.top}>
-        <h1>내 프로젝트</h1>
-        <div className={styles.account}>
-          <span className={styles.user}>{user.name}님</span>
-          <Button variant="secondary" onClick={handleLogout}>
-            로그아웃
-          </Button>
+    <ManagementLayout active="projects" sections={sections}>
+      <section className={styles.panel}>
+        <div className={styles.top}>
+          <div>
+            <h1>내 프로젝트</h1>
+            {projects && <p className={styles.overview}>참여하고 있는 프로젝트 {projects.length}개</p>}
+          </div>
+          <div className={styles.account}>
+            <span className={styles.user}>{user.name}님</span>
+            <Button variant="secondary" onClick={handleLogout}>
+              로그아웃
+            </Button>
+          </div>
         </div>
-      </div>
-      {logoutError && <ErrorText message={logoutError} />}
-      {user.canCreateProjects && (
-        <form className={styles.create} onSubmit={handleCreate} noValidate>
-          <TextField label="프로젝트 이름" value={name} onChange={setName} disabled={sending} />
-          <Button type="submit" disabled={sending}>
-            만들기
-          </Button>
-        </form>
-      )}
-      {createError && <ErrorText message={createError} />}
-      <ProjectList projects={projects} error={listError} onRestored={loadProjects} />
-    </section>
+        {logoutError && <ErrorText message={logoutError} />}
+        {user.canCreateProjects && (
+          <form className={styles.create} onSubmit={handleCreate} noValidate>
+            <TextField label="프로젝트 이름" value={name} onChange={setName} disabled={sending} />
+            <Button type="submit" disabled={sending}>
+              만들기
+            </Button>
+          </form>
+        )}
+        {createError && <ErrorText message={createError} />}
+        <ProjectList projects={projects} error={listError} onRestored={loadProjects} />
+      </section>
+    </ManagementLayout>
   )
 }
