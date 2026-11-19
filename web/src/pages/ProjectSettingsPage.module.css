@@ -1,16 +1,22 @@
-/* 목록 화면과 같은 흰 판이다. */
 .panel {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  max-width: 40rem;
-  margin: var(--space-4) auto 0;
-  padding: var(--space-4);
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.screensCard, .membersCard, .dangerCard {
+  display: grid;
+  gap: 12px;
+  padding: clamp(16px, 2.2vw, 28px);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--color-surface);
 }
 
+.dangerCard { border-color: var(--color-danger-border); background: var(--color-danger-soft); }
+.dangerCard h2 { color: var(--color-danger); }
 /* 기본 바깥 여백이 gap에 더해지지 않게 지운다. */
 .panel p,
 .panel h1,
