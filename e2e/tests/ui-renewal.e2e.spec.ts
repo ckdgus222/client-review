@@ -108,6 +108,19 @@ test('앱 로그인은 자체 호스팅 Pretendard를 로드하고 크림 바탕
   await expect(page.locator('body')).toHaveCSS('color', 'rgb(42, 31, 26)')
   await expect(submit).toHaveCSS('background-color', 'rgb(200, 78, 44)')
   await expect(submit).toHaveCSS('color', 'rgb(255, 255, 255)')
+
+  for (const { width, height, minButtonHeight } of [
+    { width: 1440, height: 900, minButtonHeight: 40 },
+    { width: 390, height: 844, minButtonHeight: 44 },
+  ]) {
+    await page.setViewportSize({ width, height })
+    await expect(submit).toBeVisible()
+    await expect(submit).toHaveCSS('border-radius', '999px')
+    await expect.poll(
+      () => submit.evaluate((button) => button.getBoundingClientRect().height),
+      { message: `${width}px 화면에서 버튼 높이는 ${minButtonHeight}px 이상이다` },
+    ).toBeGreaterThanOrEqual(minButtonHeight)
+  }
 })
 
 test('앱 로그인은 폰트 실패 뒤에도 대체 글꼴로 폼을 읽고 입력할 수 있다', async ({ page }) => {
