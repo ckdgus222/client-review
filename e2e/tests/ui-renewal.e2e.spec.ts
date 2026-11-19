@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import type { Response } from '@playwright/test'
-import { test, expect, db, resetDatabase, createUser, createProject } from './fixtures.ts'
+import { test, expect, db, resetDatabase, createUser, createProject, KNOWN_LOGIN_CODE, useKnownLoginCode } from './fixtures.ts'
 
 const sharp = createRequire(new URL('../../api/package.json', import.meta.url))('sharp')
 
@@ -242,6 +242,114 @@ test('상태는 글자와 다섯 도형으로 구분되고 키보드 포커스�
   await page.keyboard.press('Enter')
   await expect(page.getByRole('article', { name: '쪽지 #1', exact: true })
     .getByRole('heading', { name: 'OPEN 상태 쪽지', exact: true })).toBeVisible()
+})
+
+test('로그인은 959px에서 한 칸이고 960px에서 두 칸이다', async ({ page }) => {
+  await resetDatabase()
+  await page.setViewportSize({ width: 959, height: 844 })
+  await page.goto('/app/login')
+  const heading = page.getByRole('heading', { level: 1, name: '로그인', exact: true })
+  const form = page.locator('form').filter({ has: heading })
+  const preview = page.getByRole('complementary', { name: '서비스 소개', includeHidden: true })
+  const steps = page.getByRole('group', { name: '로그인 단계', exact: true })
+  const email = page.getByRole('textbox', { name: '이메일', exact: true })
+  const consent = page.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)', exact: true })
+  const privacy = page.getByRole('link', { name: '개인정보처리방침 보기', exact: true })
+  const code = page.getByRole('textbox', { name: '로그인 코드', exact: true })
+  const name = page.getByRole('textbox', { name: '이름', exact: true })
+  const back = page.getByRole('button', { name: '이메일 다시 입력', exact: true })
+  const legal = page.getByRole('navigation', { name: '약관', exact: true })
+  await expect(heading).toBeVisible()
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+
+  const checkLayout = async (currentStep: string, controls: typeof email[]) => {
+    await expect(steps.locator('span')).toHaveText(['1 이메일', '2 코드', '3 이름'])
+    await expect(steps.locator('[aria-current]:not([aria-current="false"])')).toHaveCount(1)
+    await expect(steps.locator('[aria-current="step"]')).toHaveText([currentStep])
+
+    for (const width of [959, 960, 390]) {
+      await page.setViewportSize({ width, height: 844 })
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expect(form).toBeVisible()
+      await expect(steps).toBeVisible()
+      const formBox = await form.boundingBox()
+      expect(formBox).not.toBeNull()
+      expect(formBox!.x).toBeGreaterThanOrEqual(0)
+      expect(formBox!.x + formBox!.width).toBeLessThanOrEqual(width)
+
+      if (width < 960) {
+        await expect(preview).toBeHidden()
+        expect(Math.abs(formBox!.x + formBox!.width / 2 - width / 2)).toBeLessThanOrEqual(2)
+      }
+      if (width === 960) {
+        await expect(preview).toBeVisible()
+        await expect(preview.getByRole('heading', { level: 2 })).toBeVisible()
+        const previewBox = await preview.boundingBox()
+        expect(previewBox).not.toBeNull()
+        expect(previewBox!.x).toBeGreaterThanOrEqual(0)
+        expect(previewBox!.width).toBeGreaterThan(0)
+        expect(previewBox!.x + previewBox!.width).toBeLessThanOrEqual(formBox!.x)
+        // 같은 행에서 소개가 왼쪽, 폼이 오른쪽에 있어야 한다.
+        expect(previewBox!.y).toBeLessThan(formBox!.y + formBox!.height)
+        expect(formBox!.y).toBeLessThan(previewBox!.y + previewBox!.height)
+      }
+
+      for (const control of [
+        ...controls,
+        legal.getByRole('link', { name: '개인정보처리방침', exact: true }),
+        legal.getByRole('link', { name: '이용약관', exact: true }),
+      ]) {
+        await expect(control).toBeVisible()
+        await expect(control).toBeEnabled()
+        await control.scrollIntoViewIfNeeded()
+        await expect(control).toBeInViewport()
+        await control.click({ trial: true })
+        await control.focus()
+        await expect(control).toBeFocused()
+        const box = await control.boundingBox()
+        expect(box).not.toBeNull()
+        expect(box!.x).toBeGreaterThanOrEqual(0)
+        expect(box!.x + box!.width).toBeLessThanOrEqual(width)
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth))
+        .toBeLessThanOrEqual(width)
+      expect(await page.evaluate(() => window.scrollX)).toBe(0)
+    }
+  }
+
+  const requestCode = page.getByRole('button', { name: '코드 받기', exact: true })
+  await checkLayout('1 이메일', [email, consent, privacy, requestCode])
+
+  // 인증 성공·실패는 기존 인증 e2e가 맡고, 여기서는 실제 단계 이동 후 새 UI만 확인한다.
+  const address = 'login-layout@example.com'
+  const developer = await createUser('developer@example.com', '개발자')
+  const project = await createProject(developer.id, '로그인 화면 확인 프로젝트')
+  await db.invitation.create({
+    data: {
+      projectId: project.id,
+      email: address,
+      tokenHash: randomUUID(),
+      invitedById: developer.id,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    },
+  })
+  await email.fill(address)
+  await consent.check()
+  await requestCode.click()
+  await expect(code).toBeEditable()
+  const login = page.getByRole('button', { name: '로그인', exact: true })
+  await checkLayout('2 코드', [code, login, back])
+
+  await useKnownLoginCode(address)
+  await code.fill(KNOWN_LOGIN_CODE)
+  await login.click()
+  await expect(name).toBeEditable()
+  await name.fill('화면 확인 사용자')
+  await checkLayout('3 이름', [name, page.getByRole('button', { name: '시작하기', exact: true }), back])
+
+  await back.click()
+  await expect(email).toBeVisible()
+  await expect(steps.locator('[aria-current="step"]')).toHaveText(['1 이메일'])
 })
 
 test('로그인 파비콘은 앱 경로의 SVG이며 공개 파비콘과 바이트가 같다', async ({ page, request }) => {

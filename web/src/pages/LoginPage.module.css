@@ -59,7 +59,7 @@
   font-size: 0.8rem;
 }
 
-.steps li + li::before {
+.steps span + span::before {
   content: '';
   display: inline-block;
   width: 12px;
