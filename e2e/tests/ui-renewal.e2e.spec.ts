@@ -1,4 +1,151 @@
-import { test, expect, type Response } from '@playwright/test'
+import { randomUUID } from 'node:crypto'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import type { Response } from '@playwright/test'
+import { test, expect, db, resetDatabase, createUser, createProject } from './fixtures.ts'
+
+const sharp = createRequire(new URL('../../api/package.json', import.meta.url))('sharp')
+
+const publishVersion = async (projectId: string, screenIds: string[], number: number) => {
+  const version = await db.deliveryVersion.create({
+    data: { projectId, number, status: 'IN_REVIEW', publishedAt: new Date() },
+  })
+  const screens = []
+  await mkdir(new URL(`../.assets/${projectId}/`, import.meta.url), { recursive: true })
+  for (const screenId of screenIds) {
+    const storageKey = `${projectId}/${randomUUID()}.png`
+    const photo: Buffer = await sharp({
+      create: { width: 1200, height: 800, channels: 3, background: '#ffffff' },
+    }).png().toBuffer()
+    await writeFile(new URL(`../.assets/${storageKey}`, import.meta.url), photo, { flag: 'wx' })
+    const asset = await db.asset.create({
+      data: { projectId, storageKey, mime: 'image/png', bytes: photo.length, width: 1200, height: 800 },
+    })
+    screens.push(await db.versionScreen.create({ data: { versionId: version.id, screenId, assetId: asset.id } }))
+  }
+  await db.project.update({ where: { id: projectId }, data: { currentVersionId: version.id } })
+  return { ...version, screens }
+}
+
+// 쪽지 생성은 분리해 빈 검수실과 상태가 섞인 검수실에서 같은 사진·참여자를 쓸 수 있게 한다.
+const prepareRoom = async () => {
+  const developer = await createUser('developer@example.com', '개발자')
+  const client = await createUser('client@example.com', '클라이언트')
+  const project = await createProject(developer.id, 'UI 검수 프로젝트')
+  const clientMember = await db.projectMember.create({
+    data: { projectId: project.id, userId: client.id, role: 'CLIENT' },
+  })
+  await db.project.update({ where: { id: project.id }, data: { approverMemberId: clientMember.id } })
+  const main = await db.screen.create({ data: { projectId: project.id, name: '메인', viewport: 'PC' } })
+  const version = await publishVersion(project.id, [main.id], 0)
+  return { developer, client, project, main, version }
+}
+
+const issueStates = [
+  { status: 'OPEN', label: '접수' },
+  { status: 'IN_PROGRESS', label: '수정 중' },
+  { status: 'READY_FOR_REVIEW', label: '확인 요청' },
+  { status: 'VERIFIED', label: '확인 완료' },
+  { status: 'WITHDRAWN', label: '철회' },
+] as const
+
+const seedIssue = async (
+  room: Awaited<ReturnType<typeof prepareRoom>>,
+  status: typeof issueStates[number]['status'] = 'OPEN',
+) => db.issue.create({
+  data: {
+    projectId: room.project.id,
+    originVersionId: room.version.id,
+    originVersionScreenId: room.version.screens[0].id,
+    xRatio: 0.3,
+    yRatio: 0.4,
+    authorId: room.client.id,
+    number: await db.issue.count({ where: { projectId: room.project.id } }) + 1,
+    title: `${status} 상태 쪽지`,
+    body: '화면의 여백을 확인해 주세요.',
+    status,
+    requestId: randomUUID(),
+  },
+})
+
+test('상태는 글자와 다섯 도형으로 구분되고 키보드 포커스가 보인다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareRoom()
+  for (const { status } of issueStates) await seedIssue(room, status)
+  await loginAs(room.client.id)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(`/app/projects/${room.project.id}`)
+  await expect(page.getByRole('heading', { level: 1, name: room.project.name })).toBeVisible()
+  const photo = page.getByRole('img', { name: '메인 · PC', exact: true })
+  await expect(photo).toBeVisible()
+  await expect.poll(() => photo.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1200)
+
+  const list = page.getByRole('region', { name: '쪽지 목록', exact: true })
+  await expect(list.getByRole('listitem')).toHaveCount(5)
+  for (const { status, label } of issueStates) {
+    const row = list.getByRole('button', { name: new RegExp(`${status} 상태 쪽지`) })
+    const badge = row.locator(`[data-status="${status}"]`)
+    const dot = badge.locator('[aria-hidden="true"]')
+    await expect(row).toBeVisible()
+    await expect(badge).toHaveText(label)
+    await expect(badge).toHaveCSS('border-radius', '999px')
+    await expect(dot).toHaveCount(1)
+    await expect(dot).toBeVisible()
+    await expect(dot).toHaveCSS('opacity', '1')
+
+    const color = await badge.evaluate((element) => getComputedStyle(element).color)
+    await expect(dot).toHaveCSS('border-top-color', color)
+    await expect(dot).toHaveCSS('border-top-style', 'solid')
+    await expect(dot).toHaveCSS('border-top-width', '1px')
+    const shape = await dot.boundingBox()
+    expect(shape).not.toBeNull()
+    expect(shape!.width).toBeGreaterThan(0)
+
+    if (status === 'WITHDRAWN') {
+      // 철회는 사각형 테두리가 아니라 윗변 한 줄만 남아야 한다.
+      await expect(dot).toHaveCSS('border-radius', '0px')
+      for (const side of ['right', 'bottom', 'left']) await expect(dot).toHaveCSS(`border-${side}-width`, '0px')
+      expect(shape!.height).toBe(1)
+      expect(shape!.width).toBeGreaterThan(shape!.height)
+      await expect(dot).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(dot).toHaveCSS('background-image', 'none')
+      continue
+    }
+
+    expect(shape!.height).toBe(shape!.width)
+    await expect(dot).toHaveCSS('border-radius', status === 'VERIFIED' ? '0px' : '50%')
+    for (const side of ['right', 'bottom', 'left']) {
+      await expect(dot).toHaveCSS(`border-${side}-width`, '1px')
+      await expect(dot).toHaveCSS(`border-${side}-style`, 'solid')
+    }
+    if (status === 'READY_FOR_REVIEW') {
+      await expect(dot).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+      await expect(dot).toHaveCSS('background-image', `linear-gradient(to right, ${color} 50%, rgba(0, 0, 0, 0) 50%)`)
+      continue
+    }
+    await expect(dot).toHaveCSS('background-image', 'none')
+    await expect(dot).toHaveCSS('background-color', status === 'OPEN' ? 'rgba(0, 0, 0, 0)' : color)
+  }
+
+  // 배지는 표시용이다. 실제 조작하는 쓰기 버튼과 쪽지 버튼에 Tab으로 도달해 포커스를 검사한다.
+  const compose = list.getByRole('button', { name: '쪽지 쓰기', exact: true })
+  const openIssue = list.getByRole('button', { name: /OPEN 상태 쪽지/ })
+  for (const target of [compose, openIssue]) {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await page.keyboard.press('Tab')
+      if (await target.evaluate((element) => element === document.activeElement)) break
+    }
+    await expect(target).toBeFocused()
+    await expect(target).toHaveCSS('outline-style', 'solid')
+    await expect(target).toHaveCSS('outline-width', '2px')
+    await expect(target).toHaveCSS('outline-offset', '2px')
+    await expect(target).toHaveCSS('outline-color', 'rgb(200, 78, 44)')
+    expect(await target.evaluate((element) => element.matches(':focus-visible'))).toBe(true)
+  }
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('article', { name: '쪽지 #1', exact: true })
+    .getByRole('heading', { name: 'OPEN 상태 쪽지', exact: true })).toBeVisible()
+})
 
 test('로그인 파비콘은 앱 경로의 SVG이며 공개 파비콘과 바이트가 같다', async ({ page, request }) => {
   const nginxOrigin = 'http://localhost:4103'
