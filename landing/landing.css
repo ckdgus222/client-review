@@ -1,109 +1,153 @@
-/* 소개·방침·약관·404 페이지가 같이 쓰는 모양. 빌드 없이 nginx가 그대로 보낸다.
-   색·간격은 web/src/styles/tokens.css와 같은 이름의 변수로 옮겨 적었다. 색을 바꿀 때 두 파일을 함께 고친다. */
-:root {
-  --color-text: #252525;
-  --color-text-muted: #6b6b6b;
-  --color-bg: #f7f7f5;
-  --color-surface: #ffffff;
-  --color-border: #e2e2df;
-  --color-accent: #252525;
-  --color-on-accent: #ffffff;
+@font-face {
+  font-family: 'Pretendard';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/Pretendard-Regular.subset.woff2') format('woff2');
+}
 
+@font-face {
+  font-family: 'Pretendard';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/Pretendard-SemiBold.subset.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Pretendard';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/Pretendard-Bold.subset.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Gowun Batang';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/gowun-batang-korean-400-normal.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Gowun Batang';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/gowun-batang-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  --color-bg: #fbf7f2;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f4ece3;
+  --color-surface-note: #fffaf4;
+  --color-surface-note-selected: #ffefe5;
+  --color-text: #2a1f1a;
+  --color-text-secondary: #4a3a32;
+  --color-text-muted: #6b594e;
+  --color-border: #e6d9cb;
+  --color-border-strong: #917e6e;
+  --color-accent: #c84e2c;
+  --color-accent-hover: #b14122;
+  --color-accent-soft: #fdeadf;
+  --color-accent-soft-text: #9a3519;
+  --color-on-accent: #ffffff;
+  --color-ok: #2f683c;
+  --color-ok-soft: #e9f4eb;
+  --color-warn: #92590c;
+  --color-warn-soft: #fcf2dc;
+  --color-danger: #b42723;
+  --color-danger-soft: #fdeceb;
+  --color-danger-border: #e9b4b1;
+  --color-disabled-bg: #efe8e0;
+  --color-disabled-text: #8f8074;
+  --color-canvas-dark: #231e1b;
+  --color-canvas-light: #eae2d7;
+  --color-review-selected: #c84e2c;
+  --radius-sm: 10px;
+  --radius: 14px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+  --font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+  --font-display: 'Gowun Batang', 'AppleMyungjo', Georgia, serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --color-canvas: var(--color-canvas-light);
+  --space-1: 4px;
   --space-2: 8px;
   --space-3: 16px;
   --space-4: 24px;
-
   --font-size-sm: 0.875rem;
   --font-size-md: 1rem;
   --font-size-lg: 1.25rem;
-
-  --radius: 2px;
-  --font-family: system-ui, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
 }
-
-* {
-  box-sizing: border-box;
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--color-bg); color: var(--color-text); font: 400 1rem/1.6 var(--font-family); word-break: keep-all; overflow-wrap: anywhere; }
+h1, h2, h3, p, ol, figure { margin: 0; }
+h1, .hero h2 { font: 400 clamp(2rem, 4vw, 4rem)/1.16 var(--font-display); letter-spacing: -.045em; }
+a { color: inherit; text-underline-offset: .2em; }
+a:hover { color: var(--color-accent-soft-text); }
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.site-header, .footer { display: flex; gap: 18px; align-items: center; padding: 8px clamp(16px, 3vw, 48px); }
+.site-header { justify-content: space-between; min-height: 60px; border-bottom: 1px solid var(--color-border); }
+.site-header nav, .hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.site-header nav > a, .footer a, .contents a { display: inline-flex; align-items: center; min-height: 44px; font-size: .875rem; }
+.brand { display: inline-flex; align-items: center; gap: 9px; min-height: 44px; color: var(--color-text); font: 700 1rem var(--font-family); text-decoration: none; letter-spacing: 0; }
+.start, .quiet-link { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 8px 18px; border: 1px solid transparent; border-radius: var(--radius-pill); font-weight: 600; text-decoration: none; }
+.start { background: var(--color-accent); color: white; }
+.start:hover { color: white; background: var(--color-accent-hover); }
+.quiet-link { border-color: var(--color-border-strong); background: var(--color-surface); }
+.home { padding: clamp(28px, 5vw, 80px) clamp(16px, 6vw, 100px); background: radial-gradient(ellipse at 77% 15%, #f2dfc8 0, transparent 50%); }
+.hero, .steps { max-width: 1240px; margin-inline: auto; }
+.hero { min-height: min(62vh, 640px); display: grid; grid-template-columns: minmax(0,.9fr) minmax(0,1.16fr); align-items: center; gap: clamp(22px,4vw,68px); }
+.hero-copy { display: grid; gap: 22px; }
+.hero h2 { font-size: clamp(2.25rem, 4.5vw, 4.7rem); }
+.lead { color: var(--color-text-secondary); max-width: 38em; }
+.review-example { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(110px, .8fr); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: white; box-shadow: 0 22px 50px #412d1b26; overflow: hidden; }
+.demo-stage { display: grid; align-items: center; padding: clamp(8px, 1.2vw, 18px); background: var(--color-canvas-dark); }
+.demo-stage img { width: 100%; height: auto; border-radius: 5px; }
+.review-example figcaption { padding: 12px 10px; font-size: .82rem; }
+.demo-count { display: block; padding: 5px 0; color: var(--color-ok); font: 600 .75rem var(--font-family); }
+.demo-note { margin-top: 7px; padding: 9px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface-note); }
+.demo-note.done { background: var(--color-ok-soft); color: var(--color-ok); }
+.demo-strip { grid-column: 1/-1; display: flex; align-items: center; gap: 10px; padding: 7px 12px; background: var(--color-surface-subtle); font-size: .75rem; }
+.demo-strip img { border: 2px solid var(--color-accent); border-radius: 5px; object-fit: cover; }
+.steps { list-style: none; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; padding: 0; margin-top: clamp(36px,7vw,100px); }
+.steps li, .document, .contents, .not-found, .page { padding: clamp(18px,2.4vw,32px); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+.steps p, .highlights p { margin-top: 5px; color: var(--color-text-muted); font-size: .9rem; }
+.footer { justify-content: center; flex-wrap: wrap; border-top: 1px solid var(--color-border); color: var(--color-text-muted); }
+.page, .not-found { width: min(calc(100% - 32px), 50rem); margin: 36px auto; }
+.legal-layout { display: grid; grid-template-columns: 220px minmax(0,1fr); align-items: start; gap: 20px; max-width: 1130px; margin: 32px auto; padding: 0 16px; }
+.contents { display: grid; padding: 18px; }
+.contents a { border-bottom: 1px solid var(--color-border); text-decoration: none; }
+.contents a:hover { text-decoration: underline; }
+.document h1 { margin: 0 0 20px; font-size: clamp(1.9rem,3vw,2.8rem); }
+.document h2 { margin: 26px 0 7px; font-size: 1.08rem; scroll-margin-block: 18px; }
+.document p + p { margin-top: 8px; }
+.document .footer { margin-top: 24px; }
+.highlights { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; padding: 14px; border-radius: var(--radius); background: var(--color-accent-soft); }
+mark { background: var(--color-warn-soft); color: var(--color-text); }
+.not-found { display: grid; justify-items: center; gap: 14px; max-width: 34rem; margin: clamp(36px,15vh,140px) auto; text-align: center; }
+.not-found .code { font: 400 clamp(4rem,9vw,6rem)/1 var(--font-display); color: var(--color-accent); }
+.not-found h1 { font-size: 1.65rem; }
+@media (max-width: 959px) {
+  .hero, .legal-layout { grid-template-columns: minmax(0,1fr); }
+  .hero { min-height: 0; }
+  .contents { display: flex; align-items: center; flex-wrap: wrap; gap: 0 12px; }
+  .contents a { min-height: 36px; border: 0; }
 }
-
-body {
-  margin: 0;
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-family: var(--font-family);
-  font-size: var(--font-size-md);
-  line-height: 1.5;
-  /* 긴 영어 주소나 이메일이 휴대폰 폭을 넘지 않게 줄을 바꾼다. */
-  overflow-wrap: anywhere;
+@media (max-width: 620px) {
+  .home { padding-inline: 16px; }
+  .steps,.highlights { grid-template-columns: minmax(0,1fr); }
+  .hero { gap: 28px; }
+  .site-header { gap: 8px; }
+  .site-header nav { gap: 6px; }
+  .review-example figcaption { font-size: .72rem; padding: 8px 6px; }
+  .demo-note { padding: 5px; }
+  .legal-layout { margin-top: 16px; }
 }
-
-a {
-  color: var(--color-accent);
-}
-
-/* 글 폭을 읽기 좋은 길이로 묶고, 휴대폰에서는 양옆 여백만 남긴다. */
-.page {
-  max-width: 40rem;
-  margin: 0 auto;
-  padding: var(--space-4) var(--space-3);
-}
-
-h1 {
-  font-size: 1.75rem;
-  line-height: 1.3;
-  margin: var(--space-4) 0 var(--space-2);
-}
-
-h2 {
-  font-size: var(--font-size-lg);
-  margin: var(--space-4) 0 var(--space-2);
-}
-
-.lead {
-  color: var(--color-text-muted);
-  margin: 0 0 var(--space-4);
-}
-
-/* 세 단계: 번호가 붙은 칸을 위아래로 쌓는다(넓은 화면에서도 같은 모양이라 따로 나누지 않는다). */
-.steps {
-  list-style: none;
-  counter-reset: step;
-  margin: 0 0 var(--space-4);
-  padding: 0;
-}
-
-.steps li {
-  counter-increment: step;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: var(--space-3);
-  margin-bottom: var(--space-2);
-}
-
-.steps li::before {
-  content: counter(step) '. ';
-  font-weight: 700;
-}
-
-/* 앱의 기본 버튼(web/src/components/Button.module.css의 .button.primary)과 같은 값. 손가락으로 누르기 좋게 높이 44px. */
-.start {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  padding: var(--space-2) var(--space-3);
-  background: var(--color-accent);
-  color: var(--color-on-accent);
-  border-radius: var(--radius);
-  text-decoration: none;
-  font-weight: 600;
-}
-
-.footer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--color-border);
-  font-size: var(--font-size-sm);
-}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }

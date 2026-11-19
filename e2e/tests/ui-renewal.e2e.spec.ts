@@ -732,6 +732,110 @@ test('공개 페이지와 앱의 폰트 경로는 동일한 WOFF2 파일 5개를
   }
 })
 
+test('공개 페이지와 앱은 자체 호스팅 글꼴을 사용하고 폰트 실패 뒤에도 본문이 보인다', async ({ browser }) => {
+  const nginxOrigin = 'http://localhost:4103'
+  const views = [
+    { path: '/', heading: 'client-review', fontPath: '/fonts/' },
+    { path: '/privacy', heading: '개인정보처리방침', fontPath: '/fonts/' },
+    { path: '/app/login', heading: '로그인', fontPath: '/app/fonts/' },
+  ]
+  const scenarios = views.flatMap((view) => [false, true].map((blocked) => ({ ...view, blocked })))
+
+  for (const { path, heading, fontPath, blocked } of scenarios) {
+    // 성공한 폰트가 메모리·HTTP 캐시에 남지 않도록 실패 사례도 새 컨텍스트에서 시작한다.
+    const context = await browser.newContext({ serviceWorkers: 'block' })
+    const page = await context.newPage()
+    const externalRequests: string[] = []
+    const blockedFonts: string[] = []
+    const fontResponses: Response[] = []
+    await context.route('**/*', async (route) => {
+      const url = new URL(route.request().url())
+      if (url.origin !== nginxOrigin) {
+        externalRequests.push(url.href)
+        return route.abort('blockedbyclient')
+      }
+      if (blocked && url.pathname.endsWith('.woff2')) {
+        blockedFonts.push(url.pathname)
+        return route.abort('failed')
+      }
+      await route.continue()
+    })
+    page.on('response', (response) => {
+      if (response.request().resourceType() === 'font') fontResponses.push(response)
+    })
+
+    try {
+      expect((await page.goto(`${nginxOrigin}${path}`))?.status()).toBe(200)
+      const title = page.getByRole('heading', { level: 1, name: heading, exact: true })
+      await expect(title).toBeVisible()
+      const fonts = await page.evaluate(async () => {
+        await document.fonts.ready
+        return Array.from(document.fonts, (font) => ({
+          family: font.family.replace(/["']/g, ''),
+          status: font.status,
+          display: font.display,
+        }))
+      })
+      await expect(page.locator('body')).toHaveCSS('font-family', /^"?Pretendard"?,.*sans-serif$/)
+      // 소개의 h1은 브랜드다. 공개 명조 제목은 개편 전후 동일한 방침 h1에서 확인한다.
+      if (path !== '/') await expect(title).toHaveCSS('font-family', /^"?Gowun Batang"?,.*serif$/)
+      for (const family of ['Pretendard', 'Gowun Batang']) {
+        const faces = fonts.filter((font) => font.family === family)
+        expect(faces.length, `${path}: ${family} 선언`).toBeGreaterThan(0)
+        expect(faces.every((font) => font.display === 'swap'), `${path}: ${family} swap`).toBe(true)
+      }
+      const usedFamilies = path === '/' ? ['Pretendard'] : ['Pretendard', 'Gowun Batang']
+      for (const family of usedFamilies) {
+        expect(fonts, `${path}: ${family} ${blocked ? '실패' : '로드'}`).toContainEqual({
+          family, status: blocked ? 'error' : 'loaded', display: 'swap',
+        })
+      }
+
+      if (blocked) {
+        expect(blockedFonts.length, path).toBeGreaterThan(0)
+        expect(blockedFonts.every((url) => url.startsWith(fontPath)), path).toBe(true)
+        expect(fonts.some((font) => font.status === 'loaded'), path).toBe(false)
+      }
+      if (!blocked) {
+        // 파일 서명·내용 일치는 위의 정적 파일 테스트가 담당한다. 여기서는 실제 로드 응답을 본다.
+        expect(fontResponses.length, path).toBeGreaterThan(0)
+        for (const response of fontResponses) {
+          const url = new URL(response.url())
+          expect(url.origin).toBe(nginxOrigin)
+          expect(url.pathname.startsWith(fontPath), response.url()).toBe(true)
+          expect(url.pathname.endsWith('.woff2'), response.url()).toBe(true)
+          expect(response.status(), response.url()).toBe(200)
+        }
+      }
+
+      const bodyText = path === '/app/login'
+        ? page.locator('label').filter({ hasText: '개인정보 수집·이용에 동의해요(필수)' })
+        : page.locator('main p').first()
+      for (const element of [page.locator('body'), bodyText, title]) {
+        await expect(element).toBeVisible()
+        await expect(element).toHaveCSS('opacity', '1')
+      }
+      if (path === '/') {
+        const start = page.getByRole('link', { name: '시작하기', exact: true })
+        await expect(start).toBeVisible()
+        await expect(start).toHaveAttribute('href', '/app/login')
+        await start.click({ trial: true })
+      }
+      if (path === '/app/login') {
+        const email = page.getByRole('textbox', { name: '이메일', exact: true })
+        await expect(email).toBeVisible()
+        await email.fill('font-fallback@example.test')
+        await expect(email).toHaveValue('font-fallback@example.test')
+        await expect(page.getByRole('button', { name: '코드 받기', exact: true })).toBeVisible()
+        await expect(page.getByRole('button', { name: '코드 받기', exact: true })).toBeEnabled()
+      }
+      expect(externalRequests, `${path}: 외부 요청`).toEqual([])
+    } finally {
+      await context.close()
+    }
+  }
+})
+
 test('앱 로그인은 자체 호스팅 Pretendard를 로드하고 크림 바탕과 테라코타 버튼을 쓴다', async ({ page }) => {
   const nginxOrigin = 'http://localhost:4103'
   const fontResponses: Response[] = []
