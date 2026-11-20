@@ -136,6 +136,7 @@
 .notice {
   padding: var(--space-3);
   border-left: 2px solid var(--color-review-selected);
-  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
   font-size: var(--font-size-sm);
 }
