@@ -1174,10 +1174,10 @@ test('이전 스타일을 저장한 브라우저에서도 공개 페이지가 �
   expect(naturalRatio).toBeGreaterThanOrEqual(0.9)
   expect(naturalRatio).toBeLessThanOrEqual(1.1)
 
-  for (const viewport of [
-    { width: 1728, height: 997 },
-    { width: 1440, height: 900 },
-    { width: 390, height: 844 },
+  for (const { expectedHeroGap, ...viewport } of [
+    { width: 1728, height: 997, expectedHeroGap: 176 },
+    { width: 1440, height: 900, expectedHeroGap: 176 },
+    { width: 390, height: 844, expectedHeroGap: 76 },
   ]) {
     await page.setViewportSize(viewport)
     for (const element of [title, example, photo, checklist, progress, ...await steps.all()]) {
@@ -1191,8 +1191,6 @@ test('이전 스타일을 저장한 브라우저에서도 공개 페이지가 �
     const headerBox = (await page.getByRole('banner').boundingBox())!
     const heroBox = (await page.locator('.hero').boundingBox())!
     const headerHeroGap = heroBox.y - (headerBox.y + headerBox.height)
-    const expectedHeroGap = (viewport.width <= 620 ? 28 : 32)
-      + Math.min(72, Math.max(24, viewport.width * 0.05))
     expect(Math.abs(headerHeroGap - expectedHeroGap), `${viewport.width}px에서 헤더와 hero 사이 여백`)
       .toBeLessThanOrEqual(2)
     const stepBoxes = await steps.evaluateAll((items) => items.map((item) => {
