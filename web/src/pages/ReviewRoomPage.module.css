@@ -177,17 +177,11 @@
 }
 
 /* 다른 화면으로 가는 링크라 Button 대신 Link를 주 버튼 모양으로 보인다.
-   값은 Button.module.css의 .button·.primary와 같다. 그쪽을 바꾸면 함께 바꾼다. */
+   공통 버튼의 크기와 색을 쓰고, 링크의 마우스 상태만 따로 지정한다. */
 .messageAction {
+  composes: button primary from '../components/Button.module.css';
   display: inline-flex;
   align-items: center;
-  min-height: 44px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  background: var(--color-accent);
-  color: var(--color-on-accent);
-  font-weight: 600;
   text-decoration: none;
 }
 
@@ -394,6 +388,12 @@
 
 /* 긴 사이트 화면은 매트 안에서 끝까지 읽고, 아래 화면 선택기는 손닿는 곳에 둔다. */
 @media (min-width: 960px) {
+  .main {
+    position: sticky;
+    top: 0;
+    align-self: start;
+  }
+
   .mat {
     min-height: min(55vh, 540px);
     max-height: max(340px, calc(100svh - 290px));
