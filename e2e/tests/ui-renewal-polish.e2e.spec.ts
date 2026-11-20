@@ -128,3 +128,74 @@ for (const viewport of [{ width: 960, height: 800 }, { width: 1440, height: 900 
     }
   })
 }
+
+for (const viewport of [{ width: 1440, height: 900 }, { width: 1366, height: 768 }]) {
+  test(`${viewport.width}×${viewport.height}에서 20줄 설명과 긴 쪽지를 함께 읽어도 사진과 필름스트립을 사용할 수 있다`, async ({ page }) => {
+    await page.setViewportSize(viewport)
+    const summaryText = Array.from({ length: 20 }, (_, index) => `${index + 1}. 이번 버전의 화면 여백과 글자 크기를 확인해 주세요.`).join('\n')
+    // 설명의 허용 길이(1000자) 안에서 기존 긴 쪽지 픽스처와 함께 재현한다.
+    expect(summaryText.length).toBeLessThanOrEqual(1000)
+    const projectId = new URL(page.url()).pathname.split('/').at(-1)!
+    const updated = await db.deliveryVersion.updateMany({
+      where: { projectId, number: 0 },
+      data: { summary: summaryText },
+    })
+    expect(updated.count).toBe(1)
+    await page.reload()
+
+    const summary = page.getByText(summaryText, { exact: true })
+    const photo = page.getByRole('img', { name: '메인 · PC', exact: true })
+    await expect(summary).toHaveText(summaryText)
+    await expect(photo).toBeVisible()
+    await expect.poll(() => photo.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0)).toBe(true)
+    await page.evaluate(() => document.fonts.ready.then(() => undefined))
+    await page.getByRole('region', { name: '쪽지 목록', exact: true })
+      .getByRole('button', { name: new RegExp(issueTitle) }).click()
+    const detail = page.getByRole('article', { name: '쪽지 #1', exact: true })
+    await expect(detail.getByRole('heading', { name: issueTitle, exact: true })).toBeVisible()
+    await expect(detail.getByText(/60\. 사진/)).toBeVisible()
+    const toggle = page.getByRole('button', { name: /^(접기|펼치기)$/ })
+    const strip = toggle.locator('..')
+
+    for (const stripHeight of [82, 42]) {
+      await page.evaluate(() => window.scrollTo(0, 800))
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(800)
+      await expect(photo).toBeInViewport()
+      await expect(strip).toBeInViewport({ ratio: 1 })
+      const stripBox = (await strip.boundingBox())!
+      expect(stripBox.height).toBe(stripHeight)
+      expect(stripBox.x).toBeGreaterThanOrEqual(0)
+      expect(stripBox.x + stripBox.width).toBeLessThanOrEqual(viewport.width)
+      expect(stripBox.y).toBeGreaterThanOrEqual(0)
+      expect(stripBox.y + stripBox.height).toBeLessThanOrEqual(viewport.height)
+      await expect(toggle).toHaveText(stripHeight === 82 ? '접기' : '펼치기')
+
+      // locator.click의 자동 스크롤 없이 현재 보이는 버튼을 실제로 누른다.
+      await expect(toggle).toBeInViewport({ ratio: 1 })
+      const toggleBox = (await toggle.boundingBox())!
+      await page.mouse.click(toggleBox.x + toggleBox.width / 2, toggleBox.y + toggleBox.height / 2)
+      await expect(toggle).toHaveText(stripHeight === 82 ? '펼치기' : '접기')
+      await expect(toggle).toHaveAttribute('aria-expanded', stripHeight === 82 ? 'false' : 'true')
+      await expect.poll(async () => (await strip.boundingBox())?.height).toBe(stripHeight === 82 ? 42 : 82)
+      await expect(strip).toBeInViewport({ ratio: 1 })
+      await expect(photo).toBeInViewport()
+    }
+
+    // 글자가 DOM에 있는지만 보지 않고, 휠로 마지막 줄까지 읽을 수 있는지 확인한다.
+    await summary.hover()
+    await page.mouse.wheel(0, 1000)
+    await expect.poll(() => summary.evaluate((element) => {
+      const text = element.firstChild!
+      const range = document.createRange()
+      range.selectNodeContents(element)
+      range.setStart(text, text.textContent!.lastIndexOf('\n') + 1)
+      const line = range.getBoundingClientRect()
+      const box = element.getBoundingClientRect()
+      const hit = document.elementFromPoint(line.x + line.width / 2, line.y + line.height / 2)
+      return line.height > 0 && line.top >= Math.max(0, box.top)
+        && line.bottom <= Math.min(window.innerHeight, box.bottom)
+        && line.left >= 0 && line.right <= window.innerWidth
+        && hit !== null && element.contains(hit)
+    })).toBe(true)
+  })
+}

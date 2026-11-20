@@ -389,13 +389,26 @@
 /* 긴 사이트 화면은 매트 안에서 끝까지 읽고, 아래 화면 선택기는 손닿는 곳에 둔다. */
 @media (min-width: 960px) {
   .main {
+    display: flex;
+    flex-direction: column;
+    max-height: 100svh;
     position: sticky;
     top: 0;
     align-self: start;
   }
 
+  /* 여러 줄인 설명은 그 자리에서 끝까지 읽고, 화면 목록은 매트 아래에 남긴다. */
+  .summary {
+    max-height: min(5lh, 20svh);
+    overflow-y: auto;
+  }
+
+  .workspace {
+    min-height: 0;
+  }
+
   .mat {
-    min-height: min(55vh, 540px);
+    min-height: min(55vh, 540px, 100%);
     max-height: max(340px, calc(100svh - 290px));
     overflow: auto;
   }
