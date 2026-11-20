@@ -10,6 +10,7 @@ type PhotoCanvasProps = {
   // 사진 위에 띄우는 안내(예: 지난 버전 쪽지의 처음 사진을 보는 중).
   notice?: ReactNode
   asset: { id: string; width: number; height: number }
+  imageSrc?: string
   alt: string
   pins: CanvasPin[]
   selectedPinId?: string
@@ -29,6 +30,7 @@ export const PhotoCanvas = ({
   caption,
   notice,
   asset,
+  imageSrc,
   alt,
   pins,
   selectedPinId,
@@ -54,7 +56,7 @@ export const PhotoCanvas = ({
       <div className={styles.photo}>
         <div className={styles.frame}>
           <img
-            src={assetUrl(asset.id)}
+            src={imageSrc ?? assetUrl(asset.id)}
             width={asset.width}
             height={asset.height}
             alt={alt}
