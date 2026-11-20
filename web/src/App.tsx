@@ -7,6 +7,7 @@ import { DraftPage } from './pages/DraftPage.tsx'
 import { InvitePage } from './pages/InvitePage.tsx'
 import { LoginPage } from './pages/LoginPage.tsx'
 import { NotFoundPage } from './pages/NotFoundPage.tsx'
+import { PortfolioDemoPage } from './pages/PortfolioDemoPage.tsx'
 import { ProjectListPage } from './pages/ProjectListPage.tsx'
 import { ProjectSettingsPage } from './pages/ProjectSettingsPage.tsx'
 import { ReviewRoomPage } from './pages/ReviewRoomPage.tsx'
@@ -14,6 +15,7 @@ import { ReviewRoomPage } from './pages/ReviewRoomPage.tsx'
 const App = () => (
   <PageLayout>
     <Routes>
+      <Route path="/demo" element={<PortfolioDemoPage />} />
       <Route path="/" element={<ProjectListPage />} />
       <Route path="/projects/:id" element={<ReviewRoomPage />} />
       <Route path="/projects/:id/settings" element={<ProjectSettingsPage />} />
