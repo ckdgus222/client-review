@@ -535,7 +535,7 @@ describe('백업과 복원 (e2e)', () => {
     expect(codeRequest.stderr).toMatch(/HTTP\/1\.1 204\b/);
     const logs = await runCompose(current, ['logs', '--no-color', '--no-log-prefix', 'api']);
     expect(logs).toMatchObject({ code: 0 });
-    const code = logs.stdout.match(/로그인 코드는 (\d{6})예요/)?.[1];
+    const code = logs.stdout.match(/^([0-9]{6})\r?$/m)?.[1];
     expect(code).toMatch(/^\d{6}$/);
     expect(await runSql(current, 'SELECT count(*) FROM sessions')).toBe('1');
     expect(await runSql(current, 'SELECT count(*) FROM login_codes WHERE used_at IS NULL')).toBe('1');

@@ -55,7 +55,7 @@ export class MailService {
     this.sendWithoutWaiting('로그인 코드', {
       to: email,
       subject: '[Client Review] 로그인 코드',
-      text: `로그인 코드는 ${code}예요.\n10분 동안 쓸 수 있어요. 요청하지 않았다면 이 메일을 지워 주세요.`,
+      text: `Client Review 로그인 화면에 아래 6자리 코드를 입력해 주세요.\n\n${code}\n\n이 코드는 발급 후 10분간 유효합니다. 로그인을 요청하지 않으셨다면 이 메일을 무시해 주세요.`,
     });
   }
 
