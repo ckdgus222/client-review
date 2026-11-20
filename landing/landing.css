@@ -101,14 +101,14 @@ a:hover { color: var(--color-accent-soft-text); }
 .start { background: var(--color-accent); color: white; }
 .start:hover { color: white; background: var(--color-accent-hover); }
 .quiet-link { border-color: var(--color-border-strong); background: var(--color-surface); }
-.home { display: flex; flex-direction: column; gap: 36px; min-height: calc(100svh - 60px); padding: 32px; background: radial-gradient(circle at 75% 15%, var(--color-surface-subtle) 0%, var(--color-surface-note) 55%); }
+.home { display: flex; flex-direction: column; gap: 36px; min-height: calc(100svh - 60px); padding: 32px; background: radial-gradient(circle at 75% 15%, #f4e2d0 0%, var(--color-bg) 55%); }
 .hero, .steps { width: 100%; max-width: 1136px; margin-inline: auto; }
 .hero { display: grid; margin-block-start: clamp(48px, 10vw, 144px); grid-template-columns: minmax(0, .84fr) minmax(0, 1.16fr); align-items: center; gap: 36px; }
 .hero-copy { display: grid; gap: 16px; }
 .hero h2 { font-size: clamp(2rem, 4.2vw, 2.5rem); line-height: 1.22; }
 .lead { color: var(--color-text-secondary); max-width: 38em; }
 .review-example { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(110px, 1fr); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: white; box-shadow: 0 22px 50px #412d1b26; overflow: hidden; }
-.demo-stage { display: grid; align-items: center; padding: 14px; background: var(--color-surface-subtle); }
+.demo-stage { display: grid; align-items: center; padding: 14px; background: var(--color-canvas-dark); }
 .demo-stage img { width: 100%; height: auto; border-radius: 5px; }
 .review-example figcaption { padding: 12px 10px; font-size: .82rem; }
 .demo-count { display: block; padding: 5px 0; color: var(--color-ok); font: 600 .75rem var(--font-family); }
