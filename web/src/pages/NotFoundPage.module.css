@@ -1,0 +1,10 @@
+.card {
+  composes: card from './InvitePage.module.css';
+  align-items: center;
+  text-align: center;
+}
+.code {
+  color: var(--color-accent);
+  font: 400 clamp(4rem, 9vw, 6rem) / 1 var(--font-display);
+}
+.action { composes: primaryLink from './InvitePage.module.css'; }

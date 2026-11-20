@@ -1,43 +1,54 @@
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: var(--font-size-sm);
+  justify-self: start;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.5;
   white-space: nowrap;
 }
 
 .dot {
-  width: var(--space-2);
-  height: var(--space-2);
+  flex: none;
+  width: 8px;
+  height: 8px;
   border: 1px solid currentColor;
   border-radius: 50%;
 }
 
-/* 수정 중: 채운 점과 선택색 글자. 접수는 빈 점 그대로다. */
 .badge[data-status='IN_PROGRESS'] {
-  color: var(--color-review-selected);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-soft-text);
 }
 
 .badge[data-status='IN_PROGRESS'] .dot {
   background: currentColor;
 }
 
-/* 확인 요청: 반만 채운 점. 고쳤고, 확인을 기다린다. */
 .badge[data-status='READY_FOR_REVIEW'] {
-  color: var(--color-review-selected);
+  background: var(--color-warn-soft);
+  color: var(--color-warn);
 }
 
 .badge[data-status='READY_FOR_REVIEW'] .dot {
   background: linear-gradient(to right, currentColor 50%, transparent 50%);
 }
 
-/* 확인 완료: 채운 네모. 끝난 쪽지는 동그라미가 아니라서 진행 중인 쪽지와 모양으로 갈린다. */
-.badge[data-status='VERIFIED'] .dot {
-  border-radius: 0;
-  background: currentColor;
+.badge[data-status='VERIFIED'] {
+  background: var(--color-ok-soft);
+  color: var(--color-ok);
 }
 
-/* 철회: 흐린 글자와 가로줄. 위쪽 테두리만 남겨 줄로 보이게 한다. */
+.badge[data-status='VERIFIED'] .dot {
+  background: currentColor;
+  border-radius: 0;
+}
+
 .badge[data-status='WITHDRAWN'] {
   color: var(--color-text-muted);
 }

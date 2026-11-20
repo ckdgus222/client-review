@@ -84,57 +84,59 @@ const CertificateView = ({ certificate }: { certificate: Certificate }) => {
   const particle = version.number === 0 ? '을' : '를'
 
   return (
-    <article className={styles.paper}>
+    <div className={styles.document}>
       <div className={styles.toolbar}>
         <Link to={`/projects/${project.id}?version=${version.id}`}>검수실로 돌아가기</Link>
         <Button onClick={() => window.print()}>PDF로 저장</Button>
         <p className={styles.muted}>인쇄 창에서 'PDF로 저장'을 고르면 돼요</p>
       </div>
+      <article className={styles.paper}>
 
-      <h1>검수 확인서</h1>
-      <p className={styles.muted}>확인서 번호 {certificate.certificateNumber}</p>
+        <h1>검수 확인서</h1>
+        <p className={styles.muted}>확인서 번호 {certificate.certificateNumber}</p>
 
-      <dl className={styles.facts}>
-        <dt>프로젝트</dt>
-        <dd>{project.name}</dd>
-        <dt>버전</dt>
-        <dd>{label}</dd>
-        <dt>게시 시각</dt>
-        <dd>{formatKst(version.publishedAt)}</dd>
-        <dt>승인 시각</dt>
-        <dd>{formatKst(approval.approvedAt)}</dd>
-        <dt>승인자</dt>
-        <dd>{approval.approverName}</dd>
-        <dt>개발자</dt>
-        <dd>{certificate.developerName}</dd>
-      </dl>
+        <dl className={styles.facts}>
+          <dt>프로젝트</dt>
+          <dd>{project.name}</dd>
+          <dt>버전</dt>
+          <dd>{label}</dd>
+          <dt>게시 시각</dt>
+          <dd>{formatKst(version.publishedAt)}</dd>
+          <dt>승인 시각</dt>
+          <dd>{formatKst(approval.approvedAt)}</dd>
+          <dt>승인자</dt>
+          <dd>{approval.approverName}</dd>
+          <dt>개발자</dt>
+          <dd>{certificate.developerName}</dd>
+        </dl>
 
-      <p className={styles.statement}>
-        {approval.approverName}님이 {project.name}의 {label}
-        {particle} 승인했어요.
-      </p>
+        <p className={styles.statement}>
+          {approval.approverName}님이 {project.name}의 {label}
+          {particle} 승인했어요.
+        </p>
 
-      <section className={styles.block}>
-        <h2>검수한 화면 {certificate.screens.length}개</h2>
-        <ul>
-          {certificate.screens.map((screen, index) => (
-            // 같은 이름·크기의 화면이 둘일 수 있어 순서를 key에 섞는다. 승인된 버전의 화면 목록은 바뀌지 않는다.
-            <li key={`${index}-${screen.name}`}>{screenLabel(screen)}</li>
-          ))}
-        </ul>
-      </section>
+        <section className={styles.block}>
+          <h2>검수한 화면 {certificate.screens.length}개</h2>
+          <ul>
+            {certificate.screens.map((screen, index) => (
+              // 같은 이름·크기의 화면이 둘일 수 있어 순서를 key에 섞는다. 승인된 버전의 화면 목록은 바뀌지 않는다.
+              <li key={`${index}-${screen.name}`}>{screenLabel(screen)}</li>
+            ))}
+          </ul>
+        </section>
 
-      <p>
-        확인 완료 {counts.verified}건 · 철회 {counts.withdrawn}건 · 범위 밖(추가 요청) {counts.outOfScope}건
-      </p>
+        <p>
+          확인 완료 {counts.verified}건 · 철회 {counts.withdrawn}건 · 범위 밖(추가 요청) {counts.outOfScope}건
+        </p>
 
-      <CertificateIssues issues={certificate.issues} />
+        <CertificateIssues issues={certificate.issues} />
 
-      <footer className={styles.footer}>
-        <p>이 확인서는 승인한 때의 내용이에요. 그 뒤에 쪽지가 바뀌어도 달라지지 않아요.</p>
-        <p>시각은 한국 표준시(KST) 기준이에요</p>
-      </footer>
-    </article>
+        <footer className={styles.footer}>
+          <p>이 확인서는 승인한 때의 내용이에요. 그 뒤에 쪽지가 바뀌어도 달라지지 않아요.</p>
+          <p>시각은 한국 표준시(KST) 기준이에요</p>
+        </footer>
+      </article>
+    </div>
   )
 }
 

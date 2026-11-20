@@ -5,6 +5,7 @@ import { ApiError } from '../api/client.ts'
 import { Button } from '../components/Button.tsx'
 import { ErrorText } from '../components/ErrorText.tsx'
 import { TextField } from '../components/TextField.tsx'
+import shopScreen from '../assets/shop-screen.webp'
 import styles from './LoginPage.module.css'
 
 type Step = 'email' | 'code' | 'name'
@@ -88,79 +89,90 @@ export const LoginPage = () => {
 
   // noValidate: 브라우저 기본 검사 말풍선 대신 우리 문구를 입력칸 아래에 보여 준다.
   return (
-    <form className={styles.form} onSubmit={handleSubmit} noValidate>
-      <h1>로그인</h1>
-      {step === 'email' && (
-        <>
-          <TextField
-            label="이메일"
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={setEmail}
-            error={error}
-            disabled={sending}
-          />
-          <div className={styles.consent}>
-            <label>
-              <input
-                type="checkbox"
-                checked={agreed}
-                onChange={(event) => {
-                  setAgreed(event.target.checked)
-                  setConsentMissing(false)
-                }}
-                disabled={sending}
-              />
-              개인정보 수집·이용에 동의해요(필수)
-            </label>
-            {/* 앱 밖 주소(nginx가 보내는 HTML)라 React 링크가 아니다. 새 탭으로 열어 쓰던 이메일이 남는다. */}
-            <a href="/privacy" target="_blank" rel="noreferrer">
-              개인정보처리방침 보기
-            </a>
-            {consentMissing && <ErrorText message="개인정보 수집·이용에 동의해 주세요" />}
-          </div>
-        </>
-      )}
-      {step === 'code' && (
-        <>
-          <p>{email}로 받은 코드 6자리를 넣어 주세요.</p>
-          <TextField
-            label="로그인 코드"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            value={code}
-            onChange={setCode}
-            error={error}
-            disabled={sending}
-          />
-        </>
-      )}
-      {step === 'name' && (
-        <>
-          <p>처음 오셨네요. 이름을 알려 주세요.</p>
-          <TextField
-            label="이름"
-            autoComplete="name"
-            value={name}
-            onChange={setName}
-            error={error}
-            disabled={sending}
-          />
-        </>
-      )}
-      <Button type="submit" disabled={sending}>
-        {SUBMIT_LABELS[step]}
-      </Button>
-      {step !== 'email' && (
-        <Button variant="secondary" disabled={sending} onClick={backToEmail}>
-          이메일 다시 입력
+    <div className={styles.layout}>
+      <aside className={styles.preview} aria-label="서비스 소개">
+        <h2>비밀번호 없이,<br />이메일 코드 한 번으로.</h2>
+        <img src={shopScreen} width="880" height="650" alt="검수할 쇼핑몰 상품 상세 화면 예시" />
+      </aside>
+      <form className={styles.form} onSubmit={handleSubmit} noValidate>
+        <div role="group" className={styles.steps} aria-label="로그인 단계">
+          <span aria-current={step === 'email' ? 'step' : undefined}>1 이메일</span>
+          <span aria-current={step === 'code' ? 'step' : undefined}>2 코드</span>
+          <span aria-current={step === 'name' ? 'step' : undefined}>3 이름</span>
+        </div>
+        <h1>로그인</h1>
+        {step === 'email' && (
+          <>
+            <TextField
+              label="이메일"
+              type="email"
+              autoComplete="email"
+              value={email}
+              onChange={setEmail}
+              error={error}
+              disabled={sending}
+            />
+            <div className={styles.consent}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={agreed}
+                  onChange={(event) => {
+                    setAgreed(event.target.checked)
+                    setConsentMissing(false)
+                  }}
+                  disabled={sending}
+                />
+                개인정보 수집·이용에 동의해요(필수)
+              </label>
+              {/* 앱 밖 주소(nginx가 보내는 HTML)라 React 링크가 아니다. 새 탭으로 열어 쓰던 이메일이 남는다. */}
+              <a href="/privacy" target="_blank" rel="noreferrer">
+                개인정보처리방침 보기
+              </a>
+              {consentMissing && <ErrorText message="개인정보 수집·이용에 동의해 주세요" />}
+            </div>
+          </>
+        )}
+        {step === 'code' && (
+          <>
+            <p>{email}로 받은 코드 6자리를 넣어 주세요.</p>
+            <TextField
+              label="로그인 코드"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={code}
+              onChange={setCode}
+              error={error}
+              disabled={sending}
+            />
+          </>
+        )}
+        {step === 'name' && (
+          <>
+            <p>처음 오셨네요. 이름을 알려 주세요.</p>
+            <TextField
+              label="이름"
+              autoComplete="name"
+              value={name}
+              onChange={setName}
+              error={error}
+              disabled={sending}
+            />
+          </>
+        )}
+        <Button type="submit" disabled={sending}>
+          {SUBMIT_LABELS[step]}
         </Button>
-      )}
-      <nav className={styles.legal} aria-label="약관">
-        <a href="/privacy">개인정보처리방침</a>
-        <a href="/terms">이용약관</a>
-      </nav>
-    </form>
+        {step !== 'email' && (
+          <Button variant="secondary" disabled={sending} onClick={backToEmail}>
+            이메일 다시 입력
+          </Button>
+        )}
+        <nav className={styles.legal} aria-label="약관">
+          <a href="/privacy">개인정보처리방침</a>
+          <a href="/terms">이용약관</a>
+        </nav>
+      </form>
+    </div>
   )
 }

@@ -4,6 +4,7 @@ import { ApiError } from '../api/client.ts'
 import { isUuid } from '../api/ids.ts'
 import { getProject, type ProjectDetail } from '../api/projects.ts'
 import { type ActivityItem, listActivity, timeFormat, versionLabel } from '../api/versions.ts'
+import { ManagementLayout } from '../components/PageLayout.tsx'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { ProjectNotFound } from '../components/ProjectNotFound.tsx'
 import { useMe } from '../hooks/useMe.ts'
@@ -50,6 +51,8 @@ const describe = ({ type, actorName, version, memberName, issue }: ActivityItem)
   const particle = version.number === 0 ? '을' : '를'
   return `${actorName}님이 ${versionLabel(version.number)}${particle} ${action}`
 }
+
+const dayFormat = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'full' })
 
 const ActivityRow = ({ projectId, item }: { projectId: string; item: ActivityItem }) => {
   const content = (
@@ -104,23 +107,28 @@ const Activity = ({ id }: { id: string }) => {
   if (loadError) return <ErrorText message={loadError} />
   if (!project) return <p>불러오는 중이에요.</p>
 
+  const days = items.map((item) => dayFormat.format(new Date(item.createdAt)))
   return (
-    <section className={styles.panel}>
-      <Link to={`/projects/${id}`}>검수실</Link>
-      <h1>{project.name} 활동 일지</h1>
-      {items.length === 0 ? (
-        <p>아직 기록이 없어요.</p>
-      ) : (
-        // 서버가 최신순으로 보내서 그대로 늘어놓는다.
-        <ul className={styles.list}>
-          {items.map((item) => (
-            <li key={item.id}>
-              <ActivityRow projectId={id} item={item} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    <ManagementLayout active="activity" project={project}>
+      <section className={styles.panel}>
+        <h1>{project.name} 활동 일지</h1>
+        {items.length === 0 ? (
+          <p>아직 기록이 없어요.</p>
+        ) : (
+          // 서버가 최신순으로 보내서 그대로 늘어놓는다.
+          <ul className={styles.list}>
+            {items.map((item, index) => (
+              <li key={item.id}>
+                {days[index - 1] !== days[index] && (
+                  <h2 className={styles.day}>{days[index]}</h2>
+                )}
+                <ActivityRow projectId={id} item={item} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </ManagementLayout>
   )
 }
 

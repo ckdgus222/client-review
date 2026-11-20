@@ -23,6 +23,7 @@ import {
   type VersionDetail,
 } from '../api/versions.ts'
 import { Button } from '../components/Button.tsx'
+import { ManagementLayout } from '../components/PageLayout.tsx'
 import { ErrorText, SessionEnded } from '../components/ErrorText.tsx'
 import { TextField } from '../components/TextField.tsx'
 import { ProjectNotFound } from '../components/ProjectNotFound.tsx'
@@ -155,19 +156,20 @@ const DraftEditor = ({ id }: { id: string }) => {
 
   if (!draft) {
     return (
-      <section className={styles.page}>
-        {roomLink}
-        <h1>{project.name}</h1>
-        <p>
-          준비를 시작하면 지금 버전의 화면 구성과 테스트 주소를 그대로 가져와요. 바뀐 화면만 새 사진으로 바꾸면 돼요.
-        </p>
-        {actionError && <ErrorText message={actionError} />}
-        <div>
-          <Button disabled={busy} onClick={() => run(async () => fillForm(await createDraft(id)))}>
-            {label} 준비 시작
-          </Button>
-        </div>
-      </section>
+      <ManagementLayout active="draft" project={project}>
+        <section className={styles.page}>
+          <h1>{project.name}</h1>
+          <p>
+            준비를 시작하면 지금 버전의 화면 구성과 테스트 주소를 그대로 가져와요. 바뀐 화면만 새 사진으로 바꾸면 돼요.
+          </p>
+          {actionError && <ErrorText message={actionError} />}
+          <div>
+            <Button disabled={busy} onClick={() => run(async () => fillForm(await createDraft(id)))}>
+              {label} 준비 시작
+            </Button>
+          </div>
+        </section>
+      </ManagementLayout>
     )
   }
 
@@ -224,90 +226,87 @@ const DraftEditor = ({ id }: { id: string }) => {
   })
 
   return (
-    <section className={styles.page}>
-      {roomLink}
-      <div className={styles.top}>
-        <h1>
-          {project.name} · {label} 준비 중
-        </h1>
-        <Button disabled={busy || isDirty} onClick={handlePublish}>
-          {label} 게시
-        </Button>
-      </div>
-      {isDirty && <p className={styles.hint}>저장한 뒤 게시해 주세요.</p>}
-      <form className={styles.form} onSubmit={handleSave} noValidate>
-        <label className={styles.summary}>
-          설명
-          <textarea value={summary} onChange={(event) => setSummary(event.target.value)} disabled={busy} rows={3} />
-        </label>
-        <TextField label="테스트 주소" value={testUrl} onChange={setTestUrl} disabled={busy} />
-        <div>
-          <Button type="submit" variant="secondary" disabled={busy || !isDirty}>
-            저장
-          </Button>
-        </div>
-      </form>
-      {actionError && <ErrorText message={actionError} />}
-      {cards.length === 0 ? (
-        <p>
-          화면 이름표가 없어요. <Link to={`/projects/${id}/settings`}>설정</Link>에서 먼저 만들어 주세요.
-        </p>
-      ) : (
-        <ul className={styles.cards}>
-          {cards.map(({ screen, asset }) => {
-            const name = screenLabel(screen)
-            const canUpload = !screen.hiddenAt
-            const pickText = asset ? '사진 바꾸기' : '사진 선택'
-            return (
-              <li
-                key={screen.id}
-                className={dropTargetId === screen.id ? `${styles.card} ${styles.dropping}` : styles.card}
-                onDragOver={(event) => {
-                  if (!canUpload) return
-                  event.preventDefault()
-                  setDropTargetId(screen.id)
-                }}
-                onDragLeave={(event) => {
-                  // 카드 안의 사진·버튼으로 옮겨 갈 때도 leave가 일어나서, 카드를 정말 벗어났을 때만 강조를 끈다.
-                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTargetId(undefined)
-                }}
-                onDrop={(event) => canUpload && handleDrop(screen.id, event)}
-              >
-                <h2>
-                  {name}
-                  {screen.hiddenAt && <span className={styles.hiddenTag}>숨김</span>}
-                </h2>
-                {asset ? (
-                  // 화면 아래쪽 카드의 큰 사진은 보일 때 받는다.
-                  <img src={assetUrl(asset.id)} width={asset.width} height={asset.height} alt={name} loading="lazy" />
-                ) : (
-                  <p className={styles.empty}>사진 없음 · 여기에 끌어다 놓아도 돼요</p>
-                )}
-                <div className={styles.cardActions}>
-                  {canUpload && (
-                    <label className={busy ? `${styles.fileButton} ${styles.fileButtonDisabled}` : styles.fileButton}>
-                      {pickText}
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp"
-                        aria-label={`${name} ${pickText}`}
-                        disabled={busy}
-                        onChange={(event) => handleFileChange(screen.id, event)}
-                      />
-                    </label>
+    <ManagementLayout active="draft" project={project}>
+      <section className={styles.page}>
+        <form className={styles.editor} onSubmit={handleSave} noValidate>
+          <div className={styles.top}>
+            <h1>{project.name} · {label} 준비 중</h1>
+            <div className={styles.actions}>
+              <Button type="submit" variant="secondary" disabled={busy || !isDirty}>저장</Button>
+              <Button disabled={busy || isDirty} onClick={handlePublish}>{label} 게시</Button>
+            </div>
+          </div>
+          {isDirty && <p className={styles.hint}>저장한 뒤 게시해 주세요.</p>}
+          <div className={styles.form}>
+            <label className={styles.summary}>
+              설명
+              <textarea value={summary} onChange={(event) => setSummary(event.target.value)} disabled={busy} rows={3} />
+            </label>
+            <TextField label="테스트 주소" value={testUrl} onChange={setTestUrl} disabled={busy} />
+          </div>
+        </form>
+        {actionError && <ErrorText message={actionError} />}
+        {cards.length === 0 ? (
+          <p>
+            화면 이름표가 없어요. <Link to={`/projects/${id}/settings`}>설정</Link>에서 먼저 만들어 주세요.
+          </p>
+        ) : (
+          <ul className={styles.cards}>
+            {cards.map(({ screen, asset }) => {
+              const name = screenLabel(screen)
+              const canUpload = !screen.hiddenAt
+              const pickText = asset ? '사진 바꾸기' : '사진 선택'
+              return (
+                <li
+                  key={screen.id}
+                  className={dropTargetId === screen.id ? `${styles.card} ${styles.dropping}` : styles.card}
+                  onDragOver={(event) => {
+                    if (!canUpload) return
+                    event.preventDefault()
+                    setDropTargetId(screen.id)
+                  }}
+                  onDragLeave={(event) => {
+                    // 카드 안의 사진·버튼으로 옮겨 갈 때도 leave가 일어나서, 카드를 정말 벗어났을 때만 강조를 끈다.
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTargetId(undefined)
+                  }}
+                  onDrop={(event) => canUpload && handleDrop(screen.id, event)}
+                >
+                  <h2>
+                    {name}
+                    {screen.hiddenAt && <span className={styles.hiddenTag}>숨김</span>}
+                  </h2>
+                  {asset ? (
+                    // 화면 아래쪽 카드의 큰 사진은 보일 때 받는다.
+                    <img src={assetUrl(asset.id)} width={asset.width} height={asset.height} alt={name} loading="lazy" />
+                  ) : (
+                    <p className={styles.empty}>사진 없음 · 여기에 끌어다 놓아도 돼요</p>
                   )}
-                  {asset && (
-                    <Button variant="secondary" disabled={busy} onClick={() => handleRemove(screen.id)}>
-                      빼기
-                    </Button>
-                  )}
-                </div>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-    </section>
+                  <div className={styles.cardActions}>
+                    {canUpload && (
+                      <label className={busy ? `${styles.fileButton} ${styles.fileButtonDisabled}` : styles.fileButton}>
+                        {pickText}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          aria-label={`${name} ${pickText}`}
+                          disabled={busy}
+                          onChange={(event) => handleFileChange(screen.id, event)}
+                        />
+                      </label>
+                    )}
+                    {asset && (
+                      <Button variant="secondary" disabled={busy} onClick={() => handleRemove(screen.id)}>
+                        빼기
+                      </Button>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </section>
+    </ManagementLayout>
   )
 }
 

@@ -41,6 +41,8 @@ export const IssueList = ({ issues, filter, onFilterChange, selectedId, onSelect
   const isFiltering = countFilters(filter) > 0
   const unresolved = issues.filter((issue) => isUnresolved(issue.status)).length
 
+  const completed = issues.length - unresolved
+
   const renderRows = () => {
     if (issues.length === 0) {
       return (
@@ -53,7 +55,7 @@ export const IssueList = ({ issues, filter, onFilterChange, selectedId, onSelect
     return (
       <ul className={styles.rows}>
         {shown.map((issue) => (
-          <li key={issue.id}>
+          <li key={issue.id} data-complete={!isUnresolved(issue.status)}>
             <button type="button" aria-pressed={issue.id === selectedId} onClick={() => onSelect(issue.id)}>
               <span className={styles.number}>#{issue.number}</span>
               <span className={styles.title}>{issue.title}</span>
@@ -89,6 +91,14 @@ export const IssueList = ({ issues, filter, onFilterChange, selectedId, onSelect
             쪽지 쓰기
           </Button>
         )}
+      </div>
+      <div className={styles.progress}>
+        {issues.length > 0 ? (
+          <>
+            <label htmlFor="review-progress">검수 진행률 <strong>{completed} / {issues.length}</strong></label>
+            <progress id="review-progress" value={completed} max={issues.length} />
+          </>
+        ) : <span>쪽지 없음</span>}
       </div>
       {issues.length > 0 && <IssueFilters issues={issues} filter={filter} onChange={onFilterChange} />}
       {renderRows()}

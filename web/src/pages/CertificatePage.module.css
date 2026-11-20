@@ -1,13 +1,14 @@
-/* 종이 한 장처럼 보이는 흰 판. 인쇄하면 판의 테두리와 여백 대신 @page 여백을 쓴다. */
 .paper {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  max-width: 48rem;
-  margin: var(--space-4) auto 0;
-  padding: var(--space-4);
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: clamp(20px, 4vw, 54px);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+  border-top: 4px solid var(--color-accent);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 12px 32px #3b251610;
   background: var(--color-surface);
   /* 띄어쓰기 없이 긴 프로젝트 이름·쪽지 제목이 판 밖으로 넘치지 않게 판 폭에서 줄을 바꾼다. */
   overflow-wrap: anywhere;
@@ -28,13 +29,17 @@
 }
 
 .toolbar {
+  max-width: 52rem;
+  margin: 0 auto 12px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) var(--space-3);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--color-border);
+  padding-bottom: var(--space-2);
 }
+
+.toolbar button { margin-left: auto; }
+.toolbar p { flex-basis: 100%; margin: 0; text-align: right; }
 
 .muted {
   color: var(--color-text-muted);
@@ -44,7 +49,10 @@
 /* 이름과 값을 두 칸으로 나란히 둔다. */
 .facts {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  padding: 18px;
+  background: var(--color-surface-subtle);
+  border-radius: var(--radius-sm);
+  grid-template-columns: max-content minmax(0, 1fr);
   gap: var(--space-1) var(--space-3);
 }
 
@@ -53,6 +61,8 @@
 }
 
 .statement {
+  border-left: 3px solid var(--color-accent);
+  padding-left: 12px;
   font-weight: 600;
 }
 
@@ -96,12 +106,23 @@
 }
 
 /* 인쇄할 때는 확인서만 흰 바탕에 검은 글자로 찍는다. 사이트 머리말과 종이 크기·여백(@page)은 PageLayout.module.css가 정한다. */
+@media (max-width: 540px) {
+  .table th, .table td { padding-inline: 3px; font-size: .8rem; }
+  .facts { padding: 12px; }
+}
+
 @media print {
+  .document { margin: 0; padding: 0; }
+  .facts { padding: 0; background: white; }
+  .statement { border-color: black; }
+
   .toolbar {
     display: none;
   }
 
   .paper {
+    box-shadow: none;
+    border-radius: 0;
     max-width: none;
     margin: 0;
     padding: 0;

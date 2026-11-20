@@ -99,48 +99,70 @@ type VersionViewProps = {
   canvas: ReactNode
 }
 
-// 버전 하나의 틀이다: 위에 설명 줄, 아래에 왼쪽 화면 목록과 사진.
-const VersionView = ({ version, selected, isCurrent, onGoLatest, onSelectScreen, canvas }: VersionViewProps) => (
-  <>
-    {!isCurrent && (
-      <p className={styles.notice}>
-        지난 버전이에요. 읽기만 할 수 있어요.{' '}
-        {/* 주소에서 버전만 지우면 이 화면이 기억하는 현재 버전으로 간다. 그사이 새 버전이 게시됐을 수 있어서 프로젝트를 다시 읽고 간다. */}
-        <button type="button" className={styles.link} onClick={onGoLatest}>
-          최신 버전 보기
-        </button>
-      </p>
-    )}
-    <div className={styles.info}>
-      {version.summary && <p className={styles.summary}>{version.summary}</p>}
-      {version.publishedAt && (
-        <span className={styles.hint}>{timeFormat.format(new Date(version.publishedAt))} 게시</span>
+type Mat = 'dark' | 'light'
+const MAT_KEY = 'client-review:mat'
+
+const readMat = (): Mat => {
+  try {
+    return window.localStorage.getItem(MAT_KEY) === 'light' ? 'light' : 'dark'
+  } catch {
+    return 'dark'
+  }
+}
+
+const VersionView = ({ version, selected, isCurrent, onGoLatest, onSelectScreen, canvas }: VersionViewProps) => {
+  const [mat, setMat] = useState<Mat>(readMat)
+  const [expanded, setExpanded] = useState(true)
+  const chooseMat = (value: Mat) => {
+    setMat(value)
+    try {
+      window.localStorage.setItem(MAT_KEY, value)
+    } catch {
+      // 저장이 차단된 창에서도 이번 화면의 선택은 유지한다.
+    }
+  }
+
+  return (
+    <>
+      {!isCurrent && (
+        <p className={styles.notice}>
+          지난 버전이에요. 읽기만 할 수 있어요.{' '}
+          <button type="button" className={styles.link} onClick={onGoLatest}>최신 버전 보기</button>
+        </p>
       )}
-      {version.testUrl && (
-        <a href={version.testUrl} target="_blank" rel="noreferrer">
-          테스트 주소
-        </a>
-      )}
-    </div>
-    <div className={styles.workspace}>
-      <ul className={styles.screens}>
-        {version.screens.map((screen, index) => (
-          <li key={screen.screenId}>
-            <button type="button" aria-pressed={screen === selected} onClick={() => onSelectScreen(screen.screenId)}>
-              {/* 화면 이름은 버튼 글자가 알려 줘서 작은 사진은 빈 alt다. 번호도 읽지 않게 숨긴다.
-                  1200px 이하에서는 작은 사진을 숨기는데, lazy라서 숨긴 사진은 받지 않는다. */}
-              <img className={styles.thumbnail} src={assetUrl(screen.asset.id)} alt="" loading="lazy" />
-              <span>
-                <strong aria-hidden="true">{String(index + 1).padStart(2, '0')}</strong> {screenLabel(screen)}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
-      {canvas}
-    </div>
-  </>
-)
+      <div className={styles.info}>
+        <div className={styles.versionInfo}>
+          {version.summary && <p className={styles.summary}>{version.summary}</p>}
+          {version.publishedAt && <span className={styles.hint}>{timeFormat.format(new Date(version.publishedAt))} 게시</span>}
+          {version.testUrl && <a href={version.testUrl} target="_blank" rel="noreferrer">테스트 주소</a>}
+        </div>
+        <div className={styles.matPicker} role="group" aria-label="사진 배경">
+          <button type="button" aria-pressed={mat === 'dark'} onClick={() => chooseMat('dark')}>어두운 매트</button>
+          <button type="button" aria-pressed={mat === 'light'} onClick={() => chooseMat('light')}>밝은 매트</button>
+        </div>
+      </div>
+      <div className={styles.workspace}>
+        <div className={styles.mat} data-mat={mat}>{canvas}</div>
+        <div className={styles.strip} data-expanded={expanded}>
+          <ul id="review-screen-strip" className={styles.screens} hidden={!expanded}>
+            {version.screens.map((screen, index) => (
+              <li key={screen.screenId}>
+                <button type="button" aria-pressed={screen === selected} onClick={() => onSelectScreen(screen.screenId)}>
+                  <img className={styles.thumbnail} src={assetUrl(screen.asset.id)} alt="" loading="lazy" />
+                  <span><strong aria-hidden="true">{String(index + 1).padStart(2, '0')}</strong> {screenLabel(screen)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          {!expanded && <span className={styles.stripSummary}>화면 {version.screens.length}개</span>}
+          <button type="button" className={styles.stripToggle} aria-expanded={expanded} aria-controls="review-screen-strip" onClick={() => setExpanded(!expanded)}>
+            {expanded ? '접기' : '펼치기'}
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
 
 // 새 쪽지의 자리. 좌표만이 아니라 찍은 버전과 화면도 함께 기억해서, 다른 사진에 이 좌표가 쓰이지 않게 한다.
 type DraftPin = PinPosition & { versionId: string; screenId: string }

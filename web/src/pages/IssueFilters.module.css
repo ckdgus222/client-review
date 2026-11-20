@@ -1,7 +1,7 @@
 .filters {
-  padding: var(--space-2) var(--space-3);
+  padding: 10px 14px;
   border-bottom: 1px solid var(--color-border);
-  font-size: var(--font-size-sm);
+  font-size: 0.8rem;
 }
 
 /* 넓은 화면에서는 조건을 늘 펴 두어서 펴는 버튼이 필요 없다. */
@@ -26,14 +26,22 @@
 
 /* 값은 TextField.module.css의 입력칸과 같다. 그쪽을 바꾸면 함께 바꾼다. 높이는 손가락으로 누르기 쉽게 44px이다. */
 .fields select {
-  min-height: 44px;
-  padding: var(--space-2);
+  min-width: 0;
+  width: 100%;
+  min-height: 36px;
+  padding: 4px 8px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius);
   background: var(--color-surface);
   color: var(--color-text);
   font: inherit;
   font-weight: 400;
+}
+
+.fields label:first-child select {
+  border-radius: var(--radius-pill);
+  background: var(--color-accent-soft);
+  color: var(--color-accent-soft-text);
 }
 
 /* 체크 칸은 글자와 한 줄에 둔다. */
@@ -46,6 +54,8 @@
 
 /* 휴대폰에서는 조건이 목록을 밀어내지 않게 접어 두고 버튼으로 편다. */
 @media (max-width: 48rem) {
+  .fields select { min-height: 44px; }
+
   .toggle {
     display: inline-block;
   }

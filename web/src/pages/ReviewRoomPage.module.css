@@ -1,10 +1,10 @@
-/* 사진을 크게 보여 주려고 PageLayout의 바깥 여백을 지우고 화면 끝까지 쓴다(시안 "모노 인덱스").
+/* 사진 스테이지를 화면 끝까지 펼치도록 PageLayout의 바깥 여백을 상쇄한다.
    값은 PageLayout.module.css .main의 padding과 같다. 그쪽을 바꾸면 함께 바꾼다.
    --gutter는 이 화면 안쪽의 양옆 여백이다. 좁은 화면에서는 이 값 하나만 줄인다. */
 .room {
   --gutter: var(--space-4);
   margin: calc(var(--space-4) * -1);
-  background: var(--color-surface);
+  background: var(--color-bg);
 }
 
 /* 기본 바깥 여백을 지운다. :where는 우선순위가 0이라 아래 클래스의 여백이 이긴다. */
@@ -13,7 +13,7 @@
 }
 
 .room h1 {
-  font-size: var(--font-size-lg);
+  font-size: clamp(1.3rem, 1.8vw, 1.8rem);
   overflow-wrap: anywhere;
 }
 
@@ -68,25 +68,32 @@
 }
 
 .versionPicker select {
-  min-height: 44px;
+  min-height: 40px;
   padding: var(--space-2);
   border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius);
+  border-radius: var(--radius-pill);
   background: var(--color-surface);
   color: var(--color-text);
   font-weight: 400;
 }
 
 .status {
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-subtle);
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   font-size: var(--font-size-sm);
 }
 
-.status[data-current='true'],
+.status[data-current='true'] {
+  color: var(--color-accent-soft-text);
+}
+
 .status[data-approved='true'] {
-  color: var(--color-review-selected);
+  color: var(--color-ok);
+  background: var(--color-ok-soft);
 }
 
 .dot {
@@ -107,21 +114,10 @@
 }
 
 .notice {
-  margin: 0 var(--gutter) var(--space-3);
+  margin: 0;
   padding: var(--space-3);
   border-left: 2px solid var(--color-review-selected);
-  background: var(--color-bg);
-  font-size: var(--font-size-sm);
-}
-
-/* 설명, 게시 시각, 테스트 주소를 한 줄에 둔다. */
-.info {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2) var(--space-4);
-  padding: 0 var(--gutter) var(--space-3);
-  border-bottom: 1px solid var(--color-border);
+  background: var(--color-accent-soft);
   font-size: var(--font-size-sm);
 }
 
@@ -133,32 +129,6 @@
 
 .hint {
   color: var(--color-text-muted);
-}
-
-/* 왼쪽은 버전(설명, 화면 목록, 사진), 오른쪽은 쪽지 칸이다. 쪽지 칸은 버전을 불러오는 동안에도 그대로 남는다. */
-.stage {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 22.5rem;
-}
-
-.main {
-  min-width: 0;
-}
-
-/* 왼쪽 화면 목록, 가운데 큰 사진이다. */
-.workspace {
-  display: grid;
-  grid-template-columns: 11rem minmax(0, 1fr);
-  min-height: 74vh;
-}
-
-/* 쪽지 목록과, 고른 쪽지의 상세나 쓰기 칸이 위에서 아래로 놓인다. */
-.inspector {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  border-left: 1px solid var(--color-border);
-  background: var(--color-surface);
 }
 
 .panelMessage {
@@ -196,51 +166,6 @@
   }
 }
 
-.screens {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  margin: 0;
-  padding: var(--space-3) var(--space-2);
-  list-style: none;
-  border-right: 1px solid var(--color-border);
-  background: var(--color-bg);
-}
-
-.screens button {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  width: 100%;
-  min-height: 44px;
-  padding: var(--space-2);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-size: var(--font-size-sm);
-  text-align: left;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
-
-/* 지금 보고 있는 화면이다. 색만으로 구분하지 않게 굵기도 바꾼다.
-   outline은 키보드 포커스 표시가 쓰므로 선은 box-shadow로 한 겹 더 그린다. */
-.screens button[aria-pressed='true'] {
-  border-color: var(--color-review-selected);
-  box-shadow: inset 0 0 0 1px var(--color-review-selected);
-  font-weight: 600;
-}
-
-/* 웹 화면 사진은 위쪽이 중요해서 위에 맞춰 자른다. */
-.thumbnail {
-  width: 100%;
-  aspect-ratio: 2.2;
-  object-fit: cover;
-  object-position: top;
-  background: var(--color-canvas);
-}
-
 /* 안내·오류·불러오는 중 문구 */
 .message {
   display: flex;
@@ -252,70 +177,17 @@
 }
 
 /* 다른 화면으로 가는 링크라 Button 대신 Link를 주 버튼 모양으로 보인다.
-   값은 Button.module.css의 .button·.primary와 같다. 그쪽을 바꾸면 함께 바꾼다. */
+   공통 버튼의 크기와 색을 쓰고, 링크의 마우스 상태만 따로 지정한다. */
 .messageAction {
+  composes: button primary from '../components/Button.module.css';
   display: inline-flex;
   align-items: center;
-  min-height: 44px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  background: var(--color-accent);
-  color: var(--color-on-accent);
-  font-weight: 600;
   text-decoration: none;
 }
 
-/* 1200px 이하: 화면 목록이 작은 사진 없이 사진 위의 버튼 줄이 된다. */
-@media (max-width: 75rem) {
-  .workspace {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto 1fr;
-  }
-
-  .screens {
-    flex-direction: row;
-    flex-wrap: wrap;
-    padding: var(--space-3) var(--gutter);
-    border-right: 0;
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .screens button {
-    justify-content: center;
-  }
-
-  .thumbnail {
-    display: none;
-  }
-}
-
-/* 768px 이하: 양옆 여백을 줄여 사진을 조금 더 크게 보여 준다. 사진을 먼저 보여 주고 쪽지 칸은 그 아래에 둔다.
-   쪽지를 열면 쪽지 칸에는 그 쪽지만 보인다. */
-@media (max-width: 48rem) {
-  .room {
-    --gutter: var(--space-3);
-  }
-
-  .stage {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  /* 사진 아래에 쪽지 칸이 바로 오게, 넓은 화면용 최소 높이를 없앤다. 두면 사진 아래에 큰 빈칸이 생긴다. */
-  .workspace {
-    min-height: 0;
-  }
-
-  .inspector {
-    border-top: 1px solid var(--color-border);
-    border-left: 0;
-  }
-
-  /* 쪽지(article)를 열면 목록(section)을 감춘다. 사진 바로 아래에 쪽지 내용이 오고, "쪽지 닫기"를 누르면 목록이 돌아온다.
-     목록까지 두면 긴 쪽지 아래로 밀려서, 다른 쪽지를 고르려면 맨 아래까지 내려가야 한다. */
-  .inspector:has(> article) > section {
-    display: none;
-  }
+.messageAction:hover {
+  background: var(--color-accent-hover);
+  color: var(--color-on-accent);
 }
 
 /* 문장 속의 "최신 버전 보기"처럼 화면 상태를 바꾸는 버튼을 링크 모양으로 보인다. */
@@ -346,4 +218,210 @@
 /* 문단의 기본 바깥 여백을 지운다. 줄 사이는 위의 gap이 띄운다. */
 .approved p {
   margin: 0;
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 348px;
+  border-top: 1px solid var(--color-border);
+}
+
+.main, .workspace, .inspector {
+  min-width: 0;
+}
+
+.workspace {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.inspector {
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 18px;
+  padding: 10px var(--gutter);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+  font-size: var(--font-size-sm);
+}
+
+.versionInfo {
+  display: flex;
+  flex: 1 1 240px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.matPicker {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+}
+
+.matPicker button, .stripToggle {
+  min-height: 34px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  padding: 4px 12px;
+  color: var(--color-text);
+  background: transparent;
+  font: 600 0.8rem var(--font-family);
+  cursor: pointer;
+}
+
+.matPicker [aria-pressed='true'] {
+  background: var(--color-canvas-dark);
+  color: white;
+}
+
+.mat {
+  --color-canvas: var(--color-canvas-dark);
+  --mat-ink: var(--color-surface-subtle);
+  min-width: 0;
+  min-height: clamp(280px, 55vh, 640px);
+  background-color: var(--color-canvas);
+  background-image: radial-gradient(#a998841f 1px, transparent 1px);
+  background-size: 12px 12px;
+}
+
+.mat[data-mat='light'] {
+  --color-canvas: var(--color-canvas-light);
+  --mat-ink: var(--color-text-secondary);
+}
+
+.strip {
+  height: 82px;
+  padding: 4px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  background: var(--color-surface-subtle);
+  border-block: 1px solid var(--color-border);
+}
+
+.strip[data-expanded='false'] {
+  height: 42px;
+}
+
+.stripSummary {
+  flex: 1;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.stripToggle {
+  flex: none;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+}
+
+.screens {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px;
+  overflow-x: auto;
+  list-style: none;
+}
+
+.screens[hidden] { display: none; }
+.screens li { flex: none; }
+
+.screens button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 190px;
+  min-height: 48px;
+  padding: 5px 10px 5px 5px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.78rem;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.screens button[aria-pressed='true'] {
+  border-color: var(--color-review-selected);
+  box-shadow: inset 0 0 0 1px var(--color-review-selected);
+  background: var(--color-surface-note-selected);
+  font-weight: 600;
+}
+
+.screens button span {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screens strong { font-family: var(--font-mono); }
+
+.thumbnail {
+  width: 52px;
+  height: 38px;
+  flex: none;
+  object-fit: cover;
+  object-position: top;
+  border-radius: 6px;
+  background: var(--color-canvas-light);
+}
+
+/* 긴 사이트 화면은 매트 안에서 끝까지 읽고, 아래 화면 선택기는 손닿는 곳에 둔다. */
+@media (min-width: 960px) {
+  .main {
+    display: flex;
+    flex-direction: column;
+    max-height: 100svh;
+    position: sticky;
+    top: 0;
+    align-self: start;
+  }
+
+  /* 여러 줄인 설명은 그 자리에서 끝까지 읽고, 화면 목록은 매트 아래에 남긴다. */
+  .summary {
+    max-height: min(5lh, 20svh);
+    overflow-y: auto;
+  }
+
+  .workspace {
+    min-height: 0;
+  }
+
+  .mat {
+    min-height: min(55vh, 540px, 100%);
+    max-height: max(340px, calc(100svh - 290px));
+    overflow: auto;
+  }
+}
+
+@media (max-width: 959px) {
+  .stage { grid-template-columns: minmax(0, 1fr); }
+  .inspector { border-left: 0; border-top: 1px solid var(--color-border); }
+  .mat { min-height: 0; }
+  .matPicker button { min-height: 44px; }
+}
+
+@media (max-width: 768px) {
+  .room { --gutter: 16px; }
+  .inspector:has(> article) > section { display: none; }
 }

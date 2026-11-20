@@ -27,45 +27,59 @@
 }
 
 .rows {
-  padding: 0;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
   list-style: none;
 }
 
-/* 줄 전체가 버튼이다. 첫 줄은 번호와 제목이고, 상태와 처음 위치는 제목 아래에 한 줄씩 놓인다. */
+/* 첫 줄에 번호와 상태를 놓고, 제목과 안내는 카드의 전체 너비를 쓴다. */
 .rows button {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
   gap: var(--space-1) var(--space-2);
   width: 100%;
   min-height: 44px;
   padding: var(--space-3);
-  border: 0;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-note);
   color: var(--color-text);
   font-size: var(--font-size-sm);
   text-align: left;
   cursor: pointer;
 }
 
-.rows button > :nth-child(n + 3) {
+.rows button > [data-status] {
   grid-column: 2;
+  grid-row: 1;
+}
+
+.rows .hint {
+  grid-column: 1 / -1;
 }
 
 /* 지금 연 쪽지다. 색만으로 구분하지 않게 왼쪽 선과 굵기도 바꾼다. */
 .rows button[aria-pressed='true'] {
   border-left: 2px solid var(--color-review-selected);
   padding-left: calc(var(--space-3) - 2px);
-  background: var(--color-bg);
+  background: var(--color-surface-note-selected);
   font-weight: 600;
 }
 
 .number {
+  grid-column: 1;
+  grid-row: 1;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
 
 .title {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  font-weight: 600;
   overflow-wrap: anywhere;
 }
 
@@ -81,3 +95,25 @@
   margin-left: var(--space-2);
   font-size: var(--font-size-sm);
 }
+
+.rows li[data-complete='true'] button:not([aria-pressed='true']) {
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+}
+.progress { padding: 8px 16px 14px; font-size: var(--font-size-sm); }
+.progress label { display: flex; justify-content: space-between; }
+.progress strong { font: 600 .82rem var(--font-mono); }
+.progress progress {
+  display: block;
+  width: 100%;
+  height: 7px;
+  margin-top: 6px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  appearance: none;
+  background: var(--color-surface-subtle);
+}
+.progress progress::-webkit-progress-bar { background: var(--color-surface-subtle); }
+.progress progress::-webkit-progress-value { background: linear-gradient(90deg, var(--color-accent), var(--color-ok)); }
+.progress progress::-moz-progress-bar { background: linear-gradient(90deg, var(--color-accent), var(--color-ok)); }
