@@ -103,7 +103,7 @@ a:hover { color: var(--color-accent-soft-text); }
 .quiet-link { border-color: var(--color-border-strong); background: var(--color-surface); }
 .home { display: flex; flex-direction: column; gap: 36px; min-height: calc(100svh - 60px); padding: 32px; background: radial-gradient(circle at 75% 15%, #f4e2d0 0%, var(--color-bg) 55%); }
 .hero, .steps { width: 100%; max-width: 1136px; margin-inline: auto; }
-.hero { display: grid; margin-block-start: clamp(48px, 10vw, 144px); grid-template-columns: minmax(0, .84fr) minmax(0, 1.16fr); align-items: center; gap: 36px; }
+.hero { display: grid; margin-block-start: clamp(40px, calc(10vw - 8px), 136px); grid-template-columns: minmax(0, .84fr) minmax(0, 1.16fr); align-items: center; gap: 36px; }
 .hero-copy { display: grid; gap: 16px; }
 .hero h2 { font-size: clamp(2rem, 4.2vw, 2.5rem); line-height: 1.22; }
 .lead { color: var(--color-text-secondary); max-width: 38em; }

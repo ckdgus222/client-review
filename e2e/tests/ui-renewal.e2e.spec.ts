@@ -1175,9 +1175,9 @@ test('이전 스타일을 저장한 브라우저에서도 공개 페이지가 �
   expect(naturalRatio).toBeLessThanOrEqual(1.1)
 
   for (const { expectedHeroGap, ...viewport } of [
-    { width: 1728, height: 997, expectedHeroGap: 176 },
-    { width: 1440, height: 900, expectedHeroGap: 176 },
-    { width: 390, height: 844, expectedHeroGap: 76 },
+    { width: 1728, height: 997, expectedHeroGap: 168 },
+    { width: 1440, height: 900, expectedHeroGap: 168 },
+    { width: 390, height: 844, expectedHeroGap: 68 },
   ]) {
     await page.setViewportSize(viewport)
     for (const element of [title, example, photo, checklist, progress, ...await steps.all()]) {
