@@ -4,6 +4,8 @@
   gap: var(--space-2);
   padding: var(--space-3);
   border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
 }
 
 .review :where(p) {
