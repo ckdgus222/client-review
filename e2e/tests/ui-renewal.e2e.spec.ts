@@ -1188,6 +1188,13 @@ test('이전 스타일을 저장한 브라우저에서도 공개 페이지가 �
     const exampleBox = (await example.boundingBox())!
     const photoBox = (await photo.boundingBox())!
     const checklistBox = (await checklist.boundingBox())!
+    const headerBox = (await page.getByRole('banner').boundingBox())!
+    const heroBox = (await page.locator('.hero').boundingBox())!
+    const headerHeroGap = heroBox.y - (headerBox.y + headerBox.height)
+    const expectedHeroGap = (viewport.width <= 620 ? 28 : 32)
+      + Math.min(72, Math.max(24, viewport.width * 0.05))
+    expect(Math.abs(headerHeroGap - expectedHeroGap), `${viewport.width}px에서 헤더와 hero 사이 여백`)
+      .toBeLessThanOrEqual(2)
     const stepBoxes = await steps.evaluateAll((items) => items.map((item) => {
       const { x, y, width, height } = item.getBoundingClientRect()
       return { x, y, width, height }
