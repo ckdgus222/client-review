@@ -1903,3 +1903,43 @@ test('비교 툴바는 재요청 사유와 오류를 펼치고 쪽지 상세와 
   expect(captionBox.y - summaryBox.y - summaryBox.height).toBeLessThanOrEqual(48)
   await expectNoHorizontalOverflow(page, 390)
 })
+
+test('비교와 확인서의 돌아가기 링크는 키보드로 열리고 확인서 인쇄에서는 숨는다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const { room, issue, latest } = await prepareComparison()
+  await loginAs(room.client.id)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(`/app/issues/${issue.id}/compare`)
+  const back = page.getByRole('link', { name: '검수실로 돌아가기', exact: true })
+  await expect(back).toHaveAttribute('href', `/app/projects/${room.project.id}?issue=${issue.id}`)
+  await expectKeyboardLink(page, back)
+  const compareStyle = await back.evaluate((element) => {
+    const style = getComputedStyle(element)
+    return { background: style.backgroundColor, border: style.border, radius: style.borderRadius, padding: style.padding }
+  })
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(`/app/projects/${room.project.id}?issue=${issue.id}`)
+  await expect(page.getByRole('article', { name: `쪽지 #${issue.number}`, exact: true }).getByRole('heading', { name: issue.title, exact: true })).toBeVisible()
+
+  await db.issue.update({ where: { id: issue.id }, data: { status: 'VERIFIED' } })
+  await approveRoom({ ...room, version: latest })
+  await page.goto(`/app/versions/${latest.id}/certificate`)
+  await expect(back).toHaveAttribute('href', `/app/projects/${room.project.id}?version=${latest.id}`)
+  await expectKeyboardLink(page, back)
+  expect(await back.evaluate((element) => {
+    const style = getComputedStyle(element)
+    return { background: style.backgroundColor, border: style.border, radius: style.borderRadius, padding: style.padding }
+  })).toEqual(compareStyle)
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(`/app/projects/${room.project.id}?version=${latest.id}`)
+  await expect(page.getByRole('combobox', { name: '버전', exact: true })).toHaveValue(latest.id)
+  await page.goto(`/app/versions/${latest.id}/certificate`)
+  await expect(page.getByRole('button', { name: 'PDF로 저장', exact: true })).toBeVisible()
+  await page.emulateMedia({ media: 'print' })
+  await expect(page.getByRole('banner', { includeHidden: true })).toBeHidden()
+  await expect(page.getByRole('link', { name: '검수실로 돌아가기', exact: true, includeHidden: true })).toBeHidden()
+  await expect(page.getByRole('button', { name: 'PDF로 저장', exact: true, includeHidden: true })).toBeHidden()
+  await expect(page.getByRole('article')).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+  await expect(page.getByRole('heading', { name: '검수 확인서', exact: true })).toBeVisible()
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+})
