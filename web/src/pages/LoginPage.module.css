@@ -25,6 +25,7 @@
 .preview img {
   display: block;
   width: 100%;
+  height: auto;
   max-width: 610px;
   max-height: 43vh;
   object-fit: cover;
