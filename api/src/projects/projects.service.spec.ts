@@ -136,7 +136,7 @@ describe('ProjectsService', () => {
     20_000,
   );
 
-  it('create는 프로젝트와 만든 사람의 DEVELOPER 멤버 줄을 함께 저장하고 정해진 네 칸만 돌려준다', async () => {
+  it('create는 프로젝트와 만든 사람의 DEVELOPER 멤버 줄을 함께 저장하고 정해진 목록 필드와 빈 요약을 돌려준다', async () => {
     const result = await service.create(userId, '쇼핑몰 리뉴얼');
 
     expect(result).toEqual({
@@ -145,6 +145,10 @@ describe('ProjectsService', () => {
       myRole: 'DEVELOPER',
       status: 'ACTIVE',
       purgeAfter: null,
+      currentVersion: null,
+      screenCount: 0,
+      thumbnailAssetId: null,
+      issueCounts: { total: 0, resolved: 0, readyForReview: 0 },
       createdAt: expect.any(Date),
     });
     expect(await prisma.project.findMany()).toEqual([
@@ -222,6 +226,10 @@ describe('ProjectsService', () => {
         myRole: 'CLIENT',
         status: 'ACTIVE',
         purgeAfter: null,
+        currentVersion: null,
+        screenCount: 0,
+        thumbnailAssetId: null,
+        issueCounts: { total: 0, resolved: 0, readyForReview: 0 },
         createdAt: clientProject.createdAt,
       },
       {
@@ -230,6 +238,10 @@ describe('ProjectsService', () => {
         myRole: 'DEVELOPER',
         status: 'ACTIVE',
         purgeAfter: null,
+        currentVersion: null,
+        screenCount: 0,
+        thumbnailAssetId: null,
+        issueCounts: { total: 0, resolved: 0, readyForReview: 0 },
         createdAt: developerProject.createdAt,
       },
     ]);
@@ -491,5 +503,111 @@ describe('ProjectsService', () => {
     await service.create(userId, '내 프로젝트');
 
     await expect(service.getForMember(missingId, userId)).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('ProjectsService 목록 일괄 집계', () => {
+  const createdAt = new Date('2026-01-01T00:00:00Z');
+  const members = [
+    {
+      role: 'DEVELOPER',
+      project: {
+        id: 'first',
+        name: '첫 프로젝트',
+        createdAt,
+        status: 'ACTIVE',
+        deleteRequestedAt: null,
+        currentVersion: null,
+      },
+    },
+    {
+      role: 'CLIENT',
+      project: {
+        id: 'second',
+        name: '둘째 프로젝트',
+        createdAt,
+        status: 'ARCHIVED',
+        deleteRequestedAt: null,
+        currentVersion: null,
+      },
+    },
+    {
+      role: 'DEVELOPER',
+      project: {
+        id: 'empty',
+        name: '쪽지 없는 프로젝트',
+        createdAt,
+        status: 'ACTIVE',
+        deleteRequestedAt: null,
+        currentVersion: null,
+      },
+    },
+  ];
+
+  it('빈 목록은 groupBy를 호출하지 않는다', async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const groupBy = vi.fn();
+    const tx = { projectMember: { findMany }, issue: { groupBy } };
+    const transaction = vi.fn(async (read: (connection: typeof tx) => Promise<unknown>) => read(tx));
+    const service = new ProjectsService({ $transaction: transaction } as unknown as PrismaService);
+
+    await expect(service.listMine('user')).resolves.toEqual([]);
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(groupBy).not.toHaveBeenCalled();
+    expect(transaction).toHaveBeenCalledExactlyOnceWith(expect.any(Function), { isolationLevel: 'RepeatableRead' });
+  });
+
+  it('여러 프로젝트는 허가된 ID만으로 groupBy를 한 번 호출하고 다섯 상태를 ID별로 합친다', async () => {
+    const findMany = vi.fn().mockResolvedValue(members);
+    const groupBy = vi.fn().mockResolvedValue([
+      { projectId: 'first', status: 'OPEN', _count: { _all: 2 } },
+      { projectId: 'second', status: 'WITHDRAWN', _count: { _all: 7 } },
+      { projectId: 'first', status: 'IN_PROGRESS', _count: { _all: 3 } },
+      { projectId: 'first', status: 'READY_FOR_REVIEW', _count: { _all: 4 } },
+      { projectId: 'second', status: 'READY_FOR_REVIEW', _count: { _all: 1 } },
+      { projectId: 'first', status: 'VERIFIED', _count: { _all: 5 } },
+      { projectId: 'first', status: 'WITHDRAWN', _count: { _all: 6 } },
+    ]);
+    const tx = { projectMember: { findMany }, issue: { groupBy } };
+    const transaction = vi.fn(async (read: (connection: typeof tx) => Promise<unknown>) => read(tx));
+    const service = new ProjectsService({ $transaction: transaction } as unknown as PrismaService);
+
+    const result = await service.listMine('user');
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          userId: 'user',
+          revokedAt: null,
+          OR: [{ role: 'DEVELOPER' }, { project: { status: { not: 'DELETE_PENDING' } } }],
+        },
+      }),
+    );
+    expect(groupBy).toHaveBeenCalledExactlyOnceWith({
+      by: ['projectId', 'status'],
+      where: { projectId: { in: ['first', 'second', 'empty'] } },
+      _count: { _all: true },
+    });
+    expect(transaction).toHaveBeenCalledExactlyOnceWith(expect.any(Function), { isolationLevel: 'RepeatableRead' });
+    expect(result).toEqual(
+      members.map(({ project, role }, index) => ({
+        id: project.id,
+        name: project.name,
+        createdAt,
+        status: project.status,
+        myRole: role,
+        purgeAfter: null,
+        currentVersion: null,
+        screenCount: 0,
+        thumbnailAssetId: null,
+        issueCounts: [
+          { total: 20, resolved: 11, readyForReview: 4 },
+          { total: 8, resolved: 7, readyForReview: 1 },
+          { total: 0, resolved: 0, readyForReview: 0 },
+        ][index],
+      })),
+    );
   });
 });

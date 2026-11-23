@@ -90,15 +90,15 @@ const Compare = ({ id }: { id: string }) => {
 
   const roomUrl = `/projects/${issue.projectId}?issue=${issue.id}`
   const heading = (
-    <>
-      <Link to={roomUrl}>검수실로 돌아가기</Link>
+    <div className={styles.top}>
       <div className={styles.heading}>
         <h1>
           #{issue.number} {issue.title}
         </h1>
         <StatusBadge status={issue.status} />
       </div>
-    </>
+      <Link className={styles.back} to={roomUrl}>검수실로 돌아가기</Link>
+    </div>
   )
   // 가장 최근 고쳤어요의 사진과 비교한다. 고쳤어요가 없거나 화면 없이 보낸 고쳤어요면 비교할 사진이 없다.
   const latest = issue.attempts[issue.attempts.length - 1]
@@ -119,26 +119,26 @@ const Compare = ({ id }: { id: string }) => {
   return (
     <section className={styles.page}>
       {heading}
-      <p className={styles.summary}>
-        <strong>고친 내용</strong> {latest.summary}
-      </p>
-      {/* 요청에 보내는 "보고 있던 버전"은 보고 있는 고쳤어요 줄의 버전이다. 그사이 새 버전이 게시됐으면 서버가 409로 답한다. */}
-      <IssueReview
-        issue={issue}
-        versionId={latest.versionId}
-        canWrite={canReviewNow}
-        reviewOnly
-        fetchCount={fetchCount}
-        // 누른 때의 차례를 넘긴다(applyChange).
-        onChanged={(changed) => applyChange(changed, turn)}
-        onRefresh={startTurn}
-        onGoLatest={doNothing}
-        versionChangedNotice={
-          <>
-            새 버전이 올라왔어요. <Link to={roomUrl}>검수실에서 최신 버전 보기</Link>
-          </>
-        }
-      />
+      <div className={styles.toolbar}>
+        <p className={styles.summary}>
+          <strong>고친 내용</strong> {latest.summary}
+        </p>
+        <IssueReview
+          issue={issue}
+          versionId={latest.versionId}
+          canWrite={canReviewNow}
+          reviewOnly
+          fetchCount={fetchCount}
+          onChanged={(changed) => applyChange(changed, turn)}
+          onRefresh={startTurn}
+          onGoLatest={doNothing}
+          versionChangedNotice={
+            <>
+              새 버전이 올라왔어요. <Link to={roomUrl}>검수실에서 최신 버전 보기</Link>
+            </>
+          }
+        />
+      </div>
       <div className={styles.photos}>
         <div className={styles.pane}>
           {origin ? (

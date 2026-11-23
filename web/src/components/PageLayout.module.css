@@ -74,6 +74,30 @@
   padding: clamp(22px, 3.5vw, 56px);
 }
 
+@media screen and (min-width: 960px) {
+  .header:has(+ .main [data-layout='split-login']),
+  .header:has(+ .main [data-layout='review-room']) {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: max-content;
+    z-index: 1;
+    background: transparent;
+    border: 0;
+  }
+
+  .header:has(+ .main [data-layout='split-login']) .brand {
+    color: var(--color-bg);
+  }
+
+  .header:has(+ .main [data-layout='review-room']) {
+    padding-inline-end: 0;
+  }
+
+  .main:has(> [data-layout='split-login']) {
+    padding: 0;
+  }
+}
+
 @media (max-width: 959px) {
   .workspace {
     display: block;

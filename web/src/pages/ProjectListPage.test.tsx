@@ -47,6 +47,10 @@ const projects: MyProject[] = [
     createdAt: '2026-11-05T00:00:00.000Z',
     status: 'ACTIVE',
     purgeAfter: null,
+    currentVersion: null,
+    screenCount: 0,
+    thumbnailAssetId: null,
+    issueCounts: { total: 0, resolved: 0, readyForReview: 0 },
   },
   {
     id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
@@ -55,6 +59,10 @@ const projects: MyProject[] = [
     createdAt: '2026-11-04T00:00:00.000Z',
     status: 'ACTIVE',
     purgeAfter: null,
+    currentVersion: null,
+    screenCount: 0,
+    thumbnailAssetId: null,
+    issueCounts: { total: 0, resolved: 0, readyForReview: 0 },
   },
 ]
 
@@ -275,12 +283,21 @@ describe('ProjectListPage 목록', () => {
 
     const group = await screen.findByRole('region', { name: '진행 중' })
     const list = within(group).getByRole('list')
-    const links = within(list).getAllByRole('link')
+    const rows = within(list).getAllByRole('listitem')
+    expect(rows).toHaveLength(projects.length)
+    const links = rows.map((row, index) => within(row).getByRole('link', { name: projects[index].name }))
+    expect(within(list).getAllByRole('link')).toHaveLength(projects.length * 2)
     const prefix = basename === '/' ? '' : basename
     expect(links.map((link) => link.textContent)).toEqual(projects.map((project) => project.name))
     expect(links.map((link) => link.getAttribute('href'))).toEqual(
       projects.map((project) => `${prefix}/projects/${project.id}`),
     )
+    rows.forEach((row, index) => {
+      const quick = within(row).getByRole('link', { name: index === 0 ? '검수실' : '준비' })
+      expect(within(row).getAllByRole('link', { name: projects[index].name })).toHaveLength(1)
+      expect(within(row).getAllByRole('link')).toHaveLength(2)
+      expect(quick.getAttribute('href')).toBe(`${prefix}/projects/${projects[index].id}${index === 0 ? '' : '/draft'}`)
+    })
     expect(listProjects).toHaveBeenCalledExactlyOnceWith()
     expect(screen.queryByText('아직 프로젝트가 없어요.')).toBeNull()
     expect(screen.queryByText('불러오는 중이에요.')).toBeNull()
@@ -685,10 +702,32 @@ describe('ProjectListPage 보관과 삭제', () => {
       '삭제 대기',
     ])
     const active = within(screen.getByRole('region', { name: '진행 중' }))
-    expect(active.getAllByRole('link').map((link) => link.textContent)).toEqual([projects[0].name, anotherActive.name])
+    expect(active.getAllByRole('link').map((link) => link.textContent)).toEqual([
+      projects[0].name,
+      '검수실',
+      anotherActive.name,
+      '검수실',
+    ])
     const archived = within(screen.getByRole('region', { name: '보관함' }))
-    expect(archived.getAllByRole('link').map((link) => link.textContent)).toEqual([archivedProject.name])
-    expect(archived.getByRole('link').getAttribute('href')).toBe(`/app/projects/${archivedProject.id}`)
+    expect(archived.getAllByRole('link').map((link) => link.textContent)).toEqual([archivedProject.name, '검수실'])
+    for (const [group, expected] of [
+      [active, [projects[0], anotherActive]],
+      [archived, [archivedProject]],
+    ] as const) {
+      expect(group.getAllByRole('listitem')).toHaveLength(expected.length)
+      group.getAllByRole('listitem').forEach((row, index) => {
+        const item = within(row)
+        expect(item.getAllByRole('link', { name: expected[index].name })).toHaveLength(1)
+        expect(item.getAllByRole('link')).toHaveLength(2)
+        expect(item.getByRole('link', { name: expected[index].name }).getAttribute('href')).toBe(
+          `/app/projects/${expected[index].id}`,
+        )
+        expect(item.getByRole('link', { name: '검수실' }).getAttribute('href')).toBe(
+          `/app/projects/${expected[index].id}`,
+        )
+        expect(item.queryByRole('link', { name: '준비' })).toBeNull()
+      })
+    }
     const deleted = within(screen.getByRole('region', { name: '삭제 대기' }))
     expect(deleted.getAllByRole('link').map((link) => link.textContent)).toEqual([deletedProject.name])
     expect(deleted.getByRole('link').getAttribute('href')).toBe(`/app/projects/${deletedProject.id}`)
@@ -964,5 +1003,123 @@ describe('ProjectListPage 보관과 삭제', () => {
     expect(listProjects).toHaveBeenCalledTimes(2)
     expect(screen.queryByText('아직 프로젝트가 없어요.')).toBeNull()
     expect(screen.getByRole('heading', { name: '내 프로젝트' })).toBeDefined()
+  })
+})
+
+describe('ProjectListPage 워크시트', () => {
+  it('게시 0번·2차·빈 요약과 프로젝트별 진행률을 정확히 표시한다', async () => {
+    const rows: MyProject[] = [
+      {
+        ...projects[0],
+        id: 'zero',
+        name: '첫 게시',
+        currentVersion: { id: 'v0', number: 0, status: 'IN_REVIEW' },
+        screenCount: 1,
+        thumbnailAssetId: 'photo-zero',
+        issueCounts: { total: 5, resolved: 2, readyForReview: 1 },
+      },
+      {
+        ...projects[1],
+        id: 'done',
+        name: '완료한 작업',
+        currentVersion: { id: 'v2', number: 2, status: 'APPROVED' },
+        screenCount: 3,
+        thumbnailAssetId: 'photo-two',
+        issueCounts: { total: 2, resolved: 2, readyForReview: 0 },
+      },
+      { ...projects[1], id: 'empty', name: '게시 전 작업' },
+      {
+        ...projects[1],
+        id: 'archive',
+        name: '보관한 작업',
+        status: 'ARCHIVED',
+        currentVersion: { id: 'old', number: 1, status: 'IN_REVIEW' },
+        issueCounts: { total: 9, resolved: 0, readyForReview: 9 },
+      },
+    ]
+    vi.mocked(listProjects).mockResolvedValueOnce(rows)
+    renderProjectList()
+
+    const active = await screen.findByRole('region', { name: '진행 중' })
+    const items = within(active).getAllByRole('listitem')
+    expect(screen.getByText('참여하고 있는 프로젝트 4개 · 진행 중 3개 · 검수 중 1개 · 확인 요청 1건')).toBeDefined()
+    expect(within(items[0]).getByText('초안', { exact: false })).toBeDefined()
+    expect(within(items[0]).queryByText('아직 게시 전')).toBeNull()
+    expect(within(items[0]).getByText('미해결 3건 (확인 요청 1)')).toBeDefined()
+    expect(within(items[0]).getByRole<HTMLProgressElement>('progressbar', { name: '검수 진행률' }).value).toBe(2)
+    expect(within(items[0]).getByRole<HTMLProgressElement>('progressbar', { name: '검수 진행률' }).max).toBe(5)
+    expect(items[0].querySelector('img')?.getAttribute('src')).toBe('/api/assets/photo-zero')
+    expect(items[0].querySelector('img')?.getAttribute('alt')).toBe('')
+    expect(within(items[1]).getByText('모든 검수 완료 (100%)')).toBeDefined()
+    expect(within(items[1]).getByText('승인됨')).toBeDefined()
+    expect(within(items[1]).getByRole('link', { name: '확인서' }).getAttribute('href')).toBe('/versions/v2/certificate')
+    expect(within(items[2]).getByText(/아직 게시 전/)).toBeDefined()
+    expect(within(items[2]).getByText('쪽지 없음')).toBeDefined()
+    expect(within(items[2]).queryByRole('progressbar')).toBeNull()
+    expect(items[2].querySelector('img')).toBeNull()
+    expect(within(items[2]).getByRole('link', { name: '준비' }).getAttribute('href')).toBe('/projects/empty/draft')
+  })
+
+  it.each(['/', '/app'])('basename %s에서 계정의 생성 권한과 행의 이동 권한을 구분한다', async (basename) => {
+    vi.mocked(getMe).mockResolvedValueOnce({ ...user, canCreateProjects: false })
+    vi.mocked(listProjects).mockResolvedValueOnce([
+      projects[0],
+      projects[1],
+      {
+        ...projects[0],
+        id: 'approved',
+        name: '승인된 고객 작업',
+        status: 'ARCHIVED',
+        currentVersion: { id: 'approved-version', number: 2, status: 'APPROVED' },
+      },
+    ])
+    renderProjectList(basename)
+    const active = await screen.findByRole('region', { name: '진행 중' })
+    const prefix = basename === '/' ? '' : basename
+    expect(screen.queryByRole('button', { name: '만들기' })).toBeNull()
+    expect(within(active).getByRole('link', { name: '검수실' }).getAttribute('href')).toBe(
+      `${prefix}/projects/${projects[0].id}`,
+    )
+    expect(within(active).getByRole('link', { name: '준비' }).getAttribute('href')).toBe(
+      `${prefix}/projects/${projects[1].id}/draft`,
+    )
+    const archived = within(screen.getByRole('region', { name: '보관함' }))
+    expect(archived.getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+      ['승인된 고객 작업', `${prefix}/projects/approved`],
+      ['확인서', `${prefix}/versions/approved-version/certificate`],
+    ])
+  })
+
+  it('실패한 장식용 썸네일을 제거해도 프로젝트 이름과 이동 링크를 유지한다', async () => {
+    vi.mocked(listProjects).mockResolvedValueOnce([{ ...projects[0], thumbnailAssetId: 'broken-photo' }])
+    renderProjectList()
+    const group = await screen.findByRole('region', { name: '진행 중' })
+    const row = within(group).getByRole('listitem')
+    const image = row.querySelector('img')!
+    expect(image.getAttribute('alt')).toBe('')
+    const placeholder = image.parentElement!
+    expect(placeholder.getAttribute('aria-hidden')).toBe('true')
+    fireEvent.error(image)
+    expect(row.querySelector('img')).toBeNull()
+    expect(placeholder.childElementCount).toBe(1)
+    expect(
+      within(row)
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual([projects[0].name, '검수실'])
+  })
+
+  it('보관함에만 확인 요청이 있으면 상단에 진행 중 검수 수치를 덧붙이지 않는다', async () => {
+    vi.mocked(listProjects).mockResolvedValueOnce([
+      projects[0],
+      {
+        ...projects[1],
+        status: 'ARCHIVED',
+        currentVersion: { id: 'archived', number: 0, status: 'IN_REVIEW' },
+        issueCounts: { total: 2, resolved: 0, readyForReview: 2 },
+      },
+    ])
+    renderProjectList()
+    expect(await screen.findByText('참여하고 있는 프로젝트 2개', { exact: true })).toBeDefined()
   })
 })

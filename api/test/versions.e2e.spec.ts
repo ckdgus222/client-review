@@ -527,10 +527,22 @@ describe('버전 API (e2e)', () => {
   it('화면 상세는 업로드 순서나 이름순 대신 화면을 만든 순서이고 숨긴 시각도 돌려준다', async () => {
     const draft = await createDraft();
     const newer = await prisma.screen.create({
-      data: { projectId, name: '가', viewport: 'PC', createdAt: new Date('2026-01-03T00:00:00Z') },
+      data: {
+        id: '00000000-0000-4000-8000-000000000002',
+        projectId,
+        name: '가',
+        viewport: 'PC',
+        createdAt: new Date('2026-01-03T00:00:00Z'),
+      },
     });
     const older = await prisma.screen.create({
-      data: { projectId, name: '나', viewport: 'MOBILE', createdAt: new Date('2026-01-01T00:00:00Z') },
+      data: {
+        id: '00000000-0000-4000-8000-000000000003',
+        projectId,
+        name: '나',
+        viewport: 'MOBILE',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      },
     });
     const firstUpload = await putPhoto(draft.body.id, newer.id).attach('file', photo, 'newer.png').expect(200);
     const secondUpload = await putPhoto(draft.body.id, older.id).attach('file', photo, 'older.png').expect(200);
@@ -550,6 +562,52 @@ describe('버전 API (e2e)', () => {
         { screenId: newer.id, name: '가', viewport: 'PC', hiddenAt: null, asset: firstUpload.body.screens[0].asset },
       ],
     });
+  });
+
+  it('화면 등록 시각이 같으면 역순 업로드해도 화면 ID 오름차순이고 게시 뒤 첫 이름표를 숨겨도 사진과 순서를 유지한다', async () => {
+    const draft = await createDraft();
+    const createdAt = new Date('2026-01-01T00:00:00Z');
+    const higherId = await prisma.screen.create({
+      data: { id: '00000000-0000-4000-8000-000000000003', projectId, name: '가', viewport: 'PC', createdAt },
+    });
+    const lowerId = await prisma.screen.create({
+      data: { id: '00000000-0000-4000-8000-000000000002', projectId, name: '나', viewport: 'MOBILE', createdAt },
+    });
+    const firstUpload = await putPhoto(draft.body.id, higherId.id).attach('file', photo, 'higher.png').expect(200);
+    const secondUpload = await putPhoto(draft.body.id, lowerId.id).attach('file', photo, 'lower.png').expect(200);
+    const expectedScreens = [
+      {
+        screenId: lowerId.id,
+        name: '나',
+        viewport: 'MOBILE',
+        hiddenAt: null,
+        asset: secondUpload.body.screens.find((screen: { screenId: string }) => screen.screenId === lowerId.id).asset,
+      },
+      {
+        screenId: higherId.id,
+        name: '가',
+        viewport: 'PC',
+        hiddenAt: null,
+        asset: firstUpload.body.screens[0].asset,
+      },
+    ];
+    await getDetail(draft.body.id)
+      .expect(200)
+      .expect({ ...draft.body, screens: expectedScreens });
+
+    const published = await post(`/api/versions/${draft.body.id}/publish`).expect(200);
+    expect(published.body.screens).toEqual(expectedScreens);
+    await getDetail(draft.body.id, clientCookie).expect(200).expect(published.body);
+
+    const hidden = await post(`/api/screens/${lowerId.id}/hide`).expect(200);
+    expect(hidden.body.hiddenAt).toEqual(expect.any(String));
+    expect(new Date(hidden.body.hiddenAt).toISOString()).toBe(hidden.body.hiddenAt);
+    await getDetail(draft.body.id, clientCookie)
+      .expect(200)
+      .expect({
+        ...published.body,
+        screens: [{ ...expectedScreens[0], hiddenAt: hidden.body.hiddenAt }, expectedScreens[1]],
+      });
   });
 
   it('2차 초안은 숨긴 화면을 빼고 같은 사진을 복사하며 바꾼 화면만 새 사진을 쓴다', async () => {

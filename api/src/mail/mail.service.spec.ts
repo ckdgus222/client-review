@@ -131,7 +131,10 @@ describe('MailService.sendLoginCode', () => {
     expect(transport).toHaveBeenCalledExactlyOnceWith({
       to: 'login@example.com',
       subject: '[Client Review] 로그인 코드',
-      text: expect.stringContaining('000042'),
+      text:
+        'Client Review 로그인 화면에 아래 6자리 코드를 입력해 주세요.\n\n' +
+        '000042\n\n' +
+        '이 코드는 발급 후 10분간 유효합니다. 로그인을 요청하지 않으셨다면 이 메일을 무시해 주세요.',
     });
     expect(transport.mock.calls[0][0].text).toContain('10분');
   });

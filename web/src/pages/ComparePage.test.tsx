@@ -860,6 +860,7 @@ describe('ComparePage 새로 불러오기와 이동', () => {
     renderCompare()
     fireEvent.click(await screen.findByRole('button', { name: '확인 완료' }))
     await screen.findByText(unconfirmedMessage)
+    await waitFor(() => expect(getIssue).toHaveBeenCalledTimes(2))
     await act(async () => pending.reject(error))
     expect(screen.getByRole('heading', { name: '#14 주문 버튼을 옮겨 주세요' })).toBeDefined()
     expect(screen.getAllByRole('img')).toHaveLength(2)
@@ -875,6 +876,7 @@ describe('ComparePage 새로 불러오기와 이동', () => {
     renderCompare()
     fireEvent.click(await screen.findByRole('button', { name: '확인 완료' }))
     await screen.findByText(unconfirmedMessage)
+    await waitFor(() => expect(getIssue).toHaveBeenCalledTimes(2))
     expect(screen.getByRole('heading', { name: '#14 주문 버튼을 옮겨 주세요' })).toBeDefined()
     expect(screen.getAllByRole('img')).toHaveLength(2)
 

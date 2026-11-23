@@ -11,8 +11,8 @@
   justify-content: center;
   gap: 24px;
   padding: clamp(36px, 5vw, 88px);
-  background: var(--color-canvas-dark);
-  color: var(--color-bg);
+  background: var(--color-surface-subtle);
+  color: var(--color-text);
 }
 
 .preview h2 {
@@ -25,12 +25,23 @@
 .preview img {
   display: block;
   width: 100%;
+  height: auto;
   max-width: 610px;
   max-height: 43vh;
   object-fit: cover;
   object-position: top;
   border-radius: var(--radius-sm);
-  box-shadow: 0 14px 35px #0005;
+  box-shadow: 0 14px 35px #412d1b1a;
+}
+
+@media screen and (min-width: 960px) {
+  .layout { min-height: 100dvh; margin: 0; }
+  .preview {
+    min-height: 100dvh;
+    padding-block-start: max(64px, 5vw);
+    background: var(--color-canvas-dark);
+    color: var(--color-bg);
+  }
 }
 
 .form {

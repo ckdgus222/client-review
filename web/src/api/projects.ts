@@ -1,4 +1,5 @@
 import { apiGet, apiPost } from './client.ts'
+import type { VersionStatus } from './versions.ts'
 
 export type ProjectRole = 'DEVELOPER' | 'CLIENT'
 export type Viewport = 'PC' | 'MOBILE'
@@ -13,6 +14,10 @@ export type MyProject = {
   createdAt: string
   status: ProjectStatus
   purgeAfter: string | null
+  currentVersion: { id: string; number: number; status: Exclude<VersionStatus, 'DRAFT'> } | null
+  screenCount: number
+  thumbnailAssetId: string | null
+  issueCounts: { total: number; resolved: number; readyForReview: number }
 }
 // 서버의 클라이언트 정원과 같다(전체 기획 5장). 바꾸면 서버도 함께 바꾼다.
 export const MAX_CLIENTS = 5

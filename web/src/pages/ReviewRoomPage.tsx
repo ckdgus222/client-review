@@ -836,7 +836,7 @@ const ReviewRoom = ({ id }: { id: string }) => {
   }
 
   return (
-    <section className={styles.room}>
+    <section className={styles.room} data-layout="review-room">
       <div className={styles.top}>
         <div className={styles.heading}>
           <h1>{project.name}</h1>
