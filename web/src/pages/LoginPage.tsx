@@ -89,7 +89,7 @@ export const LoginPage = () => {
 
   // noValidate: 브라우저 기본 검사 말풍선 대신 우리 문구를 입력칸 아래에 보여 준다.
   return (
-    <div className={styles.layout}>
+    <div className={styles.layout} data-layout="split-login">
       <aside className={styles.preview} aria-label="서비스 소개">
         <h2>비밀번호 없이,<br />이메일 코드 한 번으로.</h2>
         <img src={shopScreen} width="880" height="650" alt="검수할 쇼핑몰 상품 상세 화면 예시" />

@@ -1683,3 +1683,53 @@ test('390px에서 긴 프로젝트 이름과 실패한 썸네일이 있어도 �
     await page.goto('/app/')
   }
 })
+
+test('로그인에서 PC 브랜드는 전체 높이의 어두운 패널 위에 있고 모바일은 크림 헤더를 쓴다', async ({ page }) => {
+  await page.goto('/app/login')
+  const layout = page.locator('[data-layout="split-login"]')
+  const banner = page.getByRole('banner')
+  const brand = banner.getByText('Client Review', { exact: true })
+  const preview = page.getByRole('complementary', { name: '서비스 소개', includeHidden: true })
+  const email = page.getByRole('textbox', { name: '이메일', exact: true })
+  const form = page.locator('form').filter({ has: email })
+  await expect(layout).toHaveCount(1)
+  await expect(banner).toHaveCount(1)
+  await expect(brand).toHaveCount(1)
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+  for (const width of [960, 1440, 959, 390]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await expect(brand).toBeInViewport()
+    await expect(email).toBeVisible()
+    await expect(page.getByRole('group', { name: '로그인 단계', exact: true })).toBeVisible()
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(251, 247, 242)')
+    await expectNoHorizontalOverflow(page, width)
+    const brandBox = (await brand.boundingBox())!
+    const formBox = (await form.boundingBox())!
+    if (width < 960) {
+      await expect(preview).toBeHidden()
+      await expect(banner).toHaveCSS('background-color', 'rgb(251, 247, 242)')
+      const headerBox = (await banner.boundingBox())!
+      expect(headerBox.y + headerBox.height).toBeLessThanOrEqual(formBox.y)
+      expect(Math.abs(formBox.x + formBox.width / 2 - width / 2)).toBeLessThanOrEqual(2)
+      continue
+    }
+    await expect(preview).toBeVisible()
+    await expect(preview).toHaveCSS('background-color', 'rgb(35, 30, 27)')
+    await expect(brand).toHaveCSS('color', 'rgb(251, 247, 242)')
+    const panel = (await preview.boundingBox())!
+    expect(Math.abs(panel.y)).toBeLessThanOrEqual(1)
+    expect(panel.height).toBeGreaterThanOrEqual(900)
+    expect(brandBox.x).toBeGreaterThanOrEqual(panel.x)
+    expect(brandBox.x + brandBox.width).toBeLessThanOrEqual(panel.x + panel.width)
+    expect(brandBox.y).toBeGreaterThanOrEqual(panel.y)
+    expect(brandBox.y + brandBox.height).toBeLessThanOrEqual(panel.y + panel.height)
+    expect(panel.x + panel.width).toBeLessThanOrEqual(formBox.x)
+    await expectSeparate(brand, form)
+  }
+  await email.focus()
+  await page.keyboard.press('Tab')
+  await expect(page.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)', exact: true })).toBeFocused()
+  await expect(page.getByRole('link', { name: '개인정보처리방침 보기', exact: true })).toHaveAttribute('href', '/privacy')
+  await expect(page.getByRole('navigation', { name: '약관' }).getByRole('link', { name: '이용약관', exact: true })).toHaveAttribute('href', '/terms')
+})
