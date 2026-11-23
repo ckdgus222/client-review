@@ -239,6 +239,8 @@ test('역할별 가이드를 따라 쪽지 작성부터 검수 확인서까지 �
   for (const action of ['초안 준비 시작', '사진 선택', '초안 게시', '쪽지 남기기', '수정 시작', '1차 게시', '고쳤어요 보내기', '비교해 보기', '버전 승인', '검수 확인서 보기']) {
     await expect(guide).toContainText(action)
   }
+  await expect(guide).toContainText('쪽지를 쓴 고객이나 승인자가 검수실의 ‘비교해서 보기’를 열어 수정 전후를 보고 ‘확인 완료’ 또는 ‘재요청’을 선택해요.')
+  await expect(guide).toContainText('데모에서는 ‘비교해 보기’를 누르면 같은 비교 단계를 체험할 수 있어요.')
   await page.getByText('실제 서비스 사용 가이드', { exact: true }).click()
   const before = page.getByRole('img', { name: '수정 전 상품 상세 사진', exact: true })
   await expect(before).toHaveJSProperty('complete', true)
@@ -256,6 +258,7 @@ test('역할별 가이드를 따라 쪽지 작성부터 검수 확인서까지 �
   await expect(notes(page).getByRole('listitem').nth(1)).toContainText('접수')
   await sendFix(page)
   await button(page, '고객(승인자)').click()
+  await expect(button(page, '비교해 보기')).toHaveText('비교해 보기')
   await button(page, '비교해 보기').click()
   const after = page.getByRole('img', { name: '구매 버튼 위 여백을 넓힌 상품 상세 사진', exact: true })
   for (const image of [before, after]) {
