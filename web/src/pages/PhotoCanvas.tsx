@@ -60,6 +60,7 @@ export const PhotoCanvas = ({
             width={asset.width}
             height={asset.height}
             alt={alt}
+            data-landscape={asset.width >= asset.height || undefined}
             data-placeable={onPlacePin !== undefined}
             onClick={placePin}
           />

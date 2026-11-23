@@ -1499,6 +1499,20 @@ const expectSeparate = async (first: Locator, second: Locator) => {
     || a!.y + a!.height <= b!.y + 1 || b!.y + b!.height <= a!.y + 1).toBe(true)
 }
 
+const expectKeyboardLink = async (page: Page, link: Locator) => {
+  await expect(link).toBeVisible()
+  await expect(link).toHaveCSS('text-decoration-line', 'none')
+  await expect(link).toHaveCSS('border-radius', '999px')
+  // 실제 Tab 이동으로 :focus-visible을 확인한다.
+  await link.focus()
+  await page.keyboard.press('Shift+Tab')
+  await page.keyboard.press('Tab')
+  await expect(link).toBeFocused()
+  await expect(link).toHaveCSS('outline-style', 'solid')
+  await expect(link).toHaveCSS('outline-width', '2px')
+  await expect(link).toHaveCSS('outline-offset', '2px')
+}
+
 test('워크시트에 실제 첫 사진과 프로젝트별 진행률 및 상단 요약이 보인다', async ({ page, loginAs }) => {
   await resetDatabase()
   const { room, unpublished, reviewingRoom, approvedRoom, archivedRoom } = await prepareWorksheet()
@@ -1732,4 +1746,76 @@ test('로그인에서 PC 브랜드는 전체 높이의 어두운 패널 위에 �
   await expect(page.getByRole('checkbox', { name: '개인정보 수집·이용에 동의해요(필수)', exact: true })).toBeFocused()
   await expect(page.getByRole('link', { name: '개인정보처리방침 보기', exact: true })).toHaveAttribute('href', '/privacy')
   await expect(page.getByRole('navigation', { name: '약관' }).getByRole('link', { name: '이용약관', exact: true })).toHaveAttribute('href', '/terms')
+})
+
+test('검수실의 긴 제목과 메뉴 및 상태 안내가 겹치지 않고 사진을 볼 수 있다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareRoom()
+  await loginAs(room.developer.id)
+  const photo = page.getByRole('img', { name: '메인 · PC', exact: true })
+  const strip = page.getByRole('button', { name: '접기', exact: true }).locator('..')
+  const brand = page.getByRole('banner').getByText('Client Review', { exact: true })
+  const title = page.getByRole('heading', { level: 1 })
+  const menu = page.getByRole('navigation').filter({ has: page.getByRole('link', { name: '프로젝트 목록', exact: true }) })
+  for (const name of [room.project.name, '검수실긴이름'.repeat(10)]) {
+    await db.project.update({ where: { id: room.project.id }, data: { name } })
+    await page.goto(`/app/projects/${room.project.id}`)
+    await expect(title).toHaveText(name)
+    await expectLoadedPhoto(photo)
+    await page.evaluate(() => document.fonts.ready.then(() => undefined))
+    for (const width of [960, 1440, 390]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expectSeparate(brand, title)
+      await expectSeparate(title, menu)
+      await expectSeparate(title, page.getByRole('combobox', { name: '버전', exact: true }))
+      await expectSeparate(menu, page.getByRole('combobox', { name: '버전', exact: true }))
+      await expectSeparate(menu, photo)
+      await expect(title).toBeInViewport()
+      await expect(menu).toBeVisible()
+      await expect(photo).toBeInViewport()
+      await expectNoHorizontalOverflow(page, width)
+      const photoBox = (await photo.boundingBox())!
+      expect(photoBox.width).toBeGreaterThan(150)
+      expect(photoBox.height).toBeGreaterThan(100)
+      expect(photoBox.width / photoBox.height).toBeCloseTo(1.5, 2)
+      const stripBox = (await strip.boundingBox())!
+      expect(stripBox.height).toBe(82)
+      expect(photoBox.y + photoBox.height).toBeLessThanOrEqual(stripBox.y + 1)
+      if (width === 1440 && name === room.project.name) {
+        const headerBox = (await brand.boundingBox())!
+        const titleBox = (await title.boundingBox())!
+        const menuBox = (await menu.boundingBox())!
+        expect(Math.max(headerBox.y + headerBox.height, titleBox.y + titleBox.height, menuBox.y + menuBox.height)
+          - Math.min(headerBox.y, titleBox.y, menuBox.y)).toBeLessThanOrEqual(64)
+      }
+    }
+  }
+  const projectLink = menu.getByRole('link', { name: '프로젝트 목록', exact: true })
+  await expect(projectLink).toHaveCSS('padding', '6px 10px')
+  await expectKeyboardLink(page, projectLink)
+  await projectLink.hover()
+  await expect(projectLink).toHaveCSS('background-color', 'rgb(244, 236, 227)')
+  for (const status of ['ARCHIVED', 'DELETE_PENDING'] as const) {
+    await db.project.update({ where: { id: room.project.id }, data: {
+      status, statusBeforeDelete: status === 'DELETE_PENDING' ? 'ARCHIVED' : null,
+      deleteRequestedAt: status === 'DELETE_PENDING' ? new Date() : null,
+    } })
+    for (const width of [960, 1440, 390]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto(`/app/projects/${room.project.id}`)
+      await expectLoadedPhoto(photo)
+      const notice = page.getByRole('status').filter({ hasText: status === 'ARCHIVED' ? '보관한 프로젝트예요' : '삭제 대기 중인 프로젝트예요' })
+      await expect(notice).toBeVisible()
+      expect(await page.evaluate(() => window.scrollY)).toBe(0)
+      const noticeBox = (await notice.boundingBox())!
+      const titleBox = (await title.boundingBox())!
+      const brandBox = (await brand.boundingBox())!
+      expect(noticeBox.y).toBeGreaterThanOrEqual(Math.max(titleBox.y + titleBox.height, brandBox.y + brandBox.height))
+      expect(noticeBox.y + noticeBox.height).toBeLessThanOrEqual(900)
+      expect(noticeBox.y + noticeBox.height).toBeLessThanOrEqual((await photo.boundingBox())!.y)
+      await expectSeparate(notice, menu)
+      await expectNoHorizontalOverflow(page, width)
+    }
+  }
 })

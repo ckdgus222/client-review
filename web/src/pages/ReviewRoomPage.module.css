@@ -50,6 +50,13 @@
   display: inline-flex;
   align-items: center;
   min-height: 44px;
+  padding: 6px 10px;
+  border-radius: var(--radius-pill);
+  text-decoration: none;
+}
+
+.links a:hover, .links a:focus-visible {
+  background: var(--color-surface-subtle);
 }
 
 .versionControl {
@@ -388,6 +395,16 @@
 
 /* 긴 사이트 화면은 매트 안에서 끝까지 읽고, 아래 화면 선택기는 손닿는 곳에 둔다. */
 @media (min-width: 960px) {
+  .top {
+    min-height: 56px;
+    padding: 5px var(--gutter) 5px calc(148px + clamp(16px, 2.4vw, 36px));
+    border-bottom: 1px solid var(--color-border);
+  }
+  .heading { min-width: 0; gap: 4px 12px; }
+  .heading h1 { max-width: 100%; }
+  .links { gap: 2px; }
+  .info { padding-block: 4px; }
+
   .main {
     display: flex;
     flex-direction: column;
@@ -409,8 +426,15 @@
 
   .mat {
     min-height: min(55vh, 540px, 100%);
-    max-height: max(340px, calc(100svh - 290px));
+    --mat-height: max(340px, calc(100svh - 202px));
+    max-height: var(--mat-height);
     overflow: auto;
+  }
+
+  /* 가로 사진은 캡션·여백까지 매트 안에 담고, 긴 페이지는 원래 폭으로 스크롤한다. */
+  .mat img[data-landscape] {
+    width: auto;
+    max-height: calc(var(--mat-height) - 4.5rem);
   }
 }
 
