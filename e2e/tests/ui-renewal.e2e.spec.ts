@@ -1490,6 +1490,96 @@ const prepareWorksheet = async () => {
 
 const worksheetRow = (page: Page, name: string) => page.getByRole('listitem').filter({ has: page.getByRole('link', { name, exact: true }) })
 
+const expectSeparate = async (first: Locator, second: Locator) => {
+  const a = await first.boundingBox()
+  const b = await second.boundingBox()
+  expect(a).not.toBeNull()
+  expect(b).not.toBeNull()
+  expect(a!.x + a!.width <= b!.x + 1 || b!.x + b!.width <= a!.x + 1
+    || a!.y + a!.height <= b!.y + 1 || b!.y + b!.height <= a!.y + 1).toBe(true)
+}
+
+test('워크시트에 실제 첫 사진과 프로젝트별 진행률 및 상단 요약이 보인다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const { room, unpublished, reviewingRoom, approvedRoom, archivedRoom } = await prepareWorksheet()
+  await loginAs(room.client.id)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/app/')
+  await expect(page.getByText('참여하고 있는 프로젝트 5개 · 진행 중 4개 · 검수 중 2개 · 확인 요청 1건', { exact: true })).toBeVisible()
+  const active = page.getByRole('region', { name: '진행 중', exact: true })
+  const columns = active.locator(':scope > div[aria-hidden="true"] > span')
+  await expect(columns).toHaveText(['프로젝트', '현재 버전', '화면', '검수 진행률', '상태', '이동'])
+  const pending = worksheetRow(page, unpublished.name)
+  await expect(pending).toContainText('아직 게시 전')
+  await expect(pending.getByText('-', { exact: true })).toBeVisible()
+  await expect(pending.getByText('쪽지 없음', { exact: true })).toBeVisible()
+  await expect(pending.locator('img')).toHaveCount(0)
+  await expect(pending.getByRole('progressbar')).toHaveCount(0)
+  await expect(pending.locator('[aria-hidden="true"]').first()).toBeVisible()
+
+  const zero = worksheetRow(page, room.project.name)
+  const review = worksheetRow(page, reviewingRoom.project.name)
+  const done = worksheetRow(page, approvedRoom.project.name)
+  for (const [item, expectedRoom, label, count, status] of [
+    [zero, room, '초안', '1개', '진행 중'],
+    [review, reviewingRoom, '2차', '2개', '진행 중'],
+    [done, approvedRoom, '1차', '1개', '승인됨'],
+  ] as const) {
+    await expect(item).toContainText(label)
+    await expect(item).toContainText(count)
+    await expect(item.getByText(status, { exact: true })).toBeVisible()
+    const asset = expectedRoom.version.screens.find(({ screenId }) => screenId === expectedRoom.main.id)!
+    const image = item.locator('img')
+    await expectLoadedPhoto(image)
+    await expect(image).toHaveAttribute('src', `/api/assets/${asset.assetId}`)
+    await expect(image).toHaveAttribute('alt', '')
+    expect(await image.evaluate((element: HTMLImageElement) => element.decode().then(() => true))).toBe(true)
+    await expect(item.getByRole('img')).toHaveCount(0)
+    const box = (await image.boundingBox())!
+    expect(box.width).toBe(48)
+    expect(box.height).toBe(34)
+    expect(await image.evaluate((element) => parseFloat(getComputedStyle(element.parentElement!).borderRadius))).toBeGreaterThan(0)
+  }
+  await expect(zero.getByText('쪽지 없음', { exact: true })).toBeVisible()
+  await expect(review.getByText('미해결 3건 (확인 요청 1)', { exact: true })).toBeVisible()
+  await expect(review.getByRole('progressbar', { name: '검수 진행률', exact: true })).toHaveAttribute('value', '2')
+  await expect(review.getByRole('progressbar')).toHaveAttribute('max', '5')
+  await expect(done.getByText('모든 검수 완료 (100%)', { exact: true })).toBeVisible()
+  await expect(done.getByRole('progressbar')).toHaveAttribute('value', '2')
+  await expect(done.getByRole('progressbar')).toHaveAttribute('max', '2')
+  await expect(worksheetRow(page, archivedRoom.project.name).getByText('미해결 2건 (확인 요청 2)', { exact: true })).toBeVisible()
+
+  // 여섯 열이 제목 행과 실제로 같은 x 좌표에서 시작해야 한다.
+  const headings = await columns.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().x))
+  const cells = await review.locator(':scope > *').evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().x))
+  expect(cells).toHaveLength(6)
+  cells.forEach((x, index) => expect(Math.abs(x - headings[index])).toBeLessThanOrEqual(2))
+  const name = review.getByRole('link', { name: reviewingRoom.project.name, exact: true })
+  await expect(name).toHaveCSS('text-decoration-line', 'none')
+  await name.hover()
+  await expect(review).toHaveCSS('background-color', 'rgb(255, 250, 244)')
+  await name.focus()
+  await page.keyboard.press('Shift+Tab')
+  await page.keyboard.press('Tab')
+  await expect(name).toBeFocused()
+  await expect(name).toHaveCSS('outline-width', '2px')
+  await expect(page.getByText('클라이언트님', { exact: true })).toHaveCSS('background-color', 'rgb(244, 236, 227)')
+
+  // 같은 목록을 새로 읽을 때 최신 쪽지 상태를 반영한다.
+  await seedIssue(reviewingRoom, 'READY_FOR_REVIEW')
+  await page.reload()
+  await expect(review.getByText('미해결 4건 (확인 요청 2)', { exact: true })).toBeVisible()
+  await expect(review.getByRole('progressbar')).toHaveAttribute('max', '6')
+  await expect(page.getByText('참여하고 있는 프로젝트 5개 · 진행 중 4개 · 검수 중 2개 · 확인 요청 2건', { exact: true })).toBeVisible()
+  // 게시·쪽지가 없는 새 참여자는 예시 검수 숫자를 보지 않는다.
+  const emptyClient = await createUser('empty-list@example.com', '빈 목록 고객')
+  await db.projectMember.create({ data: { projectId: unpublished.id, userId: emptyClient.id, role: 'CLIENT' } })
+  await loginAs(emptyClient.id)
+  await page.reload()
+  await expect(page.getByText('참여하고 있는 프로젝트 1개', { exact: true })).toBeVisible()
+  await expect(page.getByRole('progressbar')).toHaveCount(0)
+})
+
 test('프로젝트 이름과 준비·검수실·확인서 링크가 역할과 게시 상태에 맞게 열린다', async ({ page, loginAs }) => {
   test.setTimeout(90_000)
   await resetDatabase()
@@ -1541,4 +1631,55 @@ test('프로젝트 이름과 준비·검수실·확인서 링크가 역할과 �
   await expect(archived.getByRole('link', { name: '확인서', exact: true })).toHaveAttribute('href', `/app/versions/${approvedRoom.version.id}/certificate`)
   await archived.getByRole('link', { name: '확인서', exact: true }).click()
   await expect(page.getByRole('heading', { name: '검수 확인서', exact: true })).toBeVisible()
+})
+
+test('390px에서 긴 프로젝트 이름과 실패한 썸네일이 있어도 카드와 이동 링크를 쓸 수 있다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const room = await prepareRoom()
+  const name = '긴프로젝트이름'.repeat(8) + '가나다라'
+  expect(name).toHaveLength(60)
+  await db.project.update({ where: { id: room.project.id }, data: { name } })
+  await seedIssue(room, 'OPEN')
+  await seedIssue(room, 'VERIFIED')
+  await loginAs(room.client.id)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/app/')
+  const row = worksheetRow(page, name)
+  const thumbnail = row.locator('img')
+  await expectLoadedPhoto(thumbnail)
+  const original = (await thumbnail.boundingBox())!
+  await page.route(`**/api/assets/${room.version.screens[0].assetId}`, (route) => route.abort('failed'))
+  await page.reload()
+  await expect(row).toBeVisible()
+  await expect(row.locator('img')).toHaveCount(0)
+  const placeholder = row.locator('[aria-hidden="true"]').first()
+  await expect(placeholder).toBeVisible()
+  const replacement = (await placeholder.boundingBox())!
+  expect(replacement.width).toBe(original.width)
+  expect(replacement.height).toBe(original.height)
+  expect(Math.abs(replacement.x - original.x)).toBeLessThanOrEqual(1)
+  expect(Math.abs(replacement.y - original.y)).toBeLessThanOrEqual(1)
+  await expect(row.getByText('클라이언트', { exact: true })).toBeVisible()
+  await expect(row.locator('time')).toHaveAttribute('datetime', room.project.createdAt.toISOString())
+  await expect(row.locator('time')).toBeVisible()
+  await expect(row.getByText('현재 버전', { exact: true })).toBeVisible()
+  await expect(row.getByText('화면', { exact: true })).toBeVisible()
+  await expect(row).toContainText('초안')
+  await expect(row).toContainText('1개')
+  await expect(row.getByText('미해결 1건 (확인 요청 0)', { exact: true })).toBeVisible()
+  await expect(row.getByRole('progressbar', { name: '검수 진행률', exact: true })).toHaveAttribute('value', '1')
+  await expect(row.getByRole('progressbar')).toHaveAttribute('max', '2')
+  await expect(row.getByText('진행 중', { exact: true })).toBeVisible()
+  const title = row.getByRole('link', { name, exact: true })
+  const quick = row.getByRole('link', { name: '검수실', exact: true })
+  await expect(title).toHaveCount(1)
+  await expectSeparate(title, quick)
+  await expectNoHorizontalOverflow(page, 390)
+  for (const link of [title, quick]) {
+    await expect(link).toHaveAttribute('href', `/app/projects/${room.project.id}`)
+    await link.click()
+    await expect(page).toHaveURL(`/app/projects/${room.project.id}`)
+    await expect(page.getByRole('heading', { level: 1, name, exact: true })).toBeVisible()
+    await page.goto('/app/')
+  }
 })

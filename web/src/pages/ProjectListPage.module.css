@@ -15,7 +15,8 @@
 }
 
 .top { justify-content: space-between; }
-.overview, .user, .role, .row time { color: var(--color-text-muted); font-size: var(--font-size-sm); }
+.overview, .user { color: var(--color-text-muted); font-size: var(--font-size-sm); }
+.user { padding: 5px 12px; border-radius: var(--radius-pill); background: var(--color-surface-subtle); }
 .overview { margin-top: 6px; }
 
 .create {
@@ -41,7 +42,7 @@
 
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(70px, .25fr) minmax(96px, .3fr) auto;
+  grid-template-columns: minmax(140px, 2.1fr) minmax(62px, .65fr) minmax(36px, .4fr) minmax(108px, 1.2fr) minmax(58px, .6fr) minmax(58px, .6fr);
   align-items: center;
   gap: 12px;
 }
@@ -49,19 +50,40 @@
 .columns { padding: 7px 20px; border-top: 1px solid var(--color-border); color: var(--color-text-muted); font-size: .78rem; }
 .list a { color: var(--color-text); font-weight: 600; text-decoration: none; }
 .list a:hover { color: var(--color-accent-soft-text); text-decoration: underline; }
-.row a { text-decoration: underline; text-decoration-color: var(--color-border-strong); }
-.state { padding: 3px 10px; border-radius: var(--radius-pill); background: var(--color-ok-soft); color: var(--color-ok); font-size: .78rem; }
+.list .row:hover, .list .row:focus-within { background: var(--color-surface-note); }
+.row:hover .identity a, .row:focus-within .identity a { color: var(--color-accent-soft-text); text-decoration: underline; }
+.identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.identity > div { min-width: 0; }
+.thumbnail { flex: 0 0 48px; width: 48px; height: 34px; display: grid; place-items: center; overflow: hidden; border-radius: 7px; box-shadow: inset 0 0 0 1px var(--color-border); background: var(--color-surface-subtle); }
+.thumbnail img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.emptyThumbnail { width: 19px; height: 14px; border: 1.5px solid var(--color-text-muted); border-radius: 3px; }
+.emptyThumbnail::before { content: ''; display: block; margin: 3px 0 0; border-top: 1px solid var(--color-text-muted); }
+.meta, .progress { color: var(--color-text-muted); font-size: .78rem; }
+.meta time { white-space: nowrap; }
+.datum { font-size: var(--font-size-sm); }
+.cellLabel { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.progress { display: grid; gap: 3px; }
+.progress progress { width: 100%; height: 6px; appearance: none; overflow: hidden; border: 0; border-radius: var(--radius-pill); background: var(--color-surface-subtle); }
+.progress progress::-webkit-progress-bar { background: var(--color-surface-subtle); }
+.progress progress::-webkit-progress-value { background: linear-gradient(90deg, var(--color-accent), var(--color-ok)); }
+.progress progress::-moz-progress-bar { background: linear-gradient(90deg, var(--color-accent), var(--color-ok)); }
+.state, .list .quick { justify-self: start; white-space: nowrap; border-radius: var(--radius-pill); }
+.state { padding: 3px 9px; background: var(--color-accent-soft); color: var(--color-accent-soft-text); font-size: .78rem; }
+.state[data-approved='true'] { background: var(--color-ok-soft); color: var(--color-ok); }
+.list .quick { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 3px 10px; border: 1px solid var(--color-border-strong); background: var(--color-surface); font-size: .8rem; }
+.list .quick:hover, .list .quick:focus-visible { background: var(--color-surface-subtle); text-decoration: none; }
 .group[id$='ARCHIVED'] .state { background: var(--color-surface-subtle); color: var(--color-text-muted); }
 .group[id$='DELETE_PENDING'], .group[id$='DELETE_PENDING'] h2 { background: var(--color-danger-soft); border-color: var(--color-danger-border); }
 .purge { color: var(--color-danger); font-size: var(--font-size-sm); }
 .deleted a { margin-right: auto; }
 
-@media (max-width: 640px) {
-  .row { grid-template-columns: minmax(0,1fr) auto; gap: 4px 12px; }
+@media (max-width: 959px) {
+  .row { grid-template-columns: minmax(0,1fr) auto; gap: 8px 12px; }
   .columns { display: none; }
-  .row a { grid-column: 1; }
-  .row .state { grid-column: 2; grid-row: 1; }
-  .row time { grid-column: 2; grid-row: 2; }
-  .row .role { grid-column: 1; grid-row: 2; }
+  .identity { grid-column: 1 / -1; }
+  .datum { display: flex; gap: 6px; align-items: baseline; }
+  .cellLabel { position: static; width: auto; height: auto; clip-path: none; color: var(--color-text-muted); font-size: .78rem; }
+  .progress { grid-column: 1 / -1; }
+  .list .quick { justify-self: end; min-height: 44px; }
   .list li, .group h2 { padding-inline: 14px; }
 }
