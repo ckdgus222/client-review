@@ -127,7 +127,7 @@ test('비로그인 방문자는 소개와 직접 링크에서 데모를 연다',
   })
   await page.goto(`${nginxOrigin}/`)
   await expect(page.getByRole('link', { name: '시작하기', exact: true })).toHaveAttribute('href', '/app/login')
-  await page.getByRole('link', { name: '데모 체험하기', exact: true }).click()
+  await page.getByRole('link', { name: '로그인 없이 데모 체험하기', exact: true }).click()
   await expect(page).toHaveURL(`${nginxOrigin}/app/demo`)
   await expectInitialDemo(page)
   await expect(page.getByText(/이 탭에서만 진행되며 새로고침하면 처음으로 돌아갑니다/)).toBeVisible()
