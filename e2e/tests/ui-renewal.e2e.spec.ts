@@ -1488,6 +1488,17 @@ const prepareWorksheet = async () => {
   return { room, unpublished, reviewingRoom, approvedRoom, archivedRoom, deleted }
 }
 
+const prepareComparison = async () => {
+  const room = await prepareRoom()
+  const issue = await seedIssue(room, 'READY_FOR_REVIEW')
+  const latest = await publishVersion(room.project.id, [room.main.id], 1)
+  await db.resolutionAttempt.create({ data: {
+    issueId: issue.id, versionId: latest.id, versionScreenId: latest.screens[0].id,
+    summary: '사진의 여백을 고쳤어요.', submittedById: room.developer.id,
+  } })
+  return { room, issue, latest }
+}
+
 const worksheetRow = (page: Page, name: string) => page.getByRole('listitem').filter({ has: page.getByRole('link', { name, exact: true }) })
 
 const expectSeparate = async (first: Locator, second: Locator) => {
@@ -1818,4 +1829,77 @@ test('검수실의 긴 제목과 메뉴 및 상태 안내가 겹치지 않고 �
       await expectNoHorizontalOverflow(page, width)
     }
   }
+})
+
+test('비교 툴바는 재요청 사유와 오류를 펼치고 쪽지 상세와 모바일에서도 동작한다', async ({ page, loginAs }) => {
+  await resetDatabase()
+  const { room, issue, latest } = await prepareComparison()
+  await loginAs(room.client.id)
+  const comparePath = `/app/issues/${issue.id}/compare`
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto(comparePath)
+    const title = page.getByRole('heading', { level: 1, name: `#${issue.number} ${issue.title}`, exact: true })
+    const back = page.getByRole('link', { name: '검수실로 돌아가기', exact: true })
+    const summary = page.getByText('사진의 여백을 고쳤어요.', { exact: false })
+    const review = page.getByRole('region', { name: '확인하기', exact: true })
+    const before = page.getByRole('img', { name: '처음 사진 메인 · PC', exact: true })
+    const after = page.getByRole('img', { name: '고친 사진 메인 · PC', exact: true })
+    await expectLoadedPhoto(before)
+    await expectLoadedPhoto(after)
+    await expect(review).toHaveCount(1)
+    await expect(review.getByRole('button')).toHaveText(['재요청', '확인 완료'])
+    await expectSeparate(title, back)
+    await expectSeparate(summary, review)
+    await expectSeparate(review, before)
+    if (width === 1440) {
+      const headingBox = (await title.boundingBox())!
+      const backBox = (await back.boundingBox())!
+      expect(headingBox.x + headingBox.width).toBeLessThanOrEqual(backBox.x)
+      expect(Math.abs(headingBox.y + headingBox.height / 2 - backBox.y - backBox.height / 2)).toBeLessThanOrEqual(4)
+      const summaryBox = (await summary.boundingBox())!
+      const actionBox = (await review.boundingBox())!
+      expect(summaryBox.x + summaryBox.width).toBeLessThanOrEqual(actionBox.x)
+      expect(summaryBox.y).toBeLessThan(actionBox.y + actionBox.height)
+      expect(actionBox.y).toBeLessThan(summaryBox.y + summaryBox.height)
+    }
+    await review.getByRole('button', { name: '재요청', exact: true }).click()
+    const reason = review.getByRole('textbox', { name: '재요청 사유', exact: true })
+    await review.getByRole('button', { name: '재요청 보내기', exact: true }).click()
+    await expect(review.getByRole('alert')).toHaveText('사유는 1~2,000자로 써 주세요')
+    await expect(reason).toHaveAttribute('aria-invalid', 'true')
+    await reason.fill('아직 버튼 사이 여백이 좁아요.\n'.repeat(20))
+    await expect(reason).toHaveValue('아직 버튼 사이 여백이 좁아요.\n'.repeat(20))
+    await expectSeparate(review, before)
+    await expectSeparate(review, after)
+    await expectNoHorizontalOverflow(page, width)
+    await review.getByRole('button', { name: '취소', exact: true }).click()
+    await expect(reason).toHaveCount(0)
+  }
+  // 비교 전용 배치가 상세의 본문 링크와 기존 세 액션을 바꾸지 않는다.
+  await page.goto(`/app/projects/${room.project.id}?issue=${issue.id}`)
+  const detailActions = page.getByRole('region', { name: '확인하기', exact: true })
+  await expect(detailActions.getByRole('button')).toHaveText(['재요청', '철회', '확인 완료'])
+  const bodyLink = page.getByRole('link', { name: '비교해서 보기', exact: true })
+  await expect(bodyLink).toHaveAttribute('href', `/app/issues/${issue.id}/compare`)
+  await expect(bodyLink).toHaveCSS('text-decoration-line', 'underline')
+  await detailActions.getByRole('button', { name: '재요청', exact: true }).click()
+  await detailActions.getByRole('textbox', { name: '재요청 사유', exact: true }).fill('여백을 다시 확인해 주세요.')
+  await detailActions.getByRole('button', { name: '재요청 보내기', exact: true }).click()
+  await expect(detailActions.getByRole('textbox')).toHaveCount(0)
+  await expect.poll(() => db.issue.findUniqueOrThrow({ where: { id: issue.id } }).then(({ status }) => status)).toBe('OPEN')
+
+  await db.issue.update({ where: { id: issue.id }, data: { status: 'READY_FOR_REVIEW', scope: 'OUT_OF_SCOPE' } })
+  await approveRoom({ ...room, version: latest })
+  await page.goto(comparePath)
+  await expect(page.getByRole('region', { name: '확인하기', exact: true })).toHaveCount(0)
+  const photos = page.getByRole('img', { name: '처음 사진 메인 · PC', exact: true })
+  await expectLoadedPhoto(photos)
+  const readOnlySummary = page.getByText('사진의 여백을 고쳤어요.', { exact: false })
+  await expect(readOnlySummary).toBeVisible()
+  const summaryBox = (await readOnlySummary.boundingBox())!
+  const captionBox = (await page.getByText(/^처음 사진 ·/).boundingBox())!
+  expect(captionBox.y - summaryBox.y - summaryBox.height).toBeGreaterThanOrEqual(0)
+  expect(captionBox.y - summaryBox.y - summaryBox.height).toBeLessThanOrEqual(48)
+  await expectNoHorizontalOverflow(page, 390)
 })
