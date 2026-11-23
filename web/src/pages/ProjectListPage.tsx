@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router'
 import { logout } from '../api/auth.ts'
+import { assetUrl, versionLabel } from '../api/versions.ts'
 import { ApiError } from '../api/client.ts'
 import {
   createProject,
@@ -70,6 +71,74 @@ const DeletedRow = ({ project, onRestored }: { project: MyProject; onRestored: (
 
 const createdDate = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium' })
 
+const ProjectThumbnail = ({ assetId }: { assetId: string | null }) => {
+  const [failed, setFailed] = useState(false)
+  return (
+    <span className={styles.thumbnail} aria-hidden="true">
+      {assetId && !failed
+        ? <img alt="" loading="lazy" src={assetUrl(assetId)} onError={() => setFailed(true)} />
+        : <span className={styles.emptyThumbnail} />}
+    </span>
+  )
+}
+
+const ProjectProgress = ({ total, resolved, readyForReview }: MyProject['issueCounts']) => {
+  if (total === 0) return <span className={styles.progress}>쪽지 없음</span>
+  return (
+    <div className={styles.progress}>
+      <progress aria-label="검수 진행률" value={resolved} max={total} />
+      <span>{resolved === total ? '모든 검수 완료 (100%)' : `미해결 ${total - resolved}건 (확인 요청 ${readyForReview})`}</span>
+    </div>
+  )
+}
+
+const quickLink = ({ id, currentVersion, myRole }: MyProject) => {
+  if (currentVersion?.status === 'APPROVED') return { label: '확인서', to: `/versions/${currentVersion.id}/certificate` }
+  if (!currentVersion && myRole === 'DEVELOPER') return { label: '준비', to: `/projects/${id}/draft` }
+  return { label: '검수실', to: `/projects/${id}` }
+}
+
+const ProjectRow = ({ project }: { project: MyProject }) => {
+  const { currentVersion, issueCounts, screenCount } = project
+  const link = quickLink(project)
+  const state = project.status === 'ARCHIVED' ? '보관함' : currentVersion?.status === 'APPROVED' ? '승인됨' : '진행 중'
+  return (
+    <li className={styles.row}>
+      <div className={styles.identity}>
+        <ProjectThumbnail key={project.thumbnailAssetId} assetId={project.thumbnailAssetId} />
+        <div>
+          <ProjectLink project={project} />
+          <div className={styles.meta}>
+            <span>{project.myRole === 'DEVELOPER' ? '개발자' : '클라이언트'}</span>
+            <span aria-hidden="true"> · </span>
+            <time dateTime={project.createdAt}>{createdDate.format(new Date(project.createdAt))}</time>
+          </div>
+        </div>
+      </div>
+      <span className={styles.datum}>
+        <span className={styles.cellLabel}>현재 버전</span>
+        <span>{currentVersion ? versionLabel(currentVersion.number) : '아직 게시 전'}</span>
+      </span>
+      <span className={styles.datum}>
+        <span className={styles.cellLabel}>화면</span>
+        <span>{currentVersion ? `${screenCount}개` : '-'}</span>
+      </span>
+      <ProjectProgress {...issueCounts} />
+      <span className={styles.state} data-approved={state === '승인됨'}>{state}</span>
+      <Link className={styles.quick} to={link.to}>{link.label}</Link>
+    </li>
+  )
+}
+
+const overviewText = (projects: MyProject[]) => {
+  const active = projects.filter(({ status }) => status === 'ACTIVE')
+  const inReview = active.filter(({ currentVersion }) => currentVersion?.status === 'IN_REVIEW').length
+  const requests = active.reduce((count, { issueCounts }) => count + issueCounts.readyForReview, 0)
+  const base = `참여하고 있는 프로젝트 ${projects.length}개`
+  if (!inReview && !requests) return base
+  return `${base} · 진행 중 ${active.length}개 · 검수 중 ${inReview}개 · 확인 요청 ${requests}건`
+}
+
 const GROUPS: { status: ProjectStatus; title: string }[] = [
   { status: 'ACTIVE', title: '진행 중' },
   { status: 'ARCHIVED', title: '보관함' },
@@ -98,7 +167,7 @@ const ProjectList = ({
         <h2>{title}</h2>
         {status !== 'DELETE_PENDING' && (
           <div className={`${styles.row} ${styles.columns}`} aria-hidden="true">
-            <span>프로젝트 이름</span><span>내 역할</span><span>생성일</span><span>상태</span>
+            <span>프로젝트</span><span>현재 버전</span><span>화면</span><span>검수 진행률</span><span>상태</span><span>이동</span>
           </div>
         )}
         <ul className={styles.list}>
@@ -106,12 +175,7 @@ const ProjectList = ({
             status === 'DELETE_PENDING' ? (
               <DeletedRow key={project.id} project={project} onRestored={onRestored} />
             ) : (
-              <li key={project.id} className={styles.row}>
-                <ProjectLink project={project} />
-                <span className={styles.role}>{project.myRole === 'DEVELOPER' ? '개발자' : '클라이언트'}</span>
-                <time dateTime={project.createdAt}>{createdDate.format(new Date(project.createdAt))}</time>
-                <span className={styles.state}>{title}</span>
-              </li>
+              <ProjectRow key={project.id} project={project} />
             ),
           )}
         </ul>
@@ -202,7 +266,7 @@ export const ProjectListPage = () => {
         <div className={styles.top}>
           <div>
             <h1>내 프로젝트</h1>
-            {projects && <p className={styles.overview}>참여하고 있는 프로젝트 {projects.length}개</p>}
+            {projects && <p className={styles.overview}>{overviewText(projects)}</p>}
           </div>
           <div className={styles.account}>
             <span className={styles.user}>{user.name}님</span>

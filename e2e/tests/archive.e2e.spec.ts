@@ -1,4 +1,20 @@
+import type { Locator } from '@playwright/test'
 import { test, expect, db, resetDatabase, createUser, createProject } from './fixtures.ts'
+
+const expectClientProjectLinks = async (group: Locator, projects: { id: string; name: string }[]) => {
+  const rows = group.getByRole('listitem')
+  await expect(rows).toHaveCount(projects.length)
+  await expect(group.getByRole('link')).toHaveCount(projects.length * 2)
+  await expect(group.getByRole('link', { name: '검수실', exact: true })).toHaveCount(projects.length)
+  await expect(group.getByRole('link', { name: '준비', exact: true })).toHaveCount(0)
+  for (const [index, project] of projects.entries()) {
+    const row = rows.nth(index)
+    await expect(row.getByRole('link')).toHaveText([project.name, '검수실'])
+    await expect(group.getByRole('link', { name: project.name, exact: true })).toHaveCount(1)
+    await expect(row.getByRole('link', { name: project.name, exact: true })).toHaveAttribute('href', `/app/projects/${project.id}`)
+    await expect(row.getByRole('link', { name: '검수실', exact: true })).toHaveAttribute('href', `/app/projects/${project.id}`)
+  }
+}
 
 test.beforeEach(async () => {
   await resetDatabase()
@@ -105,6 +121,9 @@ test('클라이언트 목록에는 지운 프로젝트가 보이지 않고 보�
       role: 'CLIENT',
     })),
   })
+  for (const [index, project] of [active, archived, deleted].entries()) {
+    await db.project.update({ where: { id: project.id }, data: { createdAt: new Date(Date.UTC(2026, 10, index + 1)) } })
+  }
   await loginAs(client.id)
   await page.goto('/app/')
 
@@ -112,7 +131,7 @@ test('클라이언트 목록에는 지운 프로젝트가 보이지 않고 보�
     name: '진행 중',
     exact: true,
   })
-  await expect(activeGroup.getByRole('link')).toHaveCount(3)
+  await expectClientProjectLinks(activeGroup, [deleted, archived, active])
   await expect(activeGroup.getByRole('link', { name: deleted.name, exact: true })).toBeVisible()
   await expect(activeGroup.getByRole('link', { name: archived.name, exact: true })).toBeVisible()
 
@@ -129,14 +148,14 @@ test('클라이언트 목록에는 지운 프로젝트가 보이지 않고 보�
   await loginAs(client.id)
   await page.reload()
 
-  await expect(activeGroup.getByRole('link')).toHaveCount(1)
+  await expectClientProjectLinks(activeGroup, [active])
   await expect(activeGroup.getByRole('link', { name: active.name, exact: true })).toBeVisible()
   const archivedGroup = page.getByRole('region', {
     name: '보관함',
     exact: true,
   })
   await expect(archivedGroup.getByRole('heading', { name: '보관함', exact: true })).toBeVisible()
-  await expect(archivedGroup.getByRole('link')).toHaveCount(1)
+  await expectClientProjectLinks(archivedGroup, [archived])
   await expect(archivedGroup.getByRole('link', { name: archived.name, exact: true })).toHaveAttribute(
     'href',
     `/app/projects/${archived.id}`,
@@ -145,6 +164,8 @@ test('클라이언트 목록에는 지운 프로젝트가 보이지 않고 보�
   await expect(page.getByRole('heading', { name: '삭제 대기', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '되살리기', exact: true })).toHaveCount(0)
   await expect(page.getByText('아직 프로젝트가 없어요.', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '만들기', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('textbox', { name: '프로젝트 이름', exact: true })).toHaveCount(0)
 })
 
 test('개발자가 프로젝트를 보관하면 목록의 보관함으로 가고 검수실에 보관 띠가 보이며 보관을 풀 수 있다', async ({

@@ -28,8 +28,8 @@ const publishVersion = async (projectId: string, screenIds: string[], number: nu
 }
 
 // 쪽지 생성은 분리해 빈 검수실과 상태가 섞인 검수실에서 같은 사진·참여자를 쓸 수 있게 한다.
-const prepareRoom = async () => {
-  const developer = await createUser('developer@example.com', '개발자')
+const prepareRoom = async (developerEmail = 'developer@example.com') => {
+  const developer = await createUser(developerEmail, '개발자')
   const client = await createUser('client@example.com', '클라이언트')
   const project = await createProject(developer.id, 'UI 검수 프로젝트')
   const clientMember = await db.projectMember.create({
@@ -1438,4 +1438,107 @@ test('390px에서 검수실과 비교 화면은 가로로 넘치지 않는다', 
     }
     await expectNoHorizontalOverflow(page, width)
   }
+})
+
+const approveRoom = async (room: Awaited<ReturnType<typeof prepareRoom>>) => {
+  const member = await db.projectMember.findUniqueOrThrow({ where: { projectId_userId: { projectId: room.project.id, userId: room.client.id } } })
+  const issues = await db.issue.findMany({
+    where: { projectId: room.project.id }, orderBy: { number: 'asc' },
+    select: { number: true, title: true, category: true, scope: true, status: true },
+  })
+  await db.$transaction([
+    db.project.update({ where: { id: room.project.id }, data: { approverMemberId: member.id } }),
+    db.approval.create({ data: { versionId: room.version.id, approverId: room.client.id, approvedAt: new Date(), summary: { issues } } }),
+    db.deliveryVersion.update({ where: { id: room.version.id }, data: { status: 'APPROVED' } }),
+  ])
+}
+
+const prepareWorksheet = async () => {
+  const developerEmail = process.env.DEVELOPER_EMAIL?.trim().toLowerCase()
+  expect(developerEmail, '프로젝트 생성 권한을 가진 테스트 계정 설정').toBeTruthy()
+  const room = await prepareRoom(developerEmail!)
+  const unpublished = await createProject(room.developer.id, '아직 게시하지 않은 작업')
+  const reviewing = await createProject(room.developer.id, '두 번째 검수 작업')
+  const approved = await createProject(room.developer.id, '모두 완료한 작업')
+  const archived = await createProject(room.developer.id, '보관한 검수 작업')
+  const deleted = await createProject(room.developer.id, '삭제 대기 작업')
+  await db.projectMember.createMany({ data: [unpublished, reviewing, approved, archived, deleted].map(({ id }) => ({ projectId: id, userId: room.client.id, role: 'CLIENT' })) })
+  const reviewingScreen = await db.screen.create({ data: { projectId: reviewing.id, name: '첫 화면', viewport: 'PC', createdAt: new Date('2026-11-01') } })
+  const secondScreen = await db.screen.create({ data: { projectId: reviewing.id, name: '두 번째 화면', viewport: 'MOBILE', createdAt: new Date('2026-11-02') } })
+  // 업로드 순서와 이름표 순서를 다르게 두어 첫 사진 선정도 확인한다.
+  const reviewingVersion = await publishVersion(reviewing.id, [secondScreen.id, reviewingScreen.id], 2)
+  const reviewingRoom = { ...room, project: reviewing, main: reviewingScreen, version: reviewingVersion }
+  for (const { status } of issueStates) await seedIssue(reviewingRoom, status)
+  const approvedScreen = await db.screen.create({ data: { projectId: approved.id, name: '완료 화면', viewport: 'PC' } })
+  const approvedVersion = await publishVersion(approved.id, [approvedScreen.id], 1)
+  const approvedRoom = { ...room, project: approved, main: approvedScreen, version: approvedVersion }
+  await seedIssue(approvedRoom, 'VERIFIED')
+  await seedIssue(approvedRoom, 'WITHDRAWN')
+  await approveRoom(approvedRoom)
+  const archivedScreen = await db.screen.create({ data: { projectId: archived.id, name: '보관 화면', viewport: 'PC' } })
+  const archivedVersion = await publishVersion(archived.id, [archivedScreen.id], 0)
+  const archivedRoom = { ...room, project: archived, main: archivedScreen, version: archivedVersion }
+  await seedIssue(archivedRoom, 'READY_FOR_REVIEW')
+  await seedIssue(archivedRoom, 'READY_FOR_REVIEW')
+  await db.project.update({ where: { id: archived.id }, data: { status: 'ARCHIVED' } })
+  await db.project.update({ where: { id: deleted.id }, data: { status: 'DELETE_PENDING', statusBeforeDelete: 'ACTIVE', deleteRequestedAt: new Date() } })
+  for (const [index, project] of [unpublished, room.project, reviewing, approved, archived, deleted].entries()) {
+    await db.project.update({ where: { id: project.id }, data: { createdAt: new Date(Date.UTC(2026, 10, index + 1)) } })
+  }
+  return { room, unpublished, reviewingRoom, approvedRoom, archivedRoom, deleted }
+}
+
+const worksheetRow = (page: Page, name: string) => page.getByRole('listitem').filter({ has: page.getByRole('link', { name, exact: true }) })
+
+test('프로젝트 이름과 준비·검수실·확인서 링크가 역할과 게시 상태에 맞게 열린다', async ({ page, loginAs }) => {
+  test.setTimeout(90_000)
+  await resetDatabase()
+  const { room, unpublished, reviewingRoom, approvedRoom, archivedRoom, deleted } = await prepareWorksheet()
+  for (const user of [room.developer, room.client]) {
+    await loginAs(user.id)
+    const developer = user.id === room.developer.id
+    await page.goto('/app/')
+    await expect(page.getByRole('button', { name: '만들기', exact: true })).toHaveCount(developer ? 1 : 0)
+    await expect(page.getByRole('region', { name: '삭제 대기', exact: true })).toHaveCount(developer ? 1 : 0)
+    if (!developer) {
+      await expect(page.getByRole('textbox', { name: '프로젝트 이름', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('link', { name: '준비', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('link', { name: deleted.name, exact: true })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '되살리기', exact: true })).toHaveCount(0)
+    }
+    for (const { project, quick, path } of [
+      { project: unpublished, quick: developer ? '준비' : '검수실', path: `/app/projects/${unpublished.id}${developer ? '/draft' : ''}` },
+      { project: room.project, quick: '검수실', path: `/app/projects/${room.project.id}` },
+      { project: reviewingRoom.project, quick: '검수실', path: `/app/projects/${reviewingRoom.project.id}` },
+      { project: approvedRoom.project, quick: '확인서', path: `/app/versions/${approvedRoom.version.id}/certificate` },
+      { project: archivedRoom.project, quick: '검수실', path: `/app/projects/${archivedRoom.project.id}` },
+    ]) {
+      await page.goto('/app/')
+      const row = worksheetRow(page, project.name)
+      await expect(row.getByRole('link')).toHaveText([project.name, quick])
+      const name = row.getByRole('link', { name: project.name, exact: true })
+      await expect(page.getByRole('link', { name: project.name, exact: true })).toHaveCount(1)
+      await expect(name).toHaveAttribute('href', `/app/projects/${project.id}`)
+      await expect(row.getByRole('link', { name: quick, exact: true })).toHaveAttribute('href', path)
+      await name.click()
+      await expect(page).toHaveURL(`/app/projects/${project.id}`)
+      await expect(page.getByRole('heading', { level: 1, name: project.name, exact: true })).toBeVisible()
+      await page.goto('/app/')
+      await row.getByRole('link', { name: quick, exact: true }).click()
+      await expect(page).toHaveURL(path)
+      await expect(page.getByRole('heading', { level: 1, name: quick === '확인서' ? '검수 확인서' : project.name, exact: true })).toBeVisible()
+    }
+    await expect(page.getByRole('status')).toHaveText('보관한 프로젝트예요. 읽기만 할 수 있어요')
+    await page.getByRole('button', { name: '쪽지 쓰기', exact: true }).click()
+    await page.getByLabel('제목 (필수)', { exact: true }).fill('보관한 작업에는 쓸 수 없어요')
+    await page.getByRole('button', { name: '쪽지 남기기', exact: true }).click()
+    await expect(page.getByRole('alert')).toHaveText('보관한 프로젝트예요. 보관을 풀어야 바꿀 수 있어요')
+  }
+  // 승인된 보관함도 확인서가 목적지다.
+  await db.project.update({ where: { id: approvedRoom.project.id }, data: { status: 'ARCHIVED' } })
+  await page.goto('/app/')
+  const archived = page.getByRole('region', { name: '보관함', exact: true })
+  await expect(archived.getByRole('link', { name: '확인서', exact: true })).toHaveAttribute('href', `/app/versions/${approvedRoom.version.id}/certificate`)
+  await archived.getByRole('link', { name: '확인서', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '검수 확인서', exact: true })).toBeVisible()
 })
