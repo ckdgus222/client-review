@@ -1,5 +1,5 @@
 import { ConflictException, ForbiddenException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, ProjectRole, ProjectStatus } from '../generated/prisma/client.js';
+import { IssueStatus, Prisma, ProjectRole, ProjectStatus, VersionStatus } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 // 프로젝트에 이 사람의 역할을 붙인 모양. 목록과 만들기가 같은 모양을 돌려준다.
@@ -11,9 +11,24 @@ export type MyProject = {
   createdAt: Date;
   status: ProjectStatus;
   purgeAfter: Date | null;
+  currentVersion: { id: string; number: number; status: VersionStatus } | null;
+  screenCount: number;
+  thumbnailAssetId: string | null;
+  issueCounts: { total: number; resolved: number; readyForReview: number };
 };
 
 const PROJECT_FIELDS = { id: true, name: true, createdAt: true, status: true, deleteRequestedAt: true } as const;
+const LIST_VERSION_FIELDS = {
+  id: true, projectId: true, number: true, status: true,
+  _count: { select: { screens: true } },
+  screens: {
+    orderBy: [{ screen: { createdAt: 'asc' } }, { screenId: 'asc' }],
+    take: 1,
+    select: { assetId: true },
+  },
+} satisfies Prisma.DeliveryVersionSelect;
+type ListVersion = Prisma.DeliveryVersionGetPayload<{ select: typeof LIST_VERSION_FIELDS }>;
+const emptyIssueCounts = (): MyProject['issueCounts'] => ({ total: 0, resolved: 0, readyForReview: 0 });
 
 // 지운 프로젝트를 되살릴 수 있는 기간. 정리 작업과 되살리기의 SQL도 같은 7일을 쓴다(docs/archive.md 정할 것 9·13).
 export const DELETE_GRACE_DAYS = 7;
@@ -22,13 +37,22 @@ const purgeAfterOf = (deleteRequestedAt: Date | null) =>
   deleteRequestedAt && new Date(deleteRequestedAt.getTime() + DELETE_GRACE_DAYS * DAY_MS);
 
 const toMyProject = (
-  { deleteRequestedAt, ...project }: Prisma.ProjectGetPayload<{ select: typeof PROJECT_FIELDS }>,
+  project: Prisma.ProjectGetPayload<{ select: typeof PROJECT_FIELDS }>,
   myRole: ProjectRole,
-): MyProject => ({
-  ...project,
-  myRole,
-  purgeAfter: purgeAfterOf(deleteRequestedAt),
-});
+  version: ListVersion | null = null,
+  issueCounts = emptyIssueCounts(),
+): MyProject => {
+  const number = version?.number ?? null;
+  const published = version?.projectId === project.id && number !== null && version.status !== VersionStatus.DRAFT;
+  return {
+    id: project.id, name: project.name, createdAt: project.createdAt, status: project.status, myRole,
+    purgeAfter: purgeAfterOf(project.deleteRequestedAt),
+    currentVersion: published ? { id: version.id, number, status: version.status } : null,
+    screenCount: published ? version._count.screens : 0,
+    thumbnailAssetId: published ? version.screens[0]?.assetId ?? null : null,
+    issueCounts,
+  };
+};
 
 // 프로젝트 상세와 승인자 바꾸기가 같은 모양으로 승인자를 돌려준다.
 export type ApproverView = { memberId: string; name: string } | null;
@@ -73,17 +97,35 @@ export class ProjectsService {
 
   // 내 멤버 줄에서 출발해서, 멤버가 아닌 프로젝트는 처음부터 섞이지 않는다.
   async listMine(userId: string): Promise<MyProject[]> {
-    const members = await this.prisma.projectMember.findMany({
-      // 접근이 철회된 프로젝트는 목록에서도 빠진다. 삭제 대기 프로젝트는 개발자 목록에만 남는다(되살리기 버튼).
-      where: {
-        userId,
-        revokedAt: null,
-        OR: [{ role: ProjectRole.DEVELOPER }, { project: { status: { not: ProjectStatus.DELETE_PENDING } } }],
-      },
-      select: { role: true, project: { select: PROJECT_FIELDS } },
-      orderBy: { project: { createdAt: 'desc' } },
-    });
-    return members.map(({ role, project }) => toMyProject(project, role));
+    // 게시 시 현재 버전과 확인 요청 상태가 함께 바뀌므로 두 조회에서 같은 스냅샷을 읽는다.
+    return this.prisma.$transaction(async (tx) => {
+      const members = await tx.projectMember.findMany({
+        where: {
+          userId,
+          revokedAt: null,
+          OR: [{ role: ProjectRole.DEVELOPER }, { project: { status: { not: ProjectStatus.DELETE_PENDING } } }],
+        },
+        select: { role: true, project: { select: { ...PROJECT_FIELDS, currentVersion: { select: LIST_VERSION_FIELDS } } } },
+        orderBy: { project: { createdAt: 'desc' } },
+      });
+      if (members.length === 0) return [];
+
+      const projectIds = members.map(({ project }) => project.id);
+      const groups = await tx.issue.groupBy({
+        by: ['projectId', 'status'],
+        where: { projectId: { in: projectIds } },
+        _count: { _all: true },
+      });
+      const counts = new Map<string, MyProject['issueCounts']>();
+      for (const { projectId, status, _count } of groups) {
+        const summary = counts.get(projectId) ?? emptyIssueCounts();
+        summary.total += _count._all;
+        if (status === IssueStatus.VERIFIED || status === IssueStatus.WITHDRAWN) summary.resolved += _count._all;
+        if (status === IssueStatus.READY_FOR_REVIEW) summary.readyForReview += _count._all;
+        counts.set(projectId, summary);
+      }
+      return members.map(({ role, project }) => toMyProject(project, role, project.currentVersion, counts.get(project.id)));
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
 
   // 특정 프로젝트를 다루는 요청은 모두 여기서 멤버인지 확인한다.
