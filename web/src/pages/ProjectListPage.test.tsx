@@ -47,6 +47,10 @@ const projects: MyProject[] = [
     createdAt: '2026-11-05T00:00:00.000Z',
     status: 'ACTIVE',
     purgeAfter: null,
+    currentVersion: null,
+    screenCount: 0,
+    thumbnailAssetId: null,
+    issueCounts: { total: 0, resolved: 0, readyForReview: 0 },
   },
   {
     id: 'ebf058f0-dc9e-4a14-adcd-cb2712594e5a',
@@ -55,6 +59,10 @@ const projects: MyProject[] = [
     createdAt: '2026-11-04T00:00:00.000Z',
     status: 'ACTIVE',
     purgeAfter: null,
+    currentVersion: null,
+    screenCount: 0,
+    thumbnailAssetId: null,
+    issueCounts: { total: 0, resolved: 0, readyForReview: 0 },
   },
 ]
 

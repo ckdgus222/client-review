@@ -1,5 +1,6 @@
 import { ApiError } from './client.ts'
 import {
+  type MyProject,
   archiveProject,
   unarchiveProject,
   deleteProject,
@@ -28,6 +29,15 @@ const project = {
   createdAt: '2026-11-04T09:00:00.000Z',
   status: 'ACTIVE',
   purgeAfter: null,
+}
+const listedProject: MyProject = {
+  ...project,
+  myRole: 'DEVELOPER',
+  status: 'ACTIVE',
+  currentVersion: null,
+  screenCount: 0,
+  thumbnailAssetId: null,
+  issueCounts: { total: 0, resolved: 0, readyForReview: 0 },
 }
 const screen = { id: screenId, name: '메인', viewport: 'PC', hiddenAt: null }
 const hiddenScreen = { ...screen, hiddenAt: '2026-11-04T10:00:00.000Z' }
@@ -116,9 +126,10 @@ describe('statusNotice', () => {
 
 describe('listProjects', () => {
   it('옵션 없이 GET을 한 번 요청하고 역할과 서버의 목록 순서를 그대로 돌려준다', async () => {
-    const projects = [
-      project,
+    const projects: MyProject[] = [
+      listedProject,
       {
+        ...listedProject,
         id: 'another-project',
         name: '이전 프로젝트',
         myRole: 'CLIENT',
@@ -146,7 +157,7 @@ describe('listProjects', () => {
 describe('createProject', () => {
   it('이름을 JSON POST로 한 번 보내고 201의 프로젝트를 돌려준다', async () => {
     const name = '외주 "리뉴얼" \\ 시안\n두 번째 줄'
-    const createdProject = { ...project, name }
+    const createdProject: MyProject = { ...listedProject, name }
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(createdProject), { status: 201 }))
 
     await expect(createProject(name)).resolves.toEqual(createdProject)
@@ -399,10 +410,10 @@ describe('화면 이름표', () => {
 
 describe('listProjects의 보관과 삭제 상태', () => {
   it('진행·보관·삭제 대기의 상태와 purgeAfter를 서버 순서와 값 그대로 돌려준다', async () => {
-    const projects = [
-      { ...project, id: 'deleted', status: 'DELETE_PENDING', purgeAfter: '2026-11-21T00:00:00.000Z' },
-      { ...project, id: 'archived', status: 'ARCHIVED', myRole: 'CLIENT' },
-      project,
+    const projects: MyProject[] = [
+      { ...listedProject, id: 'deleted', status: 'DELETE_PENDING', purgeAfter: '2026-11-21T00:00:00.000Z' },
+      { ...listedProject, id: 'archived', status: 'ARCHIVED', myRole: 'CLIENT' },
+      listedProject,
     ]
     vi.mocked(fetch).mockResolvedValueOnce(Response.json(projects))
 
@@ -474,5 +485,53 @@ describe('프로젝트 상태 변경 오류 코드', () => {
     await expect(result).rejects.toBeInstanceOf(ApiError)
     await expect(result).rejects.toMatchObject({ status, code })
     expect(fetch).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('프로젝트 목록 요약 계약', () => {
+  it('0번 게시와 여러 프로젝트의 사진·화면·쪽지 집계를 변형 없이 반환한다', async () => {
+    const response: MyProject[] = [
+      {
+        ...listedProject,
+        currentVersion: { id: 'version-zero', number: 0, status: 'IN_REVIEW' },
+        screenCount: 2,
+        thumbnailAssetId: 'first-photo',
+        issueCounts: { total: 5, resolved: 2, readyForReview: 1 },
+      },
+      {
+        ...listedProject,
+        id: 'approved',
+        currentVersion: { id: 'version-two', number: 2, status: 'APPROVED' },
+        screenCount: 1,
+        thumbnailAssetId: 'other-photo',
+        issueCounts: { total: 3, resolved: 3, readyForReview: 0 },
+      },
+      { ...listedProject, id: 'unpublished' },
+    ]
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json(response))
+    await expect(listProjects()).resolves.toStrictEqual(response)
+    expect(fetch).toHaveBeenCalledExactlyOnceWith('/api/projects')
+  })
+
+  it('생성 응답의 빈 요약과 이어지는 목록 항목을 정확히 보존한다', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(Response.json(listedProject, { status: 201 }))
+      .mockResolvedValueOnce(Response.json([listedProject]))
+    const created = await createProject(listedProject.name)
+    expect(created).toStrictEqual(listedProject)
+    const listed = await listProjects()
+    expect(listed).toStrictEqual([created])
+    expect(Object.keys(created).sort()).toEqual([
+      'createdAt',
+      'currentVersion',
+      'id',
+      'issueCounts',
+      'myRole',
+      'name',
+      'purgeAfter',
+      'screenCount',
+      'status',
+      'thumbnailAssetId',
+    ])
   })
 })
