@@ -1943,3 +1943,79 @@ test('비교와 확인서의 돌아가기 링크는 키보드로 열리고 확�
   await expect(page.getByRole('heading', { name: '검수 확인서', exact: true })).toBeVisible()
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)')
 })
+
+test('소개 화면의 세 단계와 선택 쪽지가 강조되고 로그인과 데모 링크가 구분된다', async ({ page }) => {
+  await resetDatabase()
+  await page.goto('http://localhost:4103/')
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+  const title = page.getByRole('heading', { level: 2, name: '화면을 크게 펼치고, 깔끔하게 승인해요.', exact: true })
+  const eyebrow = page.getByText('화면 사진 검수 · 버전 승인', { exact: true })
+  await expect(eyebrow).toHaveCount(1)
+  await expect(eyebrow).toHaveCSS('background-color', 'rgb(253, 234, 223)')
+  await expect(eyebrow).toHaveCSS('border-radius', '999px')
+  const steps = page.getByRole('list', { name: '진행 방식', exact: true }).getByRole('listitem')
+  await expect(steps).toHaveCount(3)
+  await expect(steps.locator('strong')).toHaveText(['화면 올리기', '수정 요청 남기기', '버전 승인하기'])
+  await expect(steps.locator('p')).toHaveText([
+    '개발자가 화면 사진을 버전별로 올려요.',
+    '고객이 사진 위 고칠 자리에 수정 요청을 남겨요.',
+    '지정한 사람이 버전을 승인하면 검수 확인서가 남아요.',
+  ])
+  const counterStyles = await steps.evaluateAll((elements) => elements.map((element) => {
+    const style = getComputedStyle(element, '::before')
+    return { content: style.content, color: style.color, font: style.fontFamily, increment: style.counterIncrement === 'none' ? getComputedStyle(element).counterIncrement : style.counterIncrement }
+  }))
+  for (const style of counterStyles) {
+    expect(style.content).toMatch(/counter\([^,]+, decimal-leading-zero\)/)
+    expect(style.color).toBe('rgb(200, 78, 44)')
+    expect(style.font).toMatch(/mono/i)
+    const counterName = style.content.match(/counter\(([^,]+)/)![1]
+    expect(style.increment).toBe(`${counterName} 1`)
+    expect(await steps.first().locator('..').evaluate((element) => getComputedStyle(element).counterReset)).toBe(`${counterName} 0`)
+  }
+  const notes = page.locator('.demo-note')
+  await expect(notes).toHaveCount(3)
+  await expect(notes.first()).toHaveCSS('border-top-color', 'rgb(200, 78, 44)')
+  await expect(notes.first()).toHaveCSS('background-color', 'rgb(255, 239, 229)')
+  for (const note of [notes.nth(1), notes.nth(2)]) {
+    await expect(note).not.toHaveCSS('background-color', 'rgb(255, 239, 229)')
+    await expect(note).not.toHaveCSS('border-top-color', 'rgb(200, 78, 44)')
+  }
+  const progress = page.getByRole('progressbar', { name: '예시 검수 진행률', exact: true })
+  await expect(progress).toHaveAttribute('value', '1')
+  await expect(progress).toHaveAttribute('max', '3')
+  // Chromium은 progress의 내부 채움 계산 스타일을 노출하지 않으므로 실제 CSS 응답의 채움 선택자도 검사한다.
+  const cssHref = await page.locator('link[rel="stylesheet"]').getAttribute('href')
+  const response = await page.request.get(`http://localhost:4103${cssHref}`)
+  expect(response.status()).toBe(200)
+  const css = await response.text()
+  expect(css).toMatch(/\.demo-progress::-webkit-progress-value\s*\{[^}]*linear-gradient\(90deg,\s*var\(--color-accent\),\s*var\(--color-ok\)\)/)
+  const hash = createHash('sha256').update(await response.body()).digest('hex').slice(0, 12)
+  expect(cssHref).toBe(`/landing.css?v=${hash}`)
+  const menuLink = page.getByRole('navigation', { name: '소개 메뉴' }).getByRole('link', { name: '진행 방식', exact: true })
+  await expect(menuLink).toHaveCSS('text-decoration-line', 'none')
+  await expect(menuLink).toHaveAttribute('href', '#steps')
+  for (const { width, height, gap } of [{ width: 1440, height: 900, gap: 168 }, { width: 390, height: 844, gap: 68 }]) {
+    await page.setViewportSize({ width, height })
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await expect(eyebrow).toBeVisible()
+    expect((await eyebrow.boundingBox())!.y + (await eyebrow.boundingBox())!.height).toBeLessThanOrEqual((await title.boundingBox())!.y)
+    const hero = (await page.locator('.hero').boundingBox())!
+    const header = (await page.getByRole('banner').boundingBox())!
+    expect(Math.abs(hero.y - header.y - header.height - gap)).toBeLessThanOrEqual(2)
+    await expectNoHorizontalOverflow(page, width)
+  }
+  for (const [label, path] of [['로그인', '/app/login'], ['시작하기', '/app/login'], ['데모 체험하기', '/app/demo']] as const) {
+    const link = page.getByRole('link', { name: label, exact: true })
+    await expect(link).toHaveCount(1)
+    await expect(link).toHaveAttribute('href', path)
+    await link.click()
+    if (path === '/app/login') await expect(page.getByRole('textbox', { name: '이메일', exact: true })).toBeVisible()
+    if (path === '/app/demo') {
+      await expect(page).toHaveURL('http://localhost:4103/app/demo')
+      await expect(page.getByRole('heading', { name: '오브제 스토어 리뉴얼', exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: '고객(승인자)', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    }
+    await page.goto('http://localhost:4103/')
+  }
+})
