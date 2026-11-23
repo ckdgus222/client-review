@@ -1,4 +1,4 @@
-import { useReducer, useState, type FormEvent } from 'react'
+import { useLayoutEffect, useReducer, useRef, useState, type FormEvent } from 'react'
 import { Button } from '../components/Button.tsx'
 import { Modal } from '../components/Modal.tsx'
 import { StatusBadge } from '../components/StatusBadge.tsx'
@@ -21,6 +21,7 @@ const DemoSession = ({ onRestart }: { onRestart: () => void }) => {
   const [selected, setSelected] = useState('')
   const [approvalOpen, setApprovalOpen] = useState(false)
   const [showCertificate, setShowCertificate] = useState(false)
+  const actionRef = useRef<HTMLDivElement>(null)
   const { role, stage, note } = state
   const step = stage === 'request' || stage === 'approved' ? null : steps[stage]
   const creating = stage === 'request' && role === 'client'
@@ -32,6 +33,13 @@ const DemoSession = ({ onRestart }: { onRestart: () => void }) => {
   const total = note ? 2 : 1
   const pins = [sample]
   if (note) pins.push({ ...note.pin, id: 'visitor', number: 2, title: note.title })
+
+  // 비교 사진이 추가돼 아래로 밀린 키보드 초점을 화면에 유지한다.
+  useLayoutEffect(() => {
+    if (stage !== 'comparing') return
+    const button = actionRef.current?.querySelector('button:focus-visible')
+    button?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [stage])
 
   const create = (event: FormEvent) => {
     event.preventDefault()
@@ -104,7 +112,7 @@ const DemoSession = ({ onRestart }: { onRestart: () => void }) => {
               <Button type="submit" disabled={!pin || !title.trim()}>쪽지 남기기</Button>
             </form>
           ) : <p role="status">첫 쪽지는 고객이 남겨요. ‘고객(승인자)’로 역할을 바꾸세요.</p>)}
-          {step && <div className={styles.action}>
+          {step && <div ref={actionRef} className={styles.action}>
             <h3>{step.action}</h3>
             <p>{step.guide}</p>
             {stage === 'published' && <p className={styles.hint}>고친 내용 · 수량과 구매 버튼 사이의 여백을 넓혔어요.</p>}
