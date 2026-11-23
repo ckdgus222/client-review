@@ -177,7 +177,7 @@ export class VersionsService {
             screen: { select: { id: true, name: true, viewport: true, hiddenAt: true } },
             asset: { select: { id: true, width: true, height: true } },
           },
-          orderBy: { screen: { createdAt: 'asc' } },
+          orderBy: [{ screen: { createdAt: 'asc' } }, { screenId: 'asc' }],
         },
       },
     });
