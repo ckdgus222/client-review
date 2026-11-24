@@ -6,12 +6,31 @@ import beforePhoto from '../assets/demo-before.webp'
 import afterPhoto from '../assets/demo-after.webp'
 import { PhotoCanvas, type PinPosition } from './PhotoCanvas.tsx'
 import { DemoGuide } from './DemoGuide.tsx'
-import { demoProject, initialDemo, steps, updateDemo, type DemoRole } from './portfolioDemo.ts'
+import { demoProject, initialDemo, steps, updateDemo, type DemoRole, type DemoState } from './portfolioDemo.ts'
 import styles from './PortfolioDemoPage.module.css'
 
 const roles: Record<DemoRole, string> = { client: '고객(승인자)', developer: '개발자' }
 const photo = { id: 'demo-storefront', width: 790, height: 592 }
 const sample = demoProject.sample
+
+const nextInstruction = ({ stage, role }: DemoState, hasPin: boolean, hasTitle: boolean) => {
+  if (stage === 'approved') return '‘검수 확인서 보기’를 눌러 승인한 버전과 쪽지를 확인하세요.'
+  const actor = stage === 'request' ? 'client' : steps[stage].actor
+  if (role !== actor) return `체험 가이드의 ‘내 역할’에서 ‘${roles[actor]}’를 선택하세요.`
+  if (stage === 'request') {
+    if (!hasPin) return '사진의 ‘장바구니에 담기’를 누르거나 ‘구매 버튼 위치 선택’을 누르세요.'
+    if (!hasTitle) return '체험 가이드에서 고쳐 달라는 내용을 제목으로 적으세요.'
+    return '‘쪽지 남기기’를 눌러 개발자에게 수정을 요청하세요.'
+  }
+  if (stage === 'comparing') return '두 사진의 구매 버튼 위 여백을 비교한 뒤 ‘확인 완료’를 누르세요.'
+  return `체험 가이드에서 ‘${steps[stage].action}’을 누르세요.`
+}
+
+const walkthroughPhase = (stage: DemoState['stage']) => {
+  if (stage === 'request') return '1/3 · 수정 요청'
+  if (stage === 'approved') return '체험 완료'
+  return steps[stage].actor === 'developer' ? '2/3 · 수정 반영' : '3/3 · 비교와 승인'
+}
 
 const DemoSession = ({ onRestart }: { onRestart: () => void }) => {
   const [state, dispatch] = useReducer(updateDemo, initialDemo)
@@ -79,6 +98,13 @@ const DemoSession = ({ onRestart }: { onRestart: () => void }) => {
         <div className={styles.tools}><a href="/">서비스 소개</a><Button variant="secondary" onClick={onRestart}>처음부터</Button></div>
       </header>
       <p className={styles.intro}>샘플 사진에 쪽지를 남기고, 개발자와 고객 역할을 바꿔 승인까지 체험하세요. 이 탭에서만 진행되며 새로고침하면 처음으로 돌아갑니다.</p>
+      <section className={styles.walkthrough} aria-labelledby="demo-next-heading">
+        <div>
+          <h2 id="demo-next-heading">지금 할 일</h2>
+          <span>{walkthroughPhase(stage)}</span>
+        </div>
+        <p>{nextInstruction(state, !!pin, !!title.trim())}</p>
+      </section>
       <div className={styles.layout}>
         <div className={styles.work}>
           <div className={styles.caption}><strong>상품 상세 검수</strong><span>{version} · {stage === 'approved' ? '승인됨' : '검수 중'}</span></div>
@@ -115,9 +141,9 @@ const DemoSession = ({ onRestart }: { onRestart: () => void }) => {
           {step && <div ref={actionRef} className={styles.action}>
             <h3>{step.action}</h3>
             <p>{step.guide}</p>
-            {stage === 'published' && <p className={styles.hint}>고친 내용 · 수량과 구매 버튼 사이의 여백을 넓혔어요.</p>}
             {role !== step.actor && <p role="status">‘{roles[step.actor]}’로 역할을 바꾸세요.</p>}
             <Button disabled={role !== step.actor} onClick={advance}>{step.action}</Button>
+            {stage === 'published' && <p className={styles.hint}>고친 내용 · 수량과 구매 버튼 사이의 여백을 넓혔어요.</p>}
           </div>}
           {stage === 'approved' && <div className={styles.action}>
             <h3>1차 승인 완료</h3><p>승인한 버전은 읽기 전용이에요.</p>

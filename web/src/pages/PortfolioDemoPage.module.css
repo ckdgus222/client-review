@@ -14,7 +14,18 @@
 .eyebrow { color: var(--color-accent-soft-text); font-size: var(--font-size-sm); font-weight: 600; }
 .heading h1 { margin: 3px 0 0; }
 .tools a { display: inline-flex; align-items: center; min-height: 44px; font-size: var(--font-size-sm); }
-.intro { margin: 12px 0 22px; max-width: 70ch; color: var(--color-text-secondary); }
+.intro { margin: 12px 0; max-width: 70ch; color: var(--color-text-secondary); }
+.walkthrough {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-inline-start: 3px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-note-selected);
+}
+.walkthrough > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.walkthrough h2 { font-size: 1rem; }
+.walkthrough span { color: var(--color-accent-soft-text); font-size: var(--font-size-sm); font-weight: 600; }
+.walkthrough p { margin-top: 3px; line-height: 1.5; }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(285px, 350px); gap: 18px; align-items: start; }
 .work, .panel {
   min-width: 0;
@@ -64,5 +75,5 @@
 @media (max-width: 959px) {
   .layout { grid-template-columns: minmax(0, 1fr); }
   .compare { grid-template-columns: minmax(0, 1fr); }
-  .intro { margin-bottom: 14px; }
+  .walkthrough p { min-block-size: 3em; }
 }
