@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { truncate, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createSite, domain, repo, run } from './host-nginx-fixture.js';
+import { createSite, domain, neighbor, repo, run } from './host-nginx-fixture.js';
 
 describe('호스트 배포', () => {
   let site: Awaited<ReturnType<typeof createSite>>;
@@ -46,6 +46,22 @@ describe('호스트 배포', () => {
     (
       await run('docker', ['exec', db, 'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-U', 'client_review', '-Atc', statement])
     ).stdout.trim();
+  const health = async (command: 'site_ready' | 'api_ready', files: string, host = domain, extra = {}) =>
+    run('bash', ['-c', 'source "$1" && ' + command, 'health-test', path.join(repo, 'deploy/lib.sh')], {
+      env: {
+        ...env,
+        PUBLIC_URL: site.url(host),
+        CURL_CA_BUNDLE: site.cert,
+        COMPOSE_PROJECT_NAME: project + '-drill',
+        COMPOSE_FILE: files,
+        ...extra,
+      },
+    });
+  const startAdmin = async () => {
+    if (!admin) {
+      await admin.start();
+    }
+  };
   beforeAll(async () => {
     site = await createSite();
     override = path.join(site.directory, 'test-override.yml');
@@ -201,5 +217,29 @@ describe('호스트 배포', () => {
     ]);
     expect(config.services.db.ports.every((port: { host_ip: string }) => port.host_ip === '127.0.0.1')).toBe(true);
   });
+
+  it('운영과 복원 연습이 서로의 상태 응답을 사용하지 않는다', async () => {
+    const host = 'docker-compose.yml:docker-compose.host.yml';
+    await health('site_ready', host);
+    await health('api_ready', host);
+    await expect(health('api_ready', host, neighbor)).rejects.toThrow();
+    await expect(health('site_ready', host, neighbor)).rejects.toThrow();
+    await expect(health('api_ready', host, domain, { CURL_CA_BUNDLE: '/no-such-fixture-ca' })).rejects.toThrow();
+    // The host is healthy, but a rehearsal without its own gateway must fail.
+    await expect(health('site_ready', drill)).rejects.toThrow();
+    await run('docker', ['compose', '-p', project + '-drill', '-f', drill, 'up', '-d']);
+    const drillGateway = (
+      await run('docker', ['compose', '-p', project + '-drill', '-f', drill, 'ps', '-q', 'nginx'])
+    ).stdout.trim();
+    await run('docker', [
+      'exec',
+      drillGateway,
+      'sh',
+      '-c',
+      'mkdir -p /usr/share/nginx/html/api; printf drill > /usr/share/nginx/html/api/health',
+    ]);
+    await health('site_ready', drill, neighbor);
+    await health('api_ready', drill, neighbor);
+  }, 60_000);
 
 });

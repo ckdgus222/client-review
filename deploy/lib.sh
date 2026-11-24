@@ -31,11 +31,55 @@ read_marker() {
     fi
 }
 
-# api가 nginx를 거쳐 응답할 때까지 기다린다. 운영 nginx는 서버 포트를 열지 않아서 nginx 컨테이너 안에서 묻는다.
+
+# The host overlay opts in explicitly. Isolated restore rehearsals keep their own gateway.
+using_host_nginx() {
+    local files file
+    IFS=: read -ra files <<< "$(setting COMPOSE_FILE docker-compose.yml)"
+    for file in "${files[@]}"; do
+        if [ "${file##*/}" = docker-compose.host.yml ]; then return 0; fi
+    done
+    return 1
+}
+
+host_route_ready() (
+    local route=$1 url host port headers body
+    url=$(setting PUBLIC_URL) || return 1
+    [[ "$url" =~ ^https://([a-z0-9.-]+)(:([0-9]+))?$ ]] || return 1
+    host=${BASH_REMATCH[1]}
+    port=${BASH_REMATCH[3]:-443}
+    headers=$(mktemp) || return 1
+    trap 'rm -f "$headers"' EXIT
+    body=$(curl -q --noproxy '*' --silent --show-error --fail --max-time 5 \
+        --resolve "$host:$port:127.0.0.1" -D "$headers" "$url$route") || return 1
+    tr -d '\r' < "$headers" | grep -iqx 'X-Client-Review-Site: client-review' || return 1
+    if [ "$route" = /api/health ]; then
+        [[ "$body" = '{"status":"ok"}' ]]
+    else
+        [[ "$body" == *'<title>client-review: 외주 작업 검수</title>'* ]]
+    fi
+)
+
+site_ready() {
+    if using_host_nginx; then
+        host_route_ready /
+    else
+        docker compose exec -T nginx wget -qO /dev/null -T 5 http://127.0.0.1/
+    fi
+}
+
+api_ready() {
+    if using_host_nginx; then
+        host_route_ready /api/health
+    else
+        docker compose exec -T nginx wget -qO /dev/null -T 5 http://127.0.0.1/api/health
+    fi
+}
+# 운영은 실제 HTTPS 사이트, 복원 연습은 그 묶음의 nginx에서 API 응답을 확인한다.
 # 5초마다 묻고 HEALTH_WAIT_SECONDS(기본 60초)가 지나면 실패다.
 wait_for_api() {
     local deadline=$((SECONDS + ${HEALTH_WAIT_SECONDS:-60}))
-    until docker compose exec -T nginx wget -qO /dev/null -T 5 http://127.0.0.1/api/health 2>/dev/null; do
+    until api_ready 2>/dev/null; do
         if [ "$SECONDS" -ge "$deadline" ]; then
             return 1
         fi
