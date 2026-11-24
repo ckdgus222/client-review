@@ -6,11 +6,12 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-# 2단계: nginx에 설정, 소개·약관 파일, web 빌드 결과만 넣는다.
-# 브라우저 e2e(e2e/playwright.config.ts)도 같은 이미지로 소개 주소를 확인한다. 판을 바꾸면 두 곳을 함께 고친다.
+# 같은 정적 파일을 호스트 배포와 컨테이너 배포에서 사용한다.
+FROM scratch AS public-site
+COPY landing/ /
+COPY --from=web /web/dist /app
+
 FROM nginx:1.30-alpine
 COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
 COPY nginx/landing.conf nginx/client-ip.conf nginx/limit-zones.conf nginx/login-limit.conf /etc/nginx/
-# nginx 기본 index.html을 소개 페이지로 덮어쓴다.
-COPY landing/ /usr/share/nginx/html/
-COPY --from=web /web/dist /usr/share/nginx/html/app
+COPY --from=public-site / /usr/share/nginx/html/

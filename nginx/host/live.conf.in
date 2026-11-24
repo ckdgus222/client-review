@@ -1,0 +1,18 @@
+    location = /app { return 301 /app/; }
+    location /app/assets/ { return 404; }
+    location /app/fonts/ { return 404; }
+    location ~* ^/app/.+\.(?:js|css|woff2|webp)$ { return 404; }
+    location /app/ { try_files $uri $uri/ /app/index.html; }
+    location ~* ^/api/auth/email-code/?$ {
+        limit_req zone=client_review_login burst=5 nodelay;
+        limit_req_status 429;
+        error_page 429 = @review_ip_limited;
+        proxy_pass http://127.0.0.1:@API_PORT@;
+    }
+    location @review_ip_limited {
+        default_type application/json;
+        return 429 '{"statusCode":429,"code":"IP_RATE_LIMITED"}';
+    }
+    location /api/ { proxy_pass http://127.0.0.1:@API_PORT@; }
+    location = /404.html { internal; try_files /404.html =404; }
+    location / { error_page 404 /404.html; return 404; }
