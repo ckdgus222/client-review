@@ -1,0 +1,19 @@
+# Select with the base compose file when the Ubuntu host serves HTTPS.
+services:
+  db:
+    restart: unless-stopped
+
+  api:
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${REVIEW_API_PORT:-14100}:4100"
+    environment:
+      APP_ORIGINS: ${PUBLIC_URL:?Set PUBLIC_URL}
+      APP_URL: ${PUBLIC_URL:?Set PUBLIC_URL}
+      COOKIE_SECURE: "true"
+      MAIL_MODE: smtp
+
+  nginx:
+    profiles: [legacy-proxy]
+    ports: !reset []
+    restart: "no"
