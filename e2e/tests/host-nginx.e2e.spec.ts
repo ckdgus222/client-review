@@ -1,6 +1,6 @@
 import { test, expect, type HostResponse } from './host-nginx-fixtures.ts'
-import { createSite, domain } from '../../api/test/host-nginx-fixture';
-import { rm } from 'node:fs/promises';
+import { createSite, domain, run as runFixtureCommand } from '../../api/test/host-nginx-fixture';
+import { readlink, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
 
@@ -197,6 +197,23 @@ test.describe('공용 nginx', () => {
         await site.release('activate');
         await checkPage('second');
         expect(await asset('first.js')).toMatchObject({status: 200, body: expect.stringContaining('first')});
+        expect(await asset('first.css')).toMatchObject({status: 200, type: expect.stringContaining('text/css')});
+        // Model interruption between the current-link swap and publication of the previous link.
+        const previous = path.join(site.root, 'previous');
+        const pending = path.join(site.root, '.prior');
+        await rename(previous, pending);
+        const priorTarget = await readlink(pending);
+        await expect.poll(async () => {
+          const { stdout } = await runFixtureCommand('docker', ['exec', site.name, 'ls', '-la', '/srv/review']);
+          return stdout.includes('.prior -> ' + priorTarget) && !stdout.includes('previous ->');
+        }).toBe(true);
+        await expect(readlink(previous)).rejects.toMatchObject({code: 'ENOENT'});
+        expect(await asset('first.js')).toMatchObject({status: 200, body: expect.stringContaining('first')});
+        expect((await asset('never-published.js')).status).toBe(404);
+        await site.release('prepare');
+        expect(await readlink(previous)).toBe(priorTarget);
+        await expect(readlink(pending)).rejects.toMatchObject({code: 'ENOENT'});
+        await checkPage('second');
         expect(await asset('first.css')).toMatchObject({status: 200, type: expect.stringContaining('text/css')});
         const broken = await site.newRelease('third');
         await rm(path.join(broken, 'app/assets/third.js'));

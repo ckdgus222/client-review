@@ -34,3 +34,5 @@ Use an operator-approved window. Hold both applications' maintenance locks in a 
 - After the next scheduled boot verify services, certificates, mount dependencies, both site checks and backup/restore operational checks. Keep legacy listeners disabled and available for rollback until those checks pass. Removing the old edge network requires checking all its remaining users.
 
 The public repositories hold templates and synthetic test values only. Inspect the staged paths and diff before every commit. Real host settings, generated vhosts, private keys, OAuth material and operational records belong outside the worktree.
+
+During an update, the release directory keeps the starting revision in `.update-baseline`. After a power loss, run the normal `deploy/update.sh --retry` procedure. Keep the baseline and release links in place. The release tool finishes an interrupted link change under its lock and a failed check restores the original revision. Finish any legacy update or restore before selecting the host Compose overlay.

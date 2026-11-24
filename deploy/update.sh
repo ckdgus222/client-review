@@ -15,6 +15,7 @@ marker=$(read_marker)
 services=(db api)
 if using_host_nginx; then
     release_root=$(setting REVIEW_RELEASE_ROOT)
+    baseline_file=$release_root/.update-baseline
 else
     services+=(nginx)
 fi
@@ -36,6 +37,13 @@ else
             exit 1
         fi
     done
+    if using_host_nginx; then
+        baseline=$(readlink "$release_root/current")
+        [[ "$baseline" =~ ^releases/[a-f0-9]{40}$ ]] || { echo "기존 정적 릴리스를 확인하세요" >&2; exit 1; }
+        temp=$(mktemp "$release_root/.baseline.XXXXXXXX")
+        printf '%s\n' "$baseline" > "$temp"
+        mv -f "$temp" "$baseline_file"
+    fi
     # 컨테이너를 바꾸기 전에 표시를 남긴다. 어디서 실패하거나 끊겨도 표시가 남아 --retry로 다시 할 수 있다.
     echo update > "$MARKER_FILE"
 fi
@@ -49,6 +57,8 @@ trap report_failure EXIT
 
 git pull --ff-only
 if using_host_nginx; then
+    baseline=$(cat "$baseline_file")
+    [[ "$baseline" =~ ^releases/[a-f0-9]{40}$ ]] || { echo "원복할 정적 릴리스를 확인하세요" >&2; exit 1; }
     python3 deploy/static-release.py prepare "$release_root"
 fi
 docker compose up -d --build
@@ -58,11 +68,10 @@ if ! wait_for_api; then
     exit 1
 fi
 if using_host_nginx; then
-    prior_release=$(readlink "$release_root/current")
     python3 deploy/static-release.py activate "$release_root"
     if ! site_ready; then
-        if [ "$(readlink "$release_root/current")" != "$prior_release" ]; then
-            python3 deploy/static-release.py rollback "$release_root"
+        if [ "$(readlink "$release_root/current")" != "$baseline" ]; then
+            python3 deploy/static-release.py rollback "$release_root" --to "${baseline#releases/}"
         fi
         echo "새 정적 화면 확인 실패" >&2
         exit 1
@@ -72,4 +81,5 @@ elif ! site_ready; then
     exit 1
 fi
 rm "$MARKER_FILE"
+if using_host_nginx; then rm -f "$baseline_file"; fi
 echo "업데이트를 마쳤어요"

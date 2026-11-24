@@ -11,6 +11,6 @@
     location ~ ^/(?:app/)?fonts/[a-zA-Z0-9._-]+\.woff2$ { try_files $uri =404; }
     location ~ ^/app/assets/[a-zA-Z0-9._-]+\.(?:js|css|webp)$ {
         root @RELEASE_ROOT@;
-        try_files /current$uri /previous$uri =404;
+        try_files /current$uri /.prior$uri /previous$uri =404;
     }
     location = /api/health { proxy_pass http://127.0.0.1:@API_PORT@/api/health; }

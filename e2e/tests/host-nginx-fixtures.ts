@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process'
 import { createHash, createPublicKey, randomUUID } from 'node:crypto'
-import { existsSync } from 'node:fs'
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -31,23 +30,29 @@ type HostNginx = {
 }
 
 // 각 테스트는 새 nginx와 제한 카운터를 쓴다. 기존 e2e nginx·DB·운영 설정은 바꾸지 않는다.
-export const test = base.extend<{ hostNginx: HostNginx }>({
-  hostNginx: async ({}, use) => {
+export const test = base.extend<{ hostNginx: HostNginx }, { publicBuild: string }>({
+  publicBuild: [async ({}, use) => {
+    const output = await mkdtemp(path.join(tmpdir(), 'review-host-web-'))
+    try {
+      await run('npm', ['--prefix', path.join(repo, 'web'), 'run', 'build', '--', '--outDir', output], { timeout: 120_000 })
+      await use(output)
+    } finally {
+      await rm(output, { recursive: true, force: true })
+    }
+  }, { scope: 'worker' }],
+  hostNginx: async ({ publicBuild }, use) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'review-host-nginx-'))
     const name = `review-host-${randomUUID()}`
     const backend = `${name}-backend`
     const containers: string[] = []
     try {
       await run('docker', ['version', '--format', '{{.Server.Version}}'], { timeout: 10_000 })
-      if (!existsSync(path.join(repo, 'web/dist/index.html'))) {
-        await run('npm', ['--prefix', path.join(repo, 'web'), 'run', 'build'], { timeout: 120_000 })
-      }
       const certificates = path.join(directory, 'certificates')
       await mkdir(certificates)
       await mkdir(path.join(directory, 'acme'))
       await mkdir(path.join(directory, 'releases/current'), { recursive: true })
       await cp(path.join(repo, 'landing'), path.join(directory, 'releases/current'), { recursive: true })
-      await cp(path.join(repo, 'web/dist'), path.join(directory, 'releases/current/app'), { recursive: true })
+      await cp(publicBuild, path.join(directory, 'releases/current/app'), { recursive: true })
 
       // 개인키는 임시 디렉터리에서만 만들고 테스트가 끝나면 지운다.
       await run('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2',

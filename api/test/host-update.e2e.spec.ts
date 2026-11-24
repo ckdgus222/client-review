@@ -57,7 +57,8 @@ describe('호스트 업데이트', () => {
       const tree = await git(['mktree'], remote, '');
       const oldRevision = await git(['commit-tree', tree, '-m', 'old']);
       const failedRevision = await git(['commit-tree', tree, '-p', oldRevision, '-m', 'broken page']);
-      const fixedRevision = await git(['commit-tree', tree, '-p', failedRevision, '-m', 'fixed page']);
+      const brokenRetryRevision = await git(['commit-tree', tree, '-p', failedRevision, '-m', 'broken retry page']);
+      const fixedRevision = await git(['commit-tree', tree, '-p', brokenRetryRevision, '-m', 'fixed page']);
       await git(['update-ref', 'refs/heads/main', oldRevision]);
       await git(['clone', '-q', '--no-hardlinks', remote, checkout], directory);
       await mkdir(path.join(checkout, 'deploy'));
@@ -66,10 +67,12 @@ describe('호스트 업데이트', () => {
       }
 
       // 빌드된 릴리스를 준비하고 실제 prepare 검사·activate·rollback을 실행한다.
-      for (const revision of [oldRevision, failedRevision, fixedRevision]) {
+      for (const revision of [oldRevision, failedRevision, brokenRetryRevision, fixedRevision]) {
         const site = path.join(releases, 'releases', revision);
         await mkdir(path.join(site, 'app/assets'), { recursive: true });
-        const title = revision === failedRevision ? 'broken page' : 'client-review: 외주 작업 검수';
+        const title = [failedRevision, brokenRetryRevision].includes(revision)
+          ? 'broken page'
+          : 'client-review: 외주 작업 검수';
         const html = `<title>${title}</title><link rel="stylesheet" href="/landing.css"><p>${revision}</p>`;
         for (const file of ['index.html', 'privacy.html', 'terms.html', '404.html']) {
           await writeFile(path.join(site, file), html);
@@ -122,6 +125,12 @@ if command == 'curl':
     current = Path(os.environ['REVIEW_RELEASE_ROOT']) / 'current'
     with (root / 'requests.jsonl').open('a') as log:
         log.write(json.dumps({'url': url, 'release': os.readlink(current)}) + '\\n')
+    interrupted = root / 'interrupt-fixture-update.pid'
+    if url.endswith('/') and interrupted.exists():
+        pid = int(interrupted.read_text())
+        interrupted.unlink()
+        os.kill(pid, 9)
+        sys.exit(1)
     Path(args[11]).write_text('HTTP/1.1 200 OK\\r\\nX-Client-Review-Site: client-review\\r\\n\\r\\n')
     print('{"status":"ok"}' if url.endswith('/api/health') else (current / 'index.html').read_text())
     sys.exit(0)
@@ -153,11 +162,32 @@ raise RuntimeError('unexpected fixture command')
         { url: 'https://review.example.test/', release: `releases/${failedRevision}` },
       ]);
 
+      const baselineFile = path.join(releases, '.update-baseline');
+      expect((await readFile(baselineFile, 'utf8')).trim()).toBe(`releases/${oldRevision}`);
+      // Stop our own isolated Bash process after the new 'current' is visible but before its health check returns.
+      await expect(
+        run('bash', [
+          '-c',
+          'echo "$$" > "$FIXTURE_ROOT/interrupt-fixture-update.pid"; exec bash deploy/update.sh --retry',
+        ]),
+      ).rejects.toMatchObject({ signal: 'SIGKILL' });
+      expect(await readlink(path.join(releases, 'current'))).toBe(`releases/${failedRevision}`);
+      expect((await readFile(baselineFile, 'utf8')).trim()).toBe(`releases/${oldRevision}`);
+      expect(await readFile(path.join(checkout, '.maintenance'), 'utf8')).toBe('update\n');
+      // A second bad commit would make 'previous' point to another bad release. Roll back to the original baseline.
+      await git(['update-ref', 'refs/heads/main', brokenRetryRevision]);
+      const failedRetry = await run('bash', ['deploy/update.sh', '--retry']);
+      expect(failedRetry).toMatchObject({ code: 1, stderr: expect.stringContaining('새 정적 화면 확인 실패') });
+      expect(await git(['rev-parse', 'HEAD'], checkout)).toBe(brokenRetryRevision);
+      expect(await readlink(path.join(releases, 'current'))).toBe(`releases/${oldRevision}`);
+      expect((await readFile(baselineFile, 'utf8')).trim()).toBe(`releases/${oldRevision}`);
+      expect(await readFile(path.join(checkout, '.maintenance'), 'utf8')).toBe('update\n');
+
       await git(['update-ref', 'refs/heads/main', fixedRevision]);
       const blocked = await run('bash', ['deploy/update.sh']);
       expect(blocked).toMatchObject({ code: 1 });
       expect(blocked.stderr).toContain('점검 중이라 업데이트하지 않아요(표시: update)');
-      expect(await git(['rev-parse', 'HEAD'], checkout)).toBe(failedRevision);
+      expect(await git(['rev-parse', 'HEAD'], checkout)).toBe(brokenRetryRevision);
       expect(await readlink(path.join(releases, 'current'))).toBe(`releases/${oldRevision}`);
       expect(await readFile(path.join(checkout, '.maintenance'), 'utf8')).toBe('update\n');
 
@@ -169,14 +199,19 @@ raise RuntimeError('unexpected fixture command')
       expect(await readlink(path.join(releases, 'previous'))).toBe(`releases/${oldRevision}`);
       expect(await readFile(path.join(releases, 'current/index.html'), 'utf8')).toContain(fixedRevision);
       await expect(stat(path.join(checkout, '.maintenance'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(baselineFile)).rejects.toMatchObject({ code: 'ENOENT' });
       expect(await readFile(path.join(directory, 'db.json'), 'utf8')).toBe(databaseBefore);
-      expect((await readFile(path.join(directory, 'alerts.txt'), 'utf8')).trim().split('\n')).toHaveLength(1);
+      expect((await readFile(path.join(directory, 'alerts.txt'), 'utf8')).trim().split('\n')).toHaveLength(2);
       const requests = (await readFile(path.join(directory, 'requests.jsonl'), 'utf8'))
         .trim()
         .split('\n')
         .map((line) => JSON.parse(line));
       expect(requests).toEqual([
         ...failedRequests,
+        { url: 'https://review.example.test/api/health', release: `releases/${oldRevision}` },
+        { url: 'https://review.example.test/', release: `releases/${failedRevision}` },
+        { url: 'https://review.example.test/api/health', release: `releases/${failedRevision}` },
+        { url: 'https://review.example.test/', release: `releases/${brokenRetryRevision}` },
         { url: 'https://review.example.test/api/health', release: `releases/${oldRevision}` },
         { url: 'https://review.example.test/', release: `releases/${fixedRevision}` },
       ]);
@@ -185,6 +220,8 @@ raise RuntimeError('unexpected fixture command')
         .split('\n')
         .map((line) => JSON.parse(line));
       expect(dockerCalls.filter((args) => args[1] === 'up')).toEqual([
+        ['compose', 'up', '-d', '--build'],
+        ['compose', 'up', '-d', '--build'],
         ['compose', 'up', '-d', '--build'],
         ['compose', 'up', '-d', '--build'],
       ]);

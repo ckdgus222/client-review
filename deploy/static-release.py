@@ -105,7 +105,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("prepare", "activate", "rollback"))
     parser.add_argument("root", type=Path)
+    parser.add_argument("--to", metavar="REVISION", help="restore a specific prepared release on rollback")
     args = parser.parse_args()
+    if args.to is not None and (args.command != "rollback" or not REVISION.fullmatch(args.to)):
+        parser.error("--to requires rollback and a full Git commit hash")
     root = args.root
     if not root.is_absolute() or root.is_symlink() or not root.is_dir() or root == Path("/"):
         parser.error("provide an existing, dedicated absolute release root")
@@ -116,12 +119,17 @@ def main():
     with (root / ".release.lock").open("a") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         current = current_revision(root, "current")
+        prior = current_revision(root, ".prior")
+        if prior:
+            if current != prior:
+                switch(root, "previous", prior)
+            (root / ".prior").unlink()
         previous = current_revision(root, "previous")
         revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
         if args.command == "rollback":
-            if not previous:
+            if not args.to and not previous:
                 parser.error("no previous release")
-            revision = previous
+            revision = args.to or previous
         if not REVISION.fullmatch(revision):
             parser.error("invalid release identifier")
         target = releases / revision
@@ -131,8 +139,11 @@ def main():
         validate(target)
         if args.command != "prepare" and current != revision:
             if current:
-                switch(root, "previous", current)
+                switch(root, ".prior", current)
             switch(root, "current", revision)
+            if current:
+                switch(root, "previous", current)
+                (root / ".prior").unlink()
         print(revision)
 
 
