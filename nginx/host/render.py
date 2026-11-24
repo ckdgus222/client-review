@@ -18,9 +18,10 @@ def domain(value):
 
 def directory(value):
     path = PurePosixPath(value)
+    public_bases = (PurePosixPath("/srv"), PurePosixPath("/var/www"))
     if (not re.fullmatch(r"/[a-zA-Z0-9_./-]+", value) or str(path) != value
-            or value.startswith("//") or ".." in path.parts or len(path.parts) < 3):
-        raise argparse.ArgumentTypeError("expected a dedicated absolute directory")
+            or ".." in path.parts or not any(base in path.parents for base in public_bases)):
+        raise argparse.ArgumentTypeError("expected a dedicated directory under /srv or /var/www")
     return value
 
 
@@ -49,7 +50,7 @@ def main():
         parser.error("public files and ACME challenges must have separate roots")
     http = args.http_port or (18080 if args.candidate else 80)
     https = args.https_port or (18443 if args.candidate else 443)
-    if len({http, https, args.api_port}) != 3 or (args.candidate and min(http, https) < 1024):
+    if args.api_port < 1024 or len({http, https, args.api_port}) != 3 or (args.candidate and min(http, https) < 1024):
         parser.error("pick separate ports and unprivileged candidate listeners")
     template = (HERE / "site.conf.in").read_text()
     routes = "    return 503;\n"

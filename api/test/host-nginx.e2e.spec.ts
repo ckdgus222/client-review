@@ -285,6 +285,20 @@ describe('호스트 배포', () => {
     expect((await admin.exec('cat', admin.active)).stdout).toBe(preview);
     expect(await admin.http(domain, '/api/health')).toBe('{"status":"ok"}\n200');
     await healthy();
+
+    // Simulate power loss after replacing the file but before retiring the rollback journal.
+    const pending = '/etc/nginx/host-ops/pending';
+    await admin.exec('mkdir', pending);
+    await admin.put('review\n', pending + '/site');
+    await admin.put(preview, pending + '/previous.conf');
+    await admin.put('not_valid_nginx_directive;', admin.active);
+    await admin.apply('recover');
+    await admin.apply('recover');
+    expect((await admin.exec('cat', admin.active)).stdout).toBe(preview);
+    await admin.exec('nginx', '-t');
+    await admin.apply('reload');
+    expect(await admin.http(domain, '/api/health')).toBe('{"status":"ok"}\n200');
+    await healthy();
   }, 420_000);
 
   it('겹친 작업은 이전 릴리스와 잠금 상태를 보존한다', async () => {
@@ -351,6 +365,9 @@ describe('호스트 배포', () => {
       ['--domain', 'bad domain'],
       ['--cert-name', '../lineage'],
       ['--api-port', '65536'],
+      ['--api-port', '80'],
+      ['--release-root', '/etc/example'],
+      ['--acme-root', '/home/example'],
       ['--release-root', '/srv/acme'],
       ['--release-root', 'relative/path'],
     ]) {
@@ -358,6 +375,11 @@ describe('호스트 배포', () => {
     }
     const original = await readlink(path.join(site.root, 'current'));
     const files = await site.newRelease('not-public');
+    for (const suffix of ['js', 'css', 'woff2']) {
+      const missing = await site.http('/app/missing.' + suffix);
+      expect(missing.status).toBe(404);
+      expect(missing.body).not.toContain('/app/assets/original.js');
+    }
     for (const relative of ['.env', 'app/assets/backup.json']) {
       const file = path.join(files, relative);
       await writeFile(file, 'synthetic private marker');
