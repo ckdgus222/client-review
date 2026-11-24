@@ -71,6 +71,9 @@ def main():
         "HTTPS_IPV6": "" if args.candidate else f"listen [::]:{https} ssl;",
         "ACME_ROOT": args.acme_root, "RELEASE_ROOT": args.release_root, "API_PORT": str(args.api_port),
     }
+    for page in ("index", "privacy", "terms"):
+        fallback = f"/{page}.html"
+        fields[f"{page.upper()}_FILES"] = f"/preview-{page}.html {fallback}" if args.mode == "preview" else fallback
     template = f"# review-mode: {args.mode}\n" + template.replace("@ROUTES@", routes.rstrip())
     print(re.sub(r"@([A-Z0-9_]+)@", lambda match: fields[match[1]], template), end="")
 

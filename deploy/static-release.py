@@ -128,6 +128,25 @@ def switch(root, name, revision):
         os.replace(link, root / name)
 
 
+def prepare_public_pages(folder):
+    # Only the preview deployment hides membership navigation. Full-service HTML
+    # and private SPA routes retain their own navigation and sharing identity.
+    for name in ("index", "privacy", "terms"):
+        source = (folder / f"{name}.html").read_text()
+        preview = re.sub(r"<a\s+data-member-entry\b[^>]*>.*?</a>", "", source, flags=re.DOTALL)
+        if 'property="og:image"' in source:
+            if 'href="/app/login"' in preview:
+                raise ValueError("preview document links to member login")
+            with (folder / f"preview-{name}.html").open("x") as page:
+                page.write(preview)
+    app = (folder / "app/index.html").read_text()
+    if 'property="og:image"' in app:
+        url = PUBLIC_ORIGIN + "/app/demo"
+        address = f'<link rel="canonical" href="{url}" />\n    <meta property="og:url" content="{url}" />'
+        with (folder / "app/demo.html").open("x") as page:
+            page.write(app.replace("</head>", address + "\n  </head>", 1))
+
+
 @contextmanager
 def public_build(root, revision):
     with tempfile.TemporaryDirectory(prefix=".build-", dir=root) as tmp:
@@ -140,6 +159,8 @@ def public_build(root, revision):
         with archive.open("rb") as stream:
             subprocess.run(["docker", "build", "--file", "nginx/Dockerfile", "--target", "public-site",
                             "--output", f"type=local,dest={public}", "-"], stdin=stream, check=True)
+        validate(public)
+        prepare_public_pages(public)
         validate(public)
         yield public
 
