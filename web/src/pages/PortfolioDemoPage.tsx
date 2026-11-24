@@ -100,7 +100,7 @@ const DemoSession = ({ onRestart }: { onRestart: () => void }) => {
       <p className={styles.intro}>샘플 사진에 쪽지를 남기고, 개발자와 고객 역할을 바꿔 승인까지 체험하세요. 이 탭에서만 진행되며 새로고침하면 처음으로 돌아갑니다.</p>
       <section className={styles.walkthrough} aria-labelledby="demo-next-heading">
         <div>
-          <h2 id="demo-next-heading">지금 할 일</h2>
+          <h2 id="demo-next-heading">사용 가이드</h2>
           <span>{walkthroughPhase(stage)}</span>
         </div>
         <p>{nextInstruction(state, !!pin, !!title.trim())}</p>
