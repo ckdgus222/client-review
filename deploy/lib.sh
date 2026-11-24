@@ -56,7 +56,9 @@ host_route_ready() (
     if [ "$route" = /api/health ]; then
         [[ "$body" = '{"status":"ok"}' ]]
     else
-        [[ "$body" == *'<title>client-review: 외주 작업 검수</title>'* ]]
+        # 이전 릴리스로 복원할 때도 첫 화면을 확인한다.
+        [[ "$body" == *'<title>client-review: 웹사이트 화면 검수·승인</title>'* ||
+           "$body" == *'<title>client-review: 외주 작업 검수</title>'* ]]
     fi
 )
 
