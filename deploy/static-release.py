@@ -78,6 +78,15 @@ def current_revision(root, link):
     return target.name
 
 
+def allow_web_reads(folder):
+    # BuildKit's local exporter may create the release root with mode 0700.
+    # This tree contains only files already checked by validate().
+    for entry in [folder, *folder.rglob("*")]:
+        mode = 0o755 if entry.is_dir() else 0o644
+        if entry.stat().st_mode & 0o7777 != mode:
+            entry.chmod(mode)
+
+
 def switch(root, name, revision):
     with tempfile.TemporaryDirectory(dir=root) as tmp:
         link = Path(tmp) / name
@@ -116,6 +125,7 @@ def main():
     if releases.is_symlink():
         parser.error("releases must be a local directory")
     releases.mkdir(exist_ok=True)
+    releases.chmod(0o755)
     with (root / ".release.lock").open("a") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         current = current_revision(root, "current")
@@ -137,6 +147,7 @@ def main():
             with public_build(root, revision) as site:
                 os.replace(site, target)
         validate(target)
+        allow_web_reads(target)
         if args.command != "prepare" and current != revision:
             if current:
                 switch(root, ".prior", current)

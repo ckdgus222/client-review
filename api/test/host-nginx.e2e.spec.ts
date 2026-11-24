@@ -391,4 +391,41 @@ describe('호스트 배포', () => {
       await rm(file);
     }
   });
+
+  it('빌드 산출물을 nginx 실행 계정이 읽을 수 있다', async () => {
+    const before = await site.http('/app/demo');
+    expect(before.status).toBe(200);
+    const previous = await readlink(path.join(site.root, 'current'));
+    const build = await site.newRelease('restricted');
+    await run('find', [build, '-type', 'd', '-exec', 'chmod', '0700', '{}', '+']);
+    await run('find', [build, '-type', 'f', '-exec', 'chmod', '0600', '{}', '+']);
+    // Check access on native Linux inodes as well as the live bind mount used by Docker Desktop.
+    const readAsWorker = async (destination: string) => {
+      await run('docker', ['cp', build, site.name + ':' + destination]);
+      return run('docker', ['exec', '--user', 'nginx', site.name, 'cat', destination + '/app/index.html']);
+    };
+    await expect(readAsWorker('/tmp/release-before-prepare')).rejects.toMatchObject({
+      stderr: expect.stringContaining('Permission denied'),
+    });
+    await site.release('prepare');
+    expect((await readAsWorker('/tmp/release-after-prepare')).stdout).toContain('/app/assets/restricted.js');
+    expect(await readlink(path.join(site.root, 'current'))).toBe(previous);
+    await site.release('activate');
+    try {
+      const demo = await site.http('/app/demo');
+      expect(demo.status).toBe(200);
+      expect(demo.body).toContain('/app/assets/restricted.js');
+      expect(demo.body).toContain('/app/assets/restricted.css');
+      expect(await site.http('/app/assets/restricted.js')).toMatchObject({
+        status: 200, body: expect.stringContaining('textContent = "restricted"'),
+      });
+      expect(await site.http('/app/assets/restricted.css')).toMatchObject({
+        status: 200, body: expect.stringContaining('/* restricted */'),
+      });
+    } finally {
+      await site.release('rollback');
+    }
+    expect(await readlink(path.join(site.root, 'current'))).toBe(previous);
+    expect(await site.http('/app/demo')).toEqual(before);
+  }, 30_000);
 });
