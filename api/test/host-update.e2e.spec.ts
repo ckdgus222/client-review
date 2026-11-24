@@ -174,7 +174,18 @@ raise RuntimeError('unexpected fixture command')
       expect(await readlink(path.join(releases, 'current'))).toBe(`releases/${failedRevision}`);
       expect((await readFile(baselineFile, 'utf8')).trim()).toBe(`releases/${oldRevision}`);
       expect(await readFile(path.join(checkout, '.maintenance'), 'utf8')).toBe('update\n');
-      // A second bad commit would make 'previous' point to another bad release. Roll back to the original baseline.
+      // The remote is intentionally unavailable on the first retry after interruption.
+      // Even though git pull fails, the pre-update screen must already be back online.
+      await git(['remote', 'set-url', 'origin', path.join(directory, 'unavailable-remote')], checkout);
+      const unavailable = await run('bash', ['deploy/update.sh', '--retry']);
+      expect(unavailable.code).not.toBe(0);
+      expect(unavailable.stderr).toContain('unavailable-remote');
+      expect(await git(['rev-parse', 'HEAD'], checkout)).toBe(failedRevision);
+      expect(await readlink(path.join(releases, 'current'))).toBe(`releases/${oldRevision}`);
+      expect((await readFile(baselineFile, 'utf8')).trim()).toBe(`releases/${oldRevision}`);
+      expect(await readFile(path.join(checkout, '.maintenance'), 'utf8')).toBe('update\n');
+      await git(['remote', 'set-url', 'origin', remote], checkout);
+      // A second bad commit still rolls back to the same original release.
       await git(['update-ref', 'refs/heads/main', brokenRetryRevision]);
       const failedRetry = await run('bash', ['deploy/update.sh', '--retry']);
       expect(failedRetry).toMatchObject({ code: 1, stderr: expect.stringContaining('새 정적 화면 확인 실패') });
@@ -201,7 +212,7 @@ raise RuntimeError('unexpected fixture command')
       await expect(stat(path.join(checkout, '.maintenance'))).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(stat(baselineFile)).rejects.toMatchObject({ code: 'ENOENT' });
       expect(await readFile(path.join(directory, 'db.json'), 'utf8')).toBe(databaseBefore);
-      expect((await readFile(path.join(directory, 'alerts.txt'), 'utf8')).trim().split('\n')).toHaveLength(2);
+      expect((await readFile(path.join(directory, 'alerts.txt'), 'utf8')).trim().split('\n')).toHaveLength(3);
       const requests = (await readFile(path.join(directory, 'requests.jsonl'), 'utf8'))
         .trim()
         .split('\n')
@@ -210,7 +221,7 @@ raise RuntimeError('unexpected fixture command')
         ...failedRequests,
         { url: 'https://review.example.test/api/health', release: `releases/${oldRevision}` },
         { url: 'https://review.example.test/', release: `releases/${failedRevision}` },
-        { url: 'https://review.example.test/api/health', release: `releases/${failedRevision}` },
+        { url: 'https://review.example.test/api/health', release: `releases/${oldRevision}` },
         { url: 'https://review.example.test/', release: `releases/${brokenRetryRevision}` },
         { url: 'https://review.example.test/api/health', release: `releases/${oldRevision}` },
         { url: 'https://review.example.test/', release: `releases/${fixedRevision}` },

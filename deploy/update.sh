@@ -55,16 +55,21 @@ report_failure() {
 }
 trap report_failure EXIT
 
-git pull --ff-only
 if using_host_nginx; then
     baseline=$(cat "$baseline_file")
     [[ "$baseline" =~ ^releases/[a-f0-9]{40}$ ]] || { echo "원복할 정적 릴리스를 확인하세요" >&2; exit 1; }
+    if [ "${1:-}" = --retry ] && [ "$(readlink "$release_root/current")" != "$baseline" ]; then
+        python3 deploy/static-release.py rollback "$release_root" --to "${baseline#releases/}"
+    fi
+fi
+git pull --ff-only
+if using_host_nginx; then
     python3 deploy/static-release.py prepare "$release_root"
 fi
 docker compose up -d --build
 # api만이 아니라 소개 페이지(nginx가 직접 내준다)도 본다.
 if ! wait_for_api; then
-    echo "api가 응답하지 않아요" >&2
+    echo "응답 확인에 실패했어요. api가 응답하지 않아요" >&2
     exit 1
 fi
 if using_host_nginx; then
