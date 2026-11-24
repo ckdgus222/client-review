@@ -2,6 +2,77 @@ import { test, expect, resetDatabase, createUser } from './fixtures.ts'
 
 test.use({ baseURL: 'http://localhost:4103' })
 
+test('소개와 공유 문구가 웹사이트 화면 검수·승인을 설명한다', async ({ page }) => {
+  const response = await page.goto('/')
+
+  expect(response?.status()).toBe(200)
+  const title = 'client-review: 웹사이트 화면 검수·승인'
+  await expect(page).toHaveTitle(title)
+  await expect(page.locator('meta[property="og:title"]')).toHaveAttribute('content', title)
+
+  // 문장이나 구두점 대신 소개 본문과 검색·공유 설명 각각의 역할과 흐름을 확인한다.
+  const workflow = [
+    /웹사이트/,
+    /개발자[\s\S]*화면[\s\S]*올/,
+    /고객[\s\S]*(위치|고칠|수정할|자리)/,
+    /비교/,
+    /버전[\s\S]*승인/,
+  ]
+  const introduction = page.locator('main .lead')
+  await expect(introduction).toBeVisible()
+  for (const meaning of workflow) {
+    await expect(introduction).toContainText(meaning)
+  }
+  for (const selector of ['meta[name="description"]', 'meta[property="og:description"]']) {
+    const description = page.locator(selector)
+    for (const meaning of [...workflow, /로그인\s*없이/, /데모|샘플\s*검수실/]) {
+      await expect(description).toHaveAttribute('content', meaning)
+    }
+    await expect(description).not.toHaveAttribute('content', /외주\s*작업\s*검수/)
+  }
+  await expect(page.locator('main')).not.toContainText(/외주로\s*만든|외주\s*작업\s*검수/)
+  const demo = page.getByRole('link', { name: /로그인\s*없이.*데모/ })
+  await expect(demo).toBeVisible()
+  await expect(demo).toHaveAttribute('href', '/app/demo')
+})
+
+test('방침과 약관에서 웹사이트 개발 계약과 검수 기록을 안내한다', async ({ page }) => {
+  const privacyResponse = await page.goto('/privacy')
+
+  expect(privacyResponse?.status()).toBe(200)
+  await expect(page.getByRole('heading', { level: 1, name: '개인정보처리방침', exact: true })).toBeVisible()
+  const introduction = page.locator('article .lead')
+  await expect(introduction).toBeVisible()
+  await expect(introduction).toContainText(/웹사이트[\s\S]*화면[\s\S]*검수[\s\S]*승인/)
+  await expect(page.locator('article')).not.toContainText(/외주로\s*만든|외주\s*작업|외주\s*계약/)
+
+  const records = page.getByRole('listitem').filter({ hasText: /^기록:/ })
+  await expect(records).toContainText(/승인한\s*버전/)
+  await expect(records).toContainText(/검수\s*확인서/)
+  await expect(records).toContainText(/검수[\s\S]*(기록|근거)/)
+  const basis = page.locator('p').filter({ hasText: /처리\s*근거/ })
+  await expect(basis).toBeVisible()
+  await expect(basis).toContainText(/로그인[\s\S]*동의[\s\S]*필수/)
+  await expect(basis).toContainText(/초대[\s\S]*이메일[\s\S]*웹사이트\s*개발\s*계약[\s\S]*이행[\s\S]*개발자/)
+
+  const termsResponse = await page.goto('/terms')
+
+  expect(termsResponse?.status()).toBe(200)
+  await expect(page.getByRole('heading', { level: 1, name: '이용약관', exact: true })).toBeVisible()
+  const service = page.locator('#section-1 + p')
+  await expect(service).toBeVisible()
+  await expect(service).toContainText(/개발자[\s\S]*웹사이트\s*화면[\s\S]*버전[\s\S]*올/)
+  await expect(service).toContainText(/고객[\s\S]*수정\s*요청/)
+  await expect(service).toContainText(/지정[\s\S]*사람[\s\S]*버전[\s\S]*승인[\s\S]*기록/)
+  await expect(page.locator('article')).not.toContainText(/외주\s*개발자|외주\s*작업|외주\s*계약/)
+
+  const responsibility = page.locator('#section-7 + p')
+  await expect(responsibility).toBeVisible()
+  await expect(responsibility).toContainText(/서비스[\s\S]*검수\s*기록[\s\S]*도구/)
+  await expect(responsibility).toContainText(/웹사이트\s*개발\s*계약[\s\S]*내용[\s\S]*이행[\s\S]*계약한\s*사람들\s*사이/)
+  await expect(responsibility).toContainText(/서비스의\s*잘못\s*없이[\s\S]*손해[\s\S]*책임지지\s*않/)
+})
+
 test('소개 페이지가 뜨고 시작하기를 누르면 로그인 화면이 열린다', async ({ page }) => {
   await resetDatabase()
   const user = await createUser('landing-login@example.com', '소개 페이지 사용자')
