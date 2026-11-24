@@ -568,7 +568,7 @@ describe.each([
     await screen.findByRole('button', { name: action })
     sendReview(action)
     expect(await screen.findByText(unconfirmedMessage)).toBeDefined()
-    expect(vi.mocked(getIssue).mock.calls).toEqual([[issue.id], [issue.id]])
+    await waitFor(() => expect(vi.mocked(getIssue).mock.calls).toEqual([[issue.id], [issue.id]]))
     expect(screen.getByRole('heading', { name: '#14 주문 버튼을 옮겨 주세요' })).toBeDefined()
     await act(async () => pending.resolve({ ...issue, status: 'VERIFIED' }))
     expect(screen.getByText('확인 완료').getAttribute('data-status')).toBe('VERIFIED')
