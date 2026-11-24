@@ -390,6 +390,25 @@ describe('호스트 배포', () => {
       expect(response.body).not.toContain('synthetic private marker');
       await rm(file);
     }
+    const bundle = path.join(files, 'app/assets/not-public.js');
+    const demoPhoto = '/app/assets/demo-before-test.webp';
+    const filename = path.join(files, demoPhoto.slice(1));
+    const pixel = Buffer.from('UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA', 'base64');
+    await writeFile(bundle, `const demoPhoto = "${demoPhoto}"; console.log(demoPhoto);`);
+    await writeFile(filename, pixel);
+    await rm(filename);
+    await expect(site.release('activate')).rejects.toThrow();
+    expect(await readlink(path.join(site.root, 'current'))).toBe(original);
+    expect((await site.http(demoPhoto)).status).toBe(404);
+    await writeFile(filename, pixel);
+    await site.release('activate');
+    try {
+      expect((await site.http('/app/assets/not-public.js')).body).toContain(demoPhoto);
+      expect((await site.http(demoPhoto)).status).toBe(200);
+    } finally {
+      await site.release('rollback');
+    }
+    expect(await readlink(path.join(site.root, 'current'))).toBe(original);
   });
 
   it('빌드 산출물을 nginx 실행 계정이 읽을 수 있다', async () => {

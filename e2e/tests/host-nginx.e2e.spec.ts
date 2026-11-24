@@ -1,6 +1,7 @@
 import { test, expect, type HostResponse } from './host-nginx-fixtures.ts'
 import { createSite, domain, run as runFixtureCommand } from '../../api/test/host-nginx-fixture';
-import { readlink, rename, rm } from 'node:fs/promises';
+import { readlink, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
 
@@ -173,7 +174,11 @@ test.describe('공용 nginx', () => {
   test('릴리스 전환과 실패 뒤에도 올바른 정적 자산을 받는다', async () => {
     const site = await createSite();
     try {
-      await site.newRelease('first');
+      const first = await site.newRelease('first');
+      const oldCSS = 'body { color: brown; }';
+      const cssHash = createHash('sha256').update(oldCSS).digest('hex').slice(0, 12);
+      await writeFile(path.join(first, 'landing.css'), oldCSS);
+      await writeFile(path.join(first, 'shop-example-aabbcc.webp'), Buffer.from('UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA', 'base64'));
       await site.release('activate');
       await site.start('preview');
       const browser = await chromium.launch({args: [
@@ -196,6 +201,8 @@ test.describe('공용 nginx', () => {
         await site.newRelease('second');
         await site.release('activate');
         await checkPage('second');
+        expect(await site.http('/landing.css?v=' + cssHash)).toEqual({status: 200, body: oldCSS});
+        expect((await site.http('/shop-example-aabbcc.webp')).status).toBe(200);
         expect(await asset('first.js')).toMatchObject({status: 200, body: expect.stringContaining('first')});
         expect(await asset('first.css')).toMatchObject({status: 200, type: expect.stringContaining('text/css')});
         // Model interruption between the current-link swap and publication of the previous link.

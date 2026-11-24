@@ -2,6 +2,7 @@
 """Build an immutable public site and switch current/previous within one filesystem."""
 import argparse
 import fcntl
+import hashlib
 import os
 import re
 import shutil
@@ -15,9 +16,14 @@ from urllib.parse import urlsplit
 REPO = Path(__file__).resolve().parents[1]
 REVISION = re.compile(r"[0-9a-f]{40}")
 PUBLIC_FILE = re.compile(
-    r"(?:index\.html|privacy\.html|terms\.html|404\.html|landing\.css|robots\.txt|favicon\.svg|"
+    r"(?:index\.html|privacy\.html|terms\.html|404\.html|landing(?:-[0-9a-f]{12})?\.css|robots\.txt|favicon\.svg|"
     r"shop-[a-z0-9-]+\.webp|app/(?:index\.html|favicon\.svg)|"
     r"(?:app/)?fonts/[\w.-]+(?:\.woff2|-LICENSE\.txt)|app/assets/[\w.-]+\.(?:js|css|webp))",
+    re.ASCII,
+)
+# Vite embeds emitted asset paths in its JavaScript and CSS as well as the HTML.
+BUNDLE_ASSET = re.compile(
+    r"""["'`(]((?:/app/(?:assets|fonts)/|\./)[\w.-]+\.(?:js|css|webp|woff2))(?:[?#][^"'`)\s]*)?(?=["'`)])""",
     re.ASCII,
 )
 
@@ -58,6 +64,12 @@ def validate(folder):
                 raise ValueError("HTML references a missing asset")
     if not list((folder / "app/assets").glob("*.js")) or not list((folder / "app/assets").glob("*.css")):
         raise ValueError("missing React build")
+    for bundle in (folder / "app/assets").iterdir():
+        if bundle.suffix in (".js", ".css"):
+            for value in BUNDLE_ASSET.findall(bundle.read_text()):
+                asset = folder / value.lstrip("/") if value.startswith("/") else bundle.parent / value
+                if not asset.is_file():
+                    raise ValueError("application bundle references a missing asset")
     for css in [folder / "landing.css", *(folder / "app/assets").glob("*.css")]:
         content = css.read_text()
         for value in re.findall(r"url\(\s*['\"]?([^()'\"\s]+\.woff2)['\"]?\s*\)", content):
@@ -85,6 +97,17 @@ def allow_web_reads(folder):
         mode = 0o755 if entry.is_dir() else 0o644
         if entry.stat().st_mode & 0o7777 != mode:
             entry.chmod(mode)
+
+
+def link_versioned_stylesheet(folder):
+    css = folder / "landing.css"
+    digest = hashlib.sha256(css.read_bytes()).hexdigest()[:12]
+    alias = folder / f"landing-{digest}.css"
+    for entry in folder.glob("landing-*.css"):
+        if entry != alias or not entry.samefile(css):
+            raise ValueError("unexpected versioned landing stylesheet")
+    if not alias.exists():
+        os.link(css, alias)
 
 
 def switch(root, name, revision):
@@ -147,6 +170,7 @@ def main():
             with public_build(root, revision) as site:
                 os.replace(site, target)
         validate(target)
+        link_versioned_stylesheet(target)
         allow_web_reads(target)
         if args.command != "prepare" and current != revision:
             if current:

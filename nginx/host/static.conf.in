@@ -1,3 +1,5 @@
+    set $review_stylesheet /landing.css;
+    if ($arg_v ~ "^[0-9a-f]{12}$") { set $review_stylesheet /landing-${arg_v}.css; }
     location = / { try_files /index.html =404; }
     location = /privacy { try_files /privacy.html =404; }
     location = /terms { try_files /terms.html =404; }
@@ -5,11 +7,12 @@
     location = /app/demo/ { try_files /app/index.html =404; }
     location = /favicon.svg { try_files $uri =404; }
     location = /app/favicon.svg { try_files $uri =404; }
-    location = /landing.css { try_files $uri =404; }
+    location = /landing.css {
+        root @RELEASE_ROOT@;
+        try_files /current$review_stylesheet /.prior$review_stylesheet /previous$review_stylesheet /current/landing.css =404;
+    }
     location = /robots.txt { try_files $uri =404; }
-    location ~ ^/shop-[a-z0-9-]+\.webp$ { try_files $uri =404; }
-    location ~ ^/(?:app/)?fonts/[a-zA-Z0-9._-]+\.woff2$ { try_files $uri =404; }
-    location ~ ^/app/assets/[a-zA-Z0-9._-]+\.(?:js|css|webp)$ {
+    location ~ ^/(?:shop-[a-z0-9-]+\.webp|(?:app/)?fonts/[a-zA-Z0-9._-]+\.woff2|app/assets/[a-zA-Z0-9._-]+\.(?:js|css|webp))$ {
         root @RELEASE_ROOT@;
         try_files /current$uri /.prior$uri /previous$uri =404;
     }
