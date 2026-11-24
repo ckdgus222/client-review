@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { truncate, writeFile } from 'node:fs/promises';
+import { readlink, rm, truncate, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createSite, domain, neighbor, repo, run } from './host-nginx-fixture.js';
+import { createAdmin } from './host-nginx-admin.js';
+import { createSite, domain, neighbor, renderArgs, repo, run } from './host-nginx-fixture.js';
 
 describe('호스트 배포', () => {
   let site: Awaited<ReturnType<typeof createSite>>;
+  let admin: Awaited<ReturnType<typeof createAdmin>>;
   let api: string;
   let db: string;
   let override: string;
@@ -59,6 +61,7 @@ describe('호스트 배포', () => {
     });
   const startAdmin = async () => {
     if (!admin) {
+      admin = await createAdmin(site);
       await admin.start();
     }
   };
@@ -113,6 +116,7 @@ describe('호스트 배포', () => {
   afterAll(async () => {
     if (!site) return;
     try {
+      if (admin) await admin.close();
       if (drill) await run('docker', ['compose', '-p', project + '-drill', '-f', drill, 'down', '-v']);
       await site.close();
     } finally {
@@ -242,4 +246,127 @@ describe('호스트 배포', () => {
     await health('api_ready', drill, neighbor);
   }, 60_000);
 
+  it('한 사이트의 점검과 실패가 다른 사이트를 중지하지 않는다', async () => {
+    await startAdmin();
+    await admin.apply('reload');
+    const healthy = async () => expect(await admin.http(neighbor)).toBe('neighbor fixture\n200');
+    await healthy();
+    const maintenance = await admin.render('maintenance');
+    await admin.put(maintenance, admin.candidate);
+    await admin.exec('chmod', '666', admin.candidate);
+    await expect(admin.apply('apply', 'review')).rejects.toMatchObject({
+      stderr: expect.stringContaining('root-owned'),
+    });
+    expect(await admin.http(domain, '/api/health')).toBe('{"status":"ok"}\n200');
+    await admin.exec('chmod', '644', admin.candidate);
+    await admin.apply('apply', 'review');
+    expect(await admin.http(domain)).toMatch(/\n503$/);
+    await healthy();
+
+    await admin.put('not_valid_nginx_directive;', admin.candidate);
+    await expect(admin.apply('apply', 'review')).rejects.toThrow();
+    expect((await admin.exec('cat', admin.active)).stdout).toBe(maintenance);
+    expect(await admin.http(domain)).toMatch(/\n503$/);
+    await healthy();
+    const preview = await admin.render('preview');
+    await admin.put(preview, admin.candidate);
+    await admin.apply('apply', 'review');
+    expect(await admin.http(domain, '/api/health')).toBe('{"status":"ok"}\n200');
+    // Model the signal asynchronously returning before nginx accepts the new configuration.
+    // A healthy response from the previous workers must not validate a broken upstream.
+    await admin.put(
+      '#!/bin/sh\n[ "$*" = "reload nginx" ] || exit 2\n(sleep 0.5; nginx -s reload) </dev/null >/dev/null 2>&1 &\n',
+      '/usr/bin/systemctl',
+    );
+    await admin.exec('chmod', '755', '/usr/bin/systemctl');
+    const brokenUpstream = preview.replaceAll('127.0.0.1:4100', '127.0.0.1:4101');
+    await admin.put(brokenUpstream, admin.candidate);
+    await expect(admin.apply('apply', 'review')).rejects.toThrow();
+    expect((await admin.exec('cat', admin.active)).stdout).toBe(preview);
+    expect(await admin.http(domain, '/api/health')).toBe('{"status":"ok"}\n200');
+    await healthy();
+  }, 420_000);
+
+  it('겹친 작업은 이전 릴리스와 잠금 상태를 보존한다', async () => {
+    // The certificate callback must share the same lock as site configuration changes.
+    // Wait until the callback has reached its blocking flock child before releasing the holder.
+    await startAdmin();
+    await admin.exec(
+      'bash',
+      '-ec',
+      `mkdir -p /run/host-nginx
+      exec 8>/run/host-nginx/apply.lock
+      flock -x 8
+      /bin/bash /apply.sh reload 8>&- &
+      worker=$!
+      trap 'flock -u 8' EXIT
+      queued=false
+      for i in {1..100}; do
+        for child in $(cat /proc/$worker/task/$worker/children); do
+          if [ "$(cat /proc/$child/comm 2>/dev/null)" = flock ]; then queued=true; break 2; fi
+        done
+        sleep .05
+      done
+      "$queued"
+      kill -0 "$worker"
+      flock -u 8
+      wait "$worker"`,
+    );
+    const original = await readlink(path.join(site.root, 'current'));
+    const result = await run('docker', [
+      'run',
+      '--rm',
+      '--network',
+      'none',
+      '-v',
+      path.join(repo, 'deploy') + ':/source:ro',
+      '-v',
+      site.root + ':/srv/review:ro',
+      '-e',
+      'COMPOSE_FILE=docker-compose.yml:docker-compose.host.yml',
+      '-e',
+      'REVIEW_RELEASE_ROOT=/srv/review',
+      'node:24-bookworm-slim',
+      'bash',
+      '-ec',
+      `mkdir -p /work/deploy
+      cp /source/lib.sh /source/update.sh /work/deploy/
+      cd /work
+      echo 'restore in-progress' > .maintenance
+      source deploy/lib.sh
+      take_lock
+      if bash deploy/update.sh 9>&- >/tmp/update-result 2>&1; then exit 1; fi
+      cat /tmp/update-result
+      cat .maintenance
+      readlink /srv/review/current
+      flock -u 9
+      bash -ec 'source /work/deploy/lib.sh; take_lock'`,
+    ]);
+    expect(result.stdout).toContain('다른 운영 스크립트');
+    expect(result.stdout.trim().split('\n').slice(-2)).toEqual(['restore in-progress', original]);
+  }, 60_000);
+
+  it('유효하지 않은 설정과 비공개 파일을 배포하지 않는다', async () => {
+    for (const [flag, value] of [
+      ['--domain', 'bad domain'],
+      ['--cert-name', '../lineage'],
+      ['--api-port', '65536'],
+      ['--release-root', '/srv/acme'],
+      ['--release-root', 'relative/path'],
+    ]) {
+      await expect(run('python3', [...renderArgs, flag, value])).rejects.toThrow();
+    }
+    const original = await readlink(path.join(site.root, 'current'));
+    const files = await site.newRelease('not-public');
+    for (const relative of ['.env', 'app/assets/backup.json']) {
+      const file = path.join(files, relative);
+      await writeFile(file, 'synthetic private marker');
+      await expect(site.release('activate')).rejects.toThrow();
+      expect(await readlink(path.join(site.root, 'current'))).toBe(original);
+      const response = await site.http('/' + relative);
+      expect(response.status).toBe(404);
+      expect(response.body).not.toContain('synthetic private marker');
+      await rm(file);
+    }
+  });
 });

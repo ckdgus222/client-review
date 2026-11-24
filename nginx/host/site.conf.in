@@ -6,6 +6,7 @@ server {
 
     location ^~ /.well-known/acme-challenge/ {
         root @ACME_ROOT@;
+        disable_symlinks on;
         try_files $uri =404;
     }
     location / { return 301 https://@HTTPS_AUTHORITY@$request_uri; }

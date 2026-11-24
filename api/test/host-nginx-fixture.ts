@@ -177,11 +177,6 @@ export const createSite = async () => {
     port = await getPort(networkContainer ?? name);
     await waitStatus(mode === 'maintenance' ? 503 : 200);
   };
-  const reload = async (config: string) => {
-    await writeFile(path.join(conf, 'review.conf'), config);
-    await run('docker', ['exec', name, 'nginx', '-t']);
-    await run('docker', ['exec', name, 'nginx', '-s', 'reload']);
-  };
   const spki = async () =>
     createHash('sha256')
       .update(createPublicKey(await readFile(cert)).export({ type: 'spki', format: 'der' }))
@@ -195,14 +190,11 @@ export const createSite = async () => {
     directory,
     root,
     name,
-    sandbox,
     cert,
     key,
-    git,
     release,
     newRelease,
     start,
-    reload,
     spki,
     url,
     http,
