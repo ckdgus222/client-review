@@ -44,7 +44,12 @@ test('robots.txt가 앱과 api를 막고 소개 페이지에 제목과 설명 �
     .trim()
     .split(/\r?\n/)
     .map((line) => line.trim())
-  expect(directives).toEqual(['User-agent: *', 'Disallow: /app/', 'Disallow: /api/'])
+  expect(directives.filter((line) => !line.startsWith('Allow:')))
+    .toEqual(['User-agent: *', 'Disallow: /app/', 'Disallow: /api/'])
+  expect(directives.filter((line) => line.startsWith('Allow:')).sort()).toEqual([
+    'Allow: /app/demo$', 'Allow: /app/demo/$', 'Allow: /app/assets/', 'Allow: /app/fonts/',
+    'Allow: /app/favicon.svg$', 'Allow: /app/apple-touch-icon.png$',
+  ].sort())
 })
 
 test('개인정보처리방침에 항목·보유 기간·권리·보호책임자 절이 있다', async ({ page }) => {

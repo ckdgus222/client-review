@@ -1,9 +1,68 @@
 import { test, expect, type HostResponse } from './host-nginx-fixtures.ts'
-import { createSite, domain, run as runFixtureCommand } from '../../api/test/host-nginx-fixture';
-import { readlink, rename, rm, writeFile } from 'node:fs/promises';
+import { createSite, domain, repo, run as runFixtureCommand } from '../../api/test/host-nginx-fixture';
+import { readFile, readlink, rename, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { chromium } from '@playwright/test';
+import { chromium, type Page } from '@playwright/test';
+
+const sharingOrigin = 'https://review.changhyon.dev'
+const sharingImage = `${sharingOrigin}/share-review-v1.jpg`
+const crawlerHeaders = { 'User-Agent': 'facebookexternalhit/1.1; kakaotalk-scrap/1.0' }
+
+const expectSharingMetadata = async (page: Page, html: string, pathname: string) => {
+  // DOMParser는 응답 원문만 읽는다. 앱 JavaScript가 태그를 채워도 이 검사는 통과하지 않는다.
+  const metadata = await page.evaluate((html) => {
+    const document = new DOMParser().parseFromString(html, 'text/html')
+    const values = (selector: string, attribute: string) =>
+      [...document.querySelectorAll(selector)].map((element) => element.getAttribute(attribute))
+    return {
+      lang: document.documentElement.lang,
+      title: document.title,
+      canonical: values('link[rel="canonical"]', 'href'),
+      description: values('meta[name="description"]', 'content'),
+      og: Object.fromEntries(['title', 'description', 'type', 'site_name', 'locale', 'url',
+        'image', 'image:width', 'image:height', 'image:alt'].map((name) =>
+        [name, values(`meta[property="og:${name}"]`, 'content')])),
+      card: values('meta[name="twitter:card"]', 'content'),
+      assets: values('link[href]:not([rel="canonical"])', 'href')
+        .concat(values('script[src], img[src]', 'src')),
+    }
+  }, html)
+  expect(metadata.lang).toBe('ko')
+  expect(metadata.title).toMatch(/client[- ]review/i)
+  expect(metadata.description).toEqual([expect.stringMatching(/\S/)])
+  expect(metadata.canonical).toEqual([`${sharingOrigin}${pathname}`])
+  expect(metadata.og).toMatchObject({
+    title: [expect.stringMatching(/\S/)], description: [expect.stringMatching(/\S/)],
+    type: ['website'], site_name: [expect.stringMatching(/client[- ]review/i)], locale: ['ko_KR'],
+    url: [`${sharingOrigin}${pathname}`], image: [sharingImage],
+    'image:width': ['1200'], 'image:height': ['630'], 'image:alt': [expect.stringMatching(/\S/)],
+  })
+  expect(metadata.card).toEqual(['summary_large_image'])
+  for (const asset of metadata.assets) expect(asset).toMatch(/^\/(?!\/)/)
+}
+
+const readPublicImage = async (page: Page, pathname: string) => {
+  const response = await page.evaluate(async (pathname) => {
+    const response = await fetch(pathname, { credentials: 'omit', cache: 'no-store' })
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    try {
+      const image = new Image()
+      image.src = url
+      await image.decode()
+      return {
+        status: response.status, contentType: response.headers.get('content-type'),
+        width: image.naturalWidth, height: image.naturalHeight,
+        bytes: Array.from(new Uint8Array(await blob.arrayBuffer())),
+      }
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  }, pathname)
+  expect(response.status, pathname).toBe(200)
+  return { ...response, body: Buffer.from(response.bytes) }
+}
 
 const expectIpLimited = (response: HostResponse) => {
   expect(response.status).toBe(429)
@@ -13,6 +72,184 @@ const expectIpLimited = (response: HostResponse) => {
 
 test.describe('공용 nginx', () => {
   test.setTimeout(180_000)
+
+  test('비로그인 공유 크롤러가 소개와 데모의 메타데이터와 대표 이미지를 읽는다', async ({ page, hostNginx }) => {
+    for (const port of [8443, 8444]) {
+      const paths = ['/', '/app/demo', '/app/demo/']
+      const responses = await hostNginx.request(paths.map((path) => ({ port, path, headers: crawlerHeaders })))
+      for (const [index, response] of responses.entries()) {
+        expect(response.status, `${port} ${paths[index]}`).toBe(200)
+        expect(response.headers['content-type']).toContain('text/html')
+        expect(response.headers['set-cookie']).toBeUndefined()
+        await expectSharingMetadata(page, response.body, index === 0 ? '/' : '/app/demo')
+      }
+      const [image] = await hostNginx.request([
+        { port, path: '/share-review-v1.jpg', method: 'HEAD', headers: crawlerHeaders },
+      ])
+      expect(image.status).toBe(200)
+      expect(image.headers['content-type']).toContain('image/jpeg')
+      expect(Number(image.headers['content-length'])).toBeGreaterThan(0)
+    }
+
+    await page.goto(hostNginx.previewOrigin)
+    const image = await readPublicImage(page, '/share-review-v1.jpg')
+    expect(image.contentType).toMatch(/^image\/jpeg(?:;|$)/)
+    expect(image.body.subarray(0, 3)).toEqual(Buffer.from([0xff, 0xd8, 0xff]))
+    expect(image.body.subarray(-2)).toEqual(Buffer.from([0xff, 0xd9]))
+    expect({ width: image.width, height: image.height }).toEqual({ width: 1200, height: 630 })
+    expect(await page.context().cookies()).toEqual([])
+  })
+
+  test('공개 파비콘과 터치 아이콘만 제공하고 비공개 경로는 차단한다', async ({ page, hostNginx }) => {
+    await page.goto(hostNginx.previewOrigin)
+    await expect(page.locator('link[rel~="icon"]')).toHaveAttribute('href', '/favicon.svg')
+    await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute('href', '/apple-touch-icon.png')
+    const svg = await readPublicImage(page, '/favicon.svg')
+    const appSvg = await readPublicImage(page, '/app/favicon.svg')
+    for (const image of [svg, appSvg]) {
+      expect(image.contentType).toMatch(/^image\/svg\+xml(?:;|$)/)
+      expect(image.body.toString()).toMatch(/<svg\b/)
+      expect(image.width).toBeGreaterThan(0)
+      expect(image.height).toBeGreaterThan(0)
+    }
+    expect(appSvg.body).toEqual(svg.body)
+
+    const ico = await readPublicImage(page, '/favicon.ico')
+    expect(ico.contentType).toMatch(/^image\/(?:x-icon|vnd\.microsoft\.icon)(?:;|$)/)
+    expect(ico.body.subarray(0, 4)).toEqual(Buffer.from([0, 0, 1, 0]))
+    expect(ico.body.readUInt16LE(4)).toBe(3)
+    const dimensions = Array.from({ length: 3 }, (_, index) => {
+      const offset = 6 + index * 16
+      const size = ico.body.readUInt32LE(offset + 8)
+      const start = ico.body.readUInt32LE(offset + 12)
+      expect(size).toBeGreaterThan(0)
+      expect(start).toBeGreaterThanOrEqual(54)
+      expect(start + size).toBeLessThanOrEqual(ico.body.length)
+      return [ico.body[offset], ico.body[offset + 1]]
+    })
+    expect(dimensions.sort((first, second) => first[0] - second[0])).toEqual([[16, 16], [32, 32], [48, 48]])
+
+    const touch = await readPublicImage(page, '/apple-touch-icon.png')
+    const appTouch = await readPublicImage(page, '/app/apple-touch-icon.png')
+    for (const image of [touch, appTouch]) {
+      expect(image.contentType).toMatch(/^image\/png(?:;|$)/)
+      expect(image.body.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+      expect({ width: image.width, height: image.height }).toEqual({ width: 180, height: 180 })
+    }
+    expect(appTouch.body).toEqual(touch.body)
+
+    // 파일이 실제로 있어도 지정한 공개 이름 외에는 열리지 않아야 한다.
+    const current = path.join(hostNginx.directory, 'releases/current')
+    await writeFile(path.join(current, 'private-preview.jpg'), await readFile(path.join(current, 'share-review-v1.jpg')))
+    await writeFile(path.join(current, 'private-icon.png'), touch.body)
+    await writeFile(path.join(current, 'private.ico'), ico.body)
+    await writeFile(path.join(current, 'app/private-icon.png'), appTouch.body)
+    const blocked = ['/private-preview.jpg', '/private-icon.png', '/private.ico', '/app/private-icon.png',
+      '/share-review-v2.jpg', '/share-review-v1.jpg/extra', '/apple-touch-icon.png.bak',
+      '/app/apple-touch-icon.png/extra', '/app/demo/private', '/app/login', '/app/projects',
+      '/api/auth/me', '/api/assets/example', '/uploads/example.webp', '/.env']
+    const responses = await page.evaluate(async (paths) => Promise.all(paths.map(async (path) => {
+      const response = await fetch(path, { credentials: 'omit', redirect: 'manual' })
+      return { path, status: response.status }
+    })), blocked)
+    for (const response of responses) expect(response.status, response.path).toBe(503)
+  })
+
+  test('공개 안내는 데모로 연결하고 정식 안내는 회원 입구를 유지한다', async ({ page, hostNginx }) => {
+    for (const pathname of ['/', '/privacy', '/terms']) {
+      const response = await page.goto(`${hostNginx.previewOrigin}${pathname}`)
+      expect(response?.status()).toBe(200)
+      await expect(page.locator('.quiet-link[href="/app/login"]')).toHaveCount(0)
+      await expect(page.locator('a[href="/app/login"]')).toHaveCount(0)
+      await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+    }
+    await page.goto(hostNginx.previewOrigin)
+    await expect(page.getByRole('link', { name: '검수실 예시 보기', exact: true })).toHaveAttribute('href', '#review-example')
+    await page.getByRole('link', { name: '로그인 없이 데모 체험하기', exact: true }).click()
+    await expect(page).toHaveURL(`${hostNginx.previewOrigin}/app/demo`)
+    await expect(page.getByRole('heading', { name: '오브제 스토어 리뉴얼', exact: true })).toBeVisible()
+
+    for (const pathname of ['/', '/privacy', '/terms']) {
+      expect((await page.goto(`${hostNginx.liveOrigin}${pathname}`))?.status()).toBe(200)
+      await expect(page.getByRole('link', { name: '로그인', exact: true })).toHaveAttribute('href', '/app/login')
+    }
+    await page.goto(hostNginx.liveOrigin)
+    await expect(page.getByRole('link', { name: '로그인 없이 데모 체험하기', exact: true })).toHaveAttribute('href', '/app/demo')
+    await page.getByRole('link', { name: '시작하기', exact: true }).click()
+    await expect(page).toHaveURL(`${hostNginx.liveOrigin}/app/login`)
+    await expect(page.getByRole('heading', { name: '로그인', exact: true })).toBeVisible()
+    await expect(page.locator('link[rel~="icon"]')).toHaveAttribute('href', '/app/favicon.svg')
+    await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute('href', '/app/apple-touch-icon.png')
+    const [memberPage] = await hostNginx.request([{ port: 8444, path: '/app/projects/example', headers: crawlerHeaders }])
+    expect(memberPage.status).toBe(200)
+    const fixedSharingUrls = await page.evaluate((html) =>
+      new DOMParser().parseFromString(html, 'text/html').querySelectorAll('link[rel="canonical"], meta[property="og:url"]').length,
+    memberPage.body)
+    expect(fixedSharingUrls).toBe(0)
+  })
+
+  test('공개 문서 주소와 데모 크롤링 범위 및 이전 릴리스 폴백을 유지한다', async ({ page, hostNginx }) => {
+    for (const port of [8443, 8444]) {
+      const documents = await hostNginx.request(['/privacy', '/terms'].map((path) => ({ port, path, headers: crawlerHeaders })))
+      for (const [index, response] of documents.entries()) {
+        expect(response.status).toBe(200)
+        expect(response.headers['content-type']).toContain('text/html')
+        await expectSharingMetadata(page, response.body, index === 0 ? '/privacy' : '/terms')
+      }
+      const [robots] = await hostNginx.request([{ port, path: '/robots.txt', headers: crawlerHeaders }])
+      expect(robots.status).toBe(200)
+      expect(robots.headers['content-type']).toContain('text/plain')
+      const directives = robots.body.trim().split(/\r?\n/).map((line) => line.trim())
+      expect(directives.filter((line) => !line.startsWith('Allow:')))
+        .toEqual(['User-agent: *', 'Disallow: /app/', 'Disallow: /api/'])
+      expect(directives.filter((line) => line.startsWith('Allow:')).sort()).toEqual([
+        'Allow: /app/demo$', 'Allow: /app/demo/$', 'Allow: /app/assets/', 'Allow: /app/fonts/',
+        'Allow: /app/favicon.svg$', 'Allow: /app/apple-touch-icon.png$',
+      ].sort())
+    }
+
+    const current = path.join(hostNginx.directory, 'releases/current')
+    const validateRelease = () => runFixtureCommand('python3', ['-c',
+      "import runpy, sys; from pathlib import Path; runpy.run_path(sys.argv[1])['validate'](Path(sys.argv[2]))",
+      path.join(repo, 'deploy/static-release.py'), current])
+    await validateRelease()
+    for (const filename of ['preview-index.html', 'preview-privacy.html', 'preview-terms.html', 'app/demo.html']) {
+      await rm(path.join(current, filename))
+    }
+    // 파생 HTML이 없던 릴리스도 검사와 HTTP 응답을 모두 유지한다.
+    await validateRelease()
+    const fallbackPages = [
+      ['/', 'index.html'], ['/privacy', 'privacy.html'], ['/terms', 'terms.html'],
+      ['/app/demo', 'app/index.html'], ['/app/demo/', 'app/index.html'],
+    ]
+    for (const [pathname, filename] of fallbackPages) {
+      const original = await readFile(path.join(current, filename), 'utf8')
+      await expect.poll(async () => {
+        const responses = await hostNginx.request([8443, 8444].map((port) => ({ port, path: pathname, headers: crawlerHeaders })))
+        return responses.map((response) => ({ status: response.status, body: response.body }))
+      }).toEqual([{ status: 200, body: original }, { status: 200, body: original }])
+    }
+    expect((await page.goto(`${hostNginx.previewOrigin}/app/demo`))?.status()).toBe(200)
+    await expect(page.getByRole('heading', { name: '오브제 스토어 리뉴얼', exact: true })).toBeVisible()
+    await page.goto(hostNginx.liveOrigin)
+    await page.getByRole('link', { name: '시작하기', exact: true }).click()
+    await expect(page.getByRole('heading', { name: '로그인', exact: true })).toBeVisible()
+
+    const home = path.join(current, 'index.html')
+    const original = await readFile(home, 'utf8')
+    try {
+      for (const externalAsset of [
+        '<link rel="stylesheet" href="https://assets.example.test/unexpected.css">',
+        '<script src="https://assets.example.test/unexpected.js"></script>',
+        '<img src="https://assets.example.test/unexpected.png">',
+      ]) {
+        await writeFile(home, original.replace('</head>', `${externalAsset}</head>`))
+        await expect(validateRelease()).rejects.toThrow()
+      }
+    } finally {
+      await writeFile(home, original)
+    }
+  })
 
   test('공개 데모에 직접 접속하고 역할을 전환한다', async ({ page, hostNginx }) => {
     const assets: Promise<{ url: string; status: number; contentType: string; body: Buffer }>[] = []

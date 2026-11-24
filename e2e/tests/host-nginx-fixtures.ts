@@ -53,6 +53,9 @@ export const test = base.extend<{ hostNginx: HostNginx }, { publicBuild: string 
       await mkdir(path.join(directory, 'releases/current'), { recursive: true })
       await cp(path.join(repo, 'landing'), path.join(directory, 'releases/current'), { recursive: true })
       await cp(publicBuild, path.join(directory, 'releases/current/app'), { recursive: true })
+      await run('python3', ['-c',
+        "import runpy, sys; from pathlib import Path; runpy.run_path(sys.argv[1])['prepare_public_pages'](Path(sys.argv[2]))",
+        path.join(repo, 'deploy/static-release.py'), path.join(directory, 'releases/current')])
 
       // 개인키는 임시 디렉터리에서만 만들고 테스트가 끝나면 지운다.
       await run('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2',

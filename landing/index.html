@@ -4,16 +4,28 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>client-review: 외주 작업 검수</title>
-    <meta name="description" content="외주 개발자가 화면 사진을 버전별로 올리면, 고객이 사진 위에 수정 요청을 남기고 승인합니다." />
+    <meta name="description" content="화면 사진 위에 수정 요청을 남기고, 고친 결과를 비교해 버전을 승인하세요. 로그인 없이 샘플 검수실을 체험할 수 있습니다." />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="ko_KR" />
+    <meta property="og:site_name" content="Client Review" />
     <meta property="og:title" content="client-review: 외주 작업 검수" />
-    <meta property="og:description" content="외주 개발자가 화면 사진을 버전별로 올리면, 고객이 사진 위에 수정 요청을 남기고 승인합니다." />
+    <meta property="og:description" content="화면 사진 위에 수정 요청을 남기고, 고친 결과를 비교해 버전을 승인하세요. 로그인 없이 샘플 검수실을 체험할 수 있습니다." />
+    <meta property="og:url" content="https://review.changhyon.dev/" />
+    <meta property="og:image" content="https://review.changhyon.dev/share-review-v1.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Client Review 검수실에서 상품 화면의 수정 위치와 쪽지 목록을 확인하는 모습" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="canonical" href="https://review.changhyon.dev/" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="stylesheet" href="/landing.css?v=d7026e8be529" />
   </head>
   <body>
     <header class="site-header">
       <h1 class="brand" aria-label="client-review"><img src="/favicon.svg" width="28" height="28" alt="">Client Review</h1>
-      <nav aria-label="소개 메뉴"><a href="#steps">진행 방식</a><a class="quiet-link" href="/app/login">로그인</a></nav>
+      <nav aria-label="소개 메뉴"><a href="#steps">진행 방식</a><a data-member-entry class="quiet-link" href="/app/login">로그인</a></nav>
     </header>
     <main class="home">
       <div class="hero">
@@ -21,7 +33,7 @@
           <span class="hero-eyebrow">화면 사진 검수 · 버전 승인</span>
           <h2>화면을 크게 펼치고,<br>깔끔하게 승인해요.</h2>
           <p class="lead">외주로 만든 웹사이트를 화면 사진으로 검수하고 승인하는 곳이에요. 고칠 곳에 쪽지를 남기고, 버전마다 바뀐 내용을 함께 확인하세요.</p>
-          <div class="hero-actions"><a class="start" href="/app/demo">로그인 없이 데모 체험하기</a><a class="quiet-link" href="/app/login">시작하기</a><a class="quiet-link" href="#review-example">검수실 예시 보기</a></div>
+          <div class="hero-actions"><a class="start" href="/app/demo">로그인 없이 데모 체험하기</a><a data-member-entry class="quiet-link" href="/app/login">시작하기</a><a class="quiet-link" href="#review-example">검수실 예시 보기</a></div>
         </div>
         <figure class="review-example" id="review-example" aria-label="상품 상세 화면을 검수하는 예시">
           <div class="demo-stage">
