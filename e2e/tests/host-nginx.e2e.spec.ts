@@ -1,4 +1,8 @@
 import { test, expect, type HostResponse } from './host-nginx-fixtures.ts'
+import { createSite, domain } from '../../api/test/host-nginx-fixture';
+import { rm } from 'node:fs/promises';
+import path from 'node:path';
+import { chromium } from '@playwright/test';
 
 const expectIpLimited = (response: HostResponse) => {
   expect(response.status).toBe(429)
@@ -164,3 +168,50 @@ test.describe('공용 nginx', () => {
     for (const response of privateResponses) expect(response.status).toBe(401)
   })
 })
+
+test.describe('공용 nginx', () => {
+  test('릴리스 전환과 실패 뒤에도 올바른 정적 자산을 받는다', async () => {
+    const site = await createSite();
+    try {
+      await site.newRelease('first');
+      await site.release('activate');
+      await site.start('preview');
+      const browser = await chromium.launch({args: [
+        '--host-resolver-rules=MAP ' + domain + ' 127.0.0.1',
+        '--ignore-certificate-errors-spki-list=' + await site.spki(), '--no-proxy-server',
+      ]});
+      try {
+        const page = await browser.newPage();
+        const checkPage = async (label: string) => {
+          // Docker Desktop may take a moment to propagate a host-side symlink replacement.
+          await expect.poll(async () => (await site.http('/app/demo')).body).toContain('/app/assets/' + label + '.js');
+          await page.goto(site.url() + '/app/demo');
+          await expect(page.locator('#revision')).toHaveText(label);
+        };
+        const asset = (name: string) => page.evaluate(async (name) => {
+          const res = await fetch('/app/assets/' + name, {cache: 'no-store'});
+          return {status: res.status, type: res.headers.get('content-type'), body: await res.text()};
+        }, name);
+        await checkPage('first');
+        await site.newRelease('second');
+        await site.release('activate');
+        await checkPage('second');
+        expect(await asset('first.js')).toMatchObject({status: 200, body: expect.stringContaining('first')});
+        expect(await asset('first.css')).toMatchObject({status: 200, type: expect.stringContaining('text/css')});
+        const broken = await site.newRelease('third');
+        await rm(path.join(broken, 'app/assets/third.js'));
+        await expect(site.release('activate')).rejects.toThrow();
+        await checkPage('second');
+        expect((await asset('third.js')).status).toBe(404);
+        expect((await asset('missing.css')).status).toBe(404);
+        await site.release('rollback');
+        await checkPage('first');
+        expect((await asset('second.js')).status).toBe(200);
+      } finally {
+        await browser.close();
+      }
+    } finally {
+      await site.close();
+    }
+  });
+});
