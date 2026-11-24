@@ -14,10 +14,12 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 REPO = Path(__file__).resolve().parents[1]
+PUBLIC_ORIGIN = "https://review.changhyon.dev"
 REVISION = re.compile(r"[0-9a-f]{40}")
 PUBLIC_FILE = re.compile(
-    r"(?:index\.html|privacy\.html|terms\.html|404\.html|landing(?:-[0-9a-f]{12})?\.css|robots\.txt|favicon\.svg|"
-    r"shop-[a-z0-9-]+\.webp|app/(?:index\.html|favicon\.svg)|"
+    r"(?:(?:preview-)?(?:index|privacy|terms)\.html|404\.html|landing(?:-[0-9a-f]{12})?\.css|robots\.txt|favicon\.svg|"
+    r"shop-[a-z0-9-]+\.webp|share-review-v1\.jpg|favicon\.ico|(?:app/)?apple-touch-icon\.png|"
+    r"app/(?:(?:index|demo)\.html|favicon\.svg)|"
     r"(?:app/)?fonts/[\w.-]+(?:\.woff2|-LICENSE\.txt)|app/assets/[\w.-]+\.(?:js|css|webp))",
     re.ASCII,
 )
@@ -35,6 +37,12 @@ class PageAssets(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if tag == "link" and attrs.get("rel") == "canonical":
+            return
+        if tag == "meta" and attrs.get("property") == "og:image":
+            if attrs.get("content") != PUBLIC_ORIGIN + "/share-review-v1.jpg":
+                raise ValueError("unexpected sharing image URL")
+            self.urls.append("/share-review-v1.jpg")
         key = "href" if tag == "link" else "src" if tag in ("script", "img") else None
         if key and attrs.get(key):
             self.urls.append(attrs[key])
@@ -51,7 +59,10 @@ def validate(folder):
             continue
         if not PUBLIC_FILE.fullmatch(name) or not path.is_file() or not path.stat().st_size:
             raise ValueError("unexpected or empty build entry")
-    for name in ("index.html", "privacy.html", "terms.html", "404.html", "app/index.html"):
+    pages = ["index.html", "privacy.html", "terms.html", "404.html", "app/index.html"]
+    pages.extend(name for name in ("preview-index.html", "preview-privacy.html", "preview-terms.html", "app/demo.html")
+                 if (folder / name).exists())
+    for name in pages:
         parser = PageAssets()
         parser.feed((folder / name).read_text())
         if not parser.urls:
