@@ -2,7 +2,7 @@ import type { Page } from '@playwright/test'
 import { test, expect } from './fixtures.ts'
 
 const noteTitle = '구매 버튼 간격을 넓혀 주세요'
-const nextTask = (page: Page) => page.getByRole('region', { name: '지금 할 일', exact: true })
+const nextTask = (page: Page) => page.getByRole('region', { name: '사용 가이드', exact: true })
 const guide = (page: Page) => page.getByRole('complementary', { name: '체험 가이드', exact: true })
 const button = (page: Page, name: string) => guide(page).getByRole('button', { name, exact: true })
 
@@ -34,6 +34,7 @@ test.describe('데모 사용법', () => {
       await expect(photo).toHaveJSProperty('complete', true)
       expect(await photo.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0)
       await expectLocationTask(page)
+      await expect(task.getByRole('heading', { name: '사용 가이드', level: 2, exact: true })).toBeVisible()
       await expect(task).toBeInViewport({ ratio: 1 })
       const taskBox = (await task.boundingBox())!
       const introBox = (await intro.boundingBox())!

@@ -67,12 +67,14 @@ describe('호스트 업데이트', () => {
       }
 
       // 빌드된 릴리스를 준비하고 실제 prepare 검사·activate·rollback을 실행한다.
-      for (const revision of [oldRevision, failedRevision, brokenRetryRevision, fixedRevision]) {
+      for (const [revision, title] of [
+        [oldRevision, 'client-review: 외주 작업 검수'],
+        [failedRevision, 'broken page'],
+        [brokenRetryRevision, 'broken page'],
+        [fixedRevision, 'client-review: 웹사이트 화면 검수·승인'],
+      ]) {
         const site = path.join(releases, 'releases', revision);
         await mkdir(path.join(site, 'app/assets'), { recursive: true });
-        const title = [failedRevision, brokenRetryRevision].includes(revision)
-          ? 'broken page'
-          : 'client-review: 외주 작업 검수';
         const html = `<title>${title}</title><link rel="stylesheet" href="/landing.css"><p>${revision}</p>`;
         for (const file of ['index.html', 'privacy.html', 'terms.html', '404.html']) {
           await writeFile(path.join(site, file), html);
@@ -162,6 +164,10 @@ raise RuntimeError('unexpected fixture command')
         { url: 'https://review.example.test/', release: `releases/${failedRevision}` },
       ]);
 
+      // 복구된 옛 제목도 실제 사이트 점검을 통과해야 한다.
+      const restored = await run('bash', ['-c', 'source deploy/lib.sh; site_ready']);
+      expect(restored).toMatchObject({ code: 0 });
+
       const baselineFile = path.join(releases, '.update-baseline');
       expect((await readFile(baselineFile, 'utf8')).trim()).toBe(`releases/${oldRevision}`);
       // Stop our own isolated Bash process after the new 'current' is visible but before its health check returns.
@@ -219,6 +225,7 @@ raise RuntimeError('unexpected fixture command')
         .map((line) => JSON.parse(line));
       expect(requests).toEqual([
         ...failedRequests,
+        { url: 'https://review.example.test/', release: `releases/${oldRevision}` },
         { url: 'https://review.example.test/api/health', release: `releases/${oldRevision}` },
         { url: 'https://review.example.test/', release: `releases/${failedRevision}` },
         { url: 'https://review.example.test/api/health', release: `releases/${oldRevision}` },
