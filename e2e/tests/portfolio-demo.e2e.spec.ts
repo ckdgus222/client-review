@@ -127,7 +127,7 @@ test('비로그인 방문자는 소개와 직접 링크에서 데모를 연다',
   })
   await page.goto(`${nginxOrigin}/`)
   await expect(page.getByRole('link', { name: '시작하기', exact: true })).toHaveAttribute('href', '/app/login')
-  await page.getByRole('link', { name: '데모 체험하기', exact: true }).click()
+  await page.getByRole('link', { name: '로그인 없이 데모 체험하기', exact: true }).click()
   await expect(page).toHaveURL(`${nginxOrigin}/app/demo`)
   await expectInitialDemo(page)
   await expect(page.getByText(/이 탭에서만 진행되며 새로고침하면 처음으로 돌아갑니다/)).toBeVisible()
@@ -433,6 +433,61 @@ test('승인 후에는 읽기 전용이고 다시 시작하거나 새로고침�
   await expect(notes(page)).not.toContainText('재시작 뒤 새 쪽지')
 })
 
+for (const { input, hasTouch, activate } of [
+  { input: '마우스', hasTouch: false, activate: (target: Locator) => target.click() },
+  { input: '터치', hasTouch: true, activate: (target: Locator) => target.tap() },
+]) {
+  test(`데모에서 ${input}로 비교하거나 역할을 바꿔도 화면이 강제로 이동하지 않는다`, async ({ browser, baseURL }) => {
+    const context = await browser.newContext({ baseURL, hasTouch, viewport: { width: 390, height: 844 } })
+    try {
+      const page = await context.newPage()
+      await page.goto('/app/demo')
+      await createNote(page)
+      await sendFix(page)
+      await activate(button(page, '고객(승인자)'))
+      // 브라우저의 자동 앵커 보정 없이 앱이 스크롤을 옮기는지 확인한다.
+      await page.addStyleTag({ content: 'html { overflow-anchor: none; }' })
+      const compareButton = button(page, '비교해 보기')
+      await compareButton.evaluate((element) => {
+        window.scrollBy({ top: element.getBoundingClientRect().bottom - (window.innerHeight - 24), behavior: 'instant' })
+      })
+      await expect(compareButton).toBeInViewport({ ratio: 1 })
+      const scrollBeforeCompare = await page.evaluate(() => window.scrollY)
+      expect(scrollBeforeCompare).toBeGreaterThan(0)
+      await activate(compareButton)
+      await expect(page.getByRole('img', { name: '수정 전 상품 상세 사진', exact: true })).toBeVisible()
+      await expect(page.getByRole('img', { name: '구매 버튼 위 여백을 넓힌 상품 상세 사진', exact: true })).toBeVisible()
+      const completeButton = button(page, '확인 완료')
+      await expect(completeButton).toBeFocused()
+      // 렌더링 뒤 실행되는 초점·스크롤 처리까지 기다린다.
+      const scrollAfterCompare = await page.evaluate(async () => {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+        return window.scrollY
+      })
+      expect(scrollAfterCompare).toBe(scrollBeforeCompare)
+
+      for (const role of ['개발자', '고객(승인자)']) {
+        const roleButton = button(page, role)
+        // 포인터가 버튼에 닿기 위한 이동은 측정 전에 끝낸다.
+        await roleButton.evaluate((element) => element.scrollIntoView({ block: 'center', behavior: 'instant' }))
+        await expect(roleButton).toBeInViewport({ ratio: 1 })
+        const scrollBeforeRole = await page.evaluate(() => window.scrollY)
+        await activate(roleButton)
+        await expect(roleButton).toHaveAttribute('aria-pressed', 'true')
+        await expect(completeButton).toBeEnabled({ enabled: role === '고객(승인자)' })
+        const scrollAfterRole = await page.evaluate(async () => {
+          await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+          return window.scrollY
+        })
+        await expect(roleButton).toBeFocused()
+        expect(scrollAfterRole).toBe(scrollBeforeRole)
+      }
+    } finally {
+      await context.close()
+    }
+  })
+}
+
 test('390px와 키보드에서 가이드와 필수 동작을 이용한다', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/app/demo')
@@ -459,12 +514,28 @@ test('390px와 키보드에서 가이드와 필수 동작을 이용한다', asyn
   await pressWithKeyboard(page, button(page, '1차 게시'))
   await pressWithKeyboard(page, button(page, '고쳤어요 보내기'))
   await pressWithKeyboard(page, button(page, '고객(승인자)'))
-  await pressWithKeyboard(page, button(page, '비교해 보기'))
+  // 브라우저의 스크롤 앵커 보정이 버튼이 밀려나는 문제를 가리지 않게 한다.
+  await page.addStyleTag({ content: 'html { overflow-anchor: none; }' })
+  const compareButton = button(page, '비교해 보기')
+  await tabTo(page, compareButton)
+  // 클릭이나 focus() 없이 Tab으로 잡은 초점을 유지한 채 화면 하단에 둔다.
+  await compareButton.evaluate((element) => {
+    window.scrollBy({ top: element.getBoundingClientRect().bottom - (window.innerHeight - 24), behavior: 'instant' })
+  })
+  await expect(compareButton).toBeFocused()
+  await expect(compareButton).toBeInViewport({ ratio: 1 })
+  const compareBox = (await compareButton.boundingBox())!
+  expect(compareBox.y + compareBox.height).toBeCloseTo(844 - 24, 0)
+  await page.keyboard.press('Enter')
   await expect(page.getByRole('img', { name: '수정 전 상품 상세 사진', exact: true })).toBeVisible()
   await expect(page.getByRole('img', { name: '구매 버튼 위 여백을 넓힌 상품 상세 사진', exact: true })).toBeVisible()
   await expect(button(page, `쪽지 #2 ${noteTitle}`)).toBeVisible()
+  // 전체 페이지 캡처나 추가 Tab이 화면 위치를 바꾸기 전에 실제 초점과 노출을 확인한다.
+  const completeButton = button(page, '확인 완료')
+  await expect(completeButton).toBeFocused()
+  await expect(completeButton).toBeInViewport({ ratio: 1 })
   await testInfo.attach('390px-compare', { body: await page.screenshot({ fullPage: true }), contentType: 'image/png' })
-  await pressWithKeyboard(page, button(page, '확인 완료'))
+  await pressWithKeyboard(page, completeButton)
   await pressWithKeyboard(page, button(page, '버전 승인'))
   await pressWithKeyboard(page, button(page, '승인 확정'))
   await pressWithKeyboard(page, button(page, '검수 확인서 보기'))

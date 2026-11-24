@@ -2005,7 +2005,7 @@ test('소개 화면의 세 단계와 선택 쪽지가 강조되고 로그인과 
     expect(Math.abs(hero.y - header.y - header.height - gap)).toBeLessThanOrEqual(2)
     await expectNoHorizontalOverflow(page, width)
   }
-  for (const [label, path] of [['로그인', '/app/login'], ['시작하기', '/app/login'], ['데모 체험하기', '/app/demo']] as const) {
+  for (const [label, path] of [['로그인', '/app/login'], ['시작하기', '/app/login'], ['로그인 없이 데모 체험하기', '/app/demo']] as const) {
     const link = page.getByRole('link', { name: label, exact: true })
     await expect(link).toHaveCount(1)
     await expect(link).toHaveAttribute('href', path)
